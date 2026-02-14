@@ -1,0 +1,22 @@
+Display of File examples/AR.EXE
+
+DOS File Size                                     11E15h  ( 73237. )
+Load Image Size                                   11C15h  ( 72725. )
+Relocation Table entry count                      0000h  (     0. )
+Relocation Table address                          001Eh  (    30. )
+Header Size                                       0200h  (   512. )
+Minimum Extra Memory                              31700h  (202496. )
+Maximum Memory Requirement                        FFFFh  ( 65535. paragraphs = 1048560 bytes, all available )
+File load checksum                                0000h  (     0. )
+Overlay Number                                    0000h  (     0. )
+Entry Point File Offset                           11BB0h  ( 72624. )
+Entry Point Image Offset                          119B0h  ( 72112. )
+
+Initial Stack Segment  (SS:SP)			  2839:0080
+Program Entry Point    (CS:IP)			  119A:0010
+
+Code at Entry Point (first 64 bytes):
+00011bb0  8c c0 05 10 00 0e 1f a3  04 00 03 06 0c 00 8e c0  |................|
+00011bc0  8b 0e 06 00 8b f9 4f 8b  f7 fd f3 a4 50 b8 32 00  |......O.....P.2.|
+00011bd0  50 cb 8c c3 8c d8 48 8e  d8 8e c0 bf 0f 00 b9 10  |P.....H.........|
+00011be0  00 b0 ff f3 ae 47 8b f7  8b c3 48 8e c0 bf 0f 00  |.....G....H.....|

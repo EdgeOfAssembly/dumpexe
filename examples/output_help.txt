@@ -1,0 +1,17 @@
+dumpexe - MS-DOS MZ EXE header analyzer and disassembler
+
+Usage: ./dumpexe [options] <exe_file>
+
+Options:
+  -h, --help          Show this help message and exit
+  -v, --version       Show version information and exit
+  -r, --relocation    Show relocation table (with padding)
+  -x, --hexdump       Show full hex+ASCII dump from entry point to EOF
+  -d, --disassemble   Show disassembly from entry point to EOF
+  -a, --all           Show all sections (relocation + hexdump + disassembly)
+  --simulate          Enable DOS load simulation with register tracking
+  --base=XXXX         Set load base segment (hex, default: 1000h)
+
+If no section options are given, only the EXE header information is displayed.
+Multiple options can be combined, e.g., -r -x for relocations and hexdump.
+
