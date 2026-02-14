@@ -56,50 +56,64 @@ dumpexe [options] <exe_file>
 
 ### Examples
 
+> **Note**: You need to supply your own MZ EXE file for testing. See the "Example Files" section below for guidance on obtaining test files.
+
 **Show header information only:**
 ```bash
-./dumpexe examples/AR_unpacked.exe
+./dumpexe <your_file.exe>
 ```
 
 **Show everything (complete analysis):**
 ```bash
-./dumpexe -a examples/AR_unpacked.exe
+./dumpexe -a <your_file.exe>
 ```
 
 **Disassemble code:**
 ```bash
-./dumpexe -d examples/AR_unpacked.exe
+./dumpexe -d <your_file.exe>
 ```
 
 **Simulate DOS loading at a specific base segment:**
 ```bash
-./dumpexe --simulate --base=2000 examples/AR_unpacked.exe
+./dumpexe --simulate --base=2000 <your_file.exe>
 ```
 
 **Show relocation table:**
 ```bash
-./dumpexe -r examples/AR_unpacked.exe
+./dumpexe -r <your_file.exe>
 ```
 
 **Combine options:**
 ```bash
-./dumpexe -d --simulate examples/AR_unpacked.exe | less
+./dumpexe -d --simulate <your_file.exe> | less
 ```
 
 ## Example Files
 
-The `examples/` directory contains:
+The `examples/` directory contains pre-generated output examples demonstrating various dumpexe features.
 
-- **AR.EXE** - Microprose's "Airborne Ranger" (1988), packed with Microsoft EXEPACK
-  - MD5: `e87a8ff54161ef5fd138cbdf3ea4dae0`
-  - Size: 72KB (73,237 bytes)
+### Obtaining Test Files
+
+To test dumpexe, you need to provide your own MZ EXE files. Good sources include:
+
+- **DOS games and utilities** from abandonware sites (check licensing)
+- **Your own DOS programs** compiled with tools like Borland/Turbo C, MASM, or TASM
+- **Open source DOS software** with available binaries
+
+### Recommended Test Cases
+
+For comprehensive testing, consider using files that demonstrate:
+
+- **Packed executables**: Files compressed with EXEPACK or similar packers
+  - Typically have no or few relocation entries
+  - Smaller file size
   
-- **AR_unpacked.exe** - Unpacked version of Airborne Ranger
-  - MD5: `d654710b1203d606c7dd80600d71dd38`
-  - Size: 162KB (165,136 bytes)
-  - Contains 152 relocation entries
+- **Unpacked executables**: Standard MZ format files
+  - Contains relocation table entries
+  - Larger file size
+  - Better for disassembly analysis
 
-These files demonstrate the difference between packed and unpacked executables.
+The `examples/README.md` file provides additional guidance on working with MZ EXE files.
 
 ## Output Format
 
