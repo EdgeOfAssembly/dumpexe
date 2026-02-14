@@ -1,0 +1,4 @@
+dumpexe 1.0 — 16-bit MS-DOS MZ EXE Analyzer & Single-Pass Disassembler
+Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>
+License: GPLv2 | Commercial (contact author)
+Built with Capstone disassembly support: yes

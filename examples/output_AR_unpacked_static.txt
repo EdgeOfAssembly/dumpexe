@@ -1,0 +1,22 @@
+Display of File examples/AR_unpacked.exe
+
+DOS File Size                                     28510h  (165136. )
+Load Image Size                                   28110h  (164112. )
+Relocation Table entry count                      0098h  (   152. )
+Relocation Table address                          001Ch  (    28. )
+Header Size                                       0400h  (  1024. )
+Minimum Extra Memory                              31700h  (202496. )
+Maximum Memory Requirement                        FFFFh  ( 65535. paragraphs = 1048560 bytes, all available )
+File load checksum                                0000h  (     0. )
+Overlay Number                                    0000h  (     0. )
+Entry Point File Offset                           00420h  (  1056. )
+Entry Point Image Offset                          00020h  (    32. )
+
+Initial Stack Segment  (SS:SP)			  1B5F:CB14
+Program Entry Point    (CS:IP)			  0000:0020
+
+Code at Entry Point (first 64 bytes):
+00000420  1e b8 00 00 50 06 2e a1  00 00 8e c0 8e d8 58 a3  |....P.........X.|
+00000430  00 00 e9 0b 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000440  2e a1 00 00 8e d8 8c d0  8b dc a3 12 00 89 1e 14  |................|
+00000450  00 2e a1 02 00 8e d0 b8  10 cb 8b e0 2e a3 c6 00  |................|
