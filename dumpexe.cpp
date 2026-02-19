@@ -58,8 +58,6 @@ int main(int argc, char* argv[]) {
 	return 1;
    }
 
-   std::cout << dosFileSize64 << std::endl;
-
     // Open file
     std::ifstream file(opts.filename, std::ios::binary );
     if (!file) {
@@ -103,16 +101,10 @@ int main(int argc, char* argv[]) {
 
 
     size_t headerSizeBytes = static_cast<size_t>(headerSizeBytes64);
-    size_t dosFileSize = static_cast<size_t>(dosFileSize64);
-    size_t loadImageSize = static_cast<size_t>(loadImageSize64);
     size_t entryPointFileOffset = static_cast<size_t>(entryPointFileOffset64);
     size_t entryPointImageOffset = static_cast<size_t>(entryPointImageOffset64);
 
     int64_t extraBytes = dosFileSize64 - loadImageSize64;
-/*    if(extraBytes > 0) {
-	loadImageSize64 -= extraBytes;
-    }
-*/
 
     // Print static header info
     std::cout << "Display of File " << opts.filename << "\n\n";
@@ -152,55 +144,64 @@ int main(int argc, char* argv[]) {
     file.read(reinterpret_cast<char*>(fileData.data()), dosFileSize64);
     file.close();
     
-    // Relocation section
+    // ──────────────────────────────────────────────────────────────
+    // Relocation table + padding
+    // ──────────────────────────────────────────────────────────────
     std::vector<RelocEntry> relocs;
     if (opts.showReloc || opts.showAll) {
-        if (header.off_reloc > sizeof(MZHeader)) {
-            size_t paddingSize = header.off_reloc - sizeof(MZHeader);
-            printHexDump(fileData, sizeof(MZHeader), paddingSize,
-                         "Header Extension/Padding (before relocation table):");
-        }
-        
-        if (header.num_reloc > 0) {
-            const uint64_t tableOffset = header.off_reloc;
-            const uint64_t tableSize = static_cast<uint64_t>(header.num_reloc) * sizeof(RelocEntry);
+        size_t relocStart = header.off_reloc;
+        size_t relocEntrySize = sizeof(RelocEntry);
+        size_t relocTableBytes = static_cast<size_t>(header.num_reloc) * relocEntrySize;
+        size_t relocEnd = relocStart + relocTableBytes;
 
-            if (tableOffset <= static_cast<uint64_t>(dosFileSize64) &&
-                tableSize <= static_cast<uint64_t>(dosFileSize64) - tableOffset) {
+        // Padding after fixed header, before relocation area
+        if (relocStart > sizeof(MZHeader)) {
+            size_t padSize = relocStart - sizeof(MZHeader);
+            if (padSize > 0) {
+                printHexDump(fileData, sizeof(MZHeader), padSize, "Padding:");
+            }
+        }
+
+        if (header.num_reloc > 0) {
+	    if (relocStart <= static_cast<size_t>(dosFileSize64) &&
+                relocTableBytes <= static_cast<size_t>(dosFileSize64) - relocStart) {
                 relocs.resize(header.num_reloc);
-                std::memcpy(relocs.data(), fileData.data() + tableOffset, tableSize);
-                
+                std::memcpy(relocs.data(), fileData.data() + relocStart, relocTableBytes);
+
                 std::cout << "\n=== Relocation Table (" << std::dec << header.num_reloc << " entries) ===\n";
                 std::cout << "Entry  Segment:Offset  File Location (Hex)  Linear Offset\n";
                 std::cout << "-----  --------------  -------------------  -------------\n";
 
-                for (size_t i = 0; i < relocs.size(); i++) {
-                    uint32_t fileLocation = headerSizeBytes + (relocs[i].segment * 16u) + relocs[i].offset;
-                    uint32_t linearOffset = (relocs[i].segment * 16u) + relocs[i].offset;
+                for (size_t i = 0; i < relocs.size(); ++i) {
+                    uint32_t fileLoc = headerSizeBytes + (relocs[i].segment * 16u) + relocs[i].offset;
+                    uint32_t linear  =                   (relocs[i].segment * 16u) + relocs[i].offset;
 
                     std::cout << std::right << std::setw(5) << std::dec << i << "  "
                               << std::hex << std::uppercase << std::setfill('0')
                               << std::setw(4) << relocs[i].segment << ":"
                               << std::setw(4) << relocs[i].offset << "        "
-                              << std::setw(8) << fileLocation << "h          "
-                              << std::setw(6) << linearOffset << "h\n";
+                              << std::setw(8) << fileLoc << "h          "
+                              << std::setw(6) << linear  << "h\n";
                 }
             } else {
-                std::cerr << "\n[Warning] Relocation table extends beyond end of file "
-                          << "(offset: " << tableOffset << ", size: " << tableSize 
-                          << ", file size: " << dosFileSize64 << "). Skipping relocation table.\n";
+                std::cerr << "\n[Warning] Relocation table extends beyond file end. Skipped.\n";
             }
         }
-        
-        size_t relocTableEnd = header.off_reloc + (header.num_reloc * sizeof(RelocEntry));
-        if (relocTableEnd < headerSizeBytes) {
-            size_t paddingSize = headerSizeBytes - relocTableEnd;
-            printHexDump(fileData, relocTableEnd, paddingSize,
-                         "Padding between relocation table and image:");
+
+        // Padding between end of reloc area and start of load image
+        if (relocEnd < headerSizeBytes) {
+            size_t padSize = headerSizeBytes - relocEnd;
+            if (padSize > 0) {
+                printHexDump(fileData, relocEnd, padSize, "Padding:");
+            }
         }
     }
+
+
     
-    // Hexdump section
+    // ──────────────────────────────────────────────────────────────
+    // Hexdump
+    // ──────────────────────────────────────────────────────────────
     if (opts.showHexdump || opts.showAll) {
         if (entryPointFileOffset < fileData.size()) {
             size_t dumpSize = fileData.size() - entryPointFileOffset;
