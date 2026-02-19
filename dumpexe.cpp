@@ -4,6 +4,7 @@
 // Target: 16-bit MS-DOS MZ EXE files only
 
 #include "dumpexe.h"
+#include <filesystem>
 
 int main(int argc, char* argv[]) {
     Options opts;
@@ -47,84 +48,81 @@ int main(int argc, char* argv[]) {
         // showAll can still show other sections (reloc, hexdump) even without disasm
     }
 #endif
-    
+
+
+   int64_t dosFileSize64;
+   try {
+	dosFileSize64 = static_cast<int64_t>(std::filesystem::file_size(opts.filename));
+   } catch (...) {
+	std::cerr << "Error: Cannot get file size of '" << opts.filename << "'\n";
+	return 1;
+   }
+
+   std::cout << dosFileSize64 << std::endl;
+
     // Open file
-    std::ifstream file(opts.filename, std::ios::binary | std::ios::ate);
+    std::ifstream file(opts.filename, std::ios::binary );
     if (!file) {
         std::cerr << "Error: Cannot open file '" << opts.filename << "'\n";
         return 1;
     }
-    
-    // Get file size
-    std::streamsize actualFileSize = file.tellg();
-    if (actualFileSize < static_cast<std::streamsize>(sizeof(MZHeader))) {
-        std::cerr << "Error: File too small to be a valid EXE\n";
-        return 1;
-    }
-    file.seekg(0, std::ios::beg);
-    
+
     // Read header
     MZHeader header;
     file.read(reinterpret_cast<char*>(&header), sizeof(header));
-    
-    if (!file || file.gcount() < static_cast<std::streamsize>(sizeof(header))) {
-        std::cerr << "Error: File too small to be a valid EXE\n";
-        return 1;
-    }
-    
+
     // Validate MZ signature
-    if (header.signature != 0x5A4D) {
+    if (header.signature != 0x5A4D) {	// 'MZ'
         std::cerr << "Error: Not a valid MZ EXE file\n";
         return 1;
     }
-    
+
     // Validate num_blocks
     if (header.num_blocks == 0) {
-        std::cerr << "Error: Invalid EXE header\n";
+        std::cerr << "Error: Invalid header (zero pages)\n";
         return 1;
     }
-    
+
     // Calculate sizes
-    int64_t headerSizeBytes64 = static_cast<int64_t>(header.header_size) * 16;
-    int64_t dosFileSize64 = (header.final_len > 0)
-        ? (static_cast<int64_t>(header.num_blocks - 1) * 512 + static_cast<int64_t>(header.final_len))
-        : (static_cast<int64_t>(header.num_blocks) * 512);
-
-    if (headerSizeBytes64 < 0 || dosFileSize64 < 0 || headerSizeBytes64 > dosFileSize64) {
-        std::cerr << "Error: Invalid EXE header fields\n";
-        return 1;
+    int64_t headerSizeBytes64 = static_cast<int64_t>(header.header_size) * 16LL;
+    if(headerSizeBytes64 <= 0 || headerSizeBytes64 > dosFileSize64) {
+	std::cerr << "Error: Invalid header size field\n";
+	return 1;
     }
 
-    int64_t loadImageSize64 = dosFileSize64 - headerSizeBytes64;
-    int64_t csBytes = static_cast<int64_t>(header.cs) * 16;
+    int64_t csBytes = static_cast<int64_t>(header.cs) * 16LL;
     int64_t entryPointImageOffset64 = csBytes + static_cast<int64_t>(header.ip);
-    
-    if (csBytes < 0 || entryPointImageOffset64 < 0) {
-        std::cerr << "Error: Invalid CS/IP combination\n";
-        return 1;
-    }
-    
+    int64_t loadImageSize64 = ((header.num_blocks - 1) * 512 + header.final_len) - headerSizeBytes64;
     int64_t entryPointFileOffset64 = headerSizeBytes64 + entryPointImageOffset64;
-    if (entryPointFileOffset64 < 0 || entryPointFileOffset64 > dosFileSize64) {
-        std::cerr << "Error: Entry point outside file\n";
+
+    if (csBytes < 0 || entryPointImageOffset64 < 0 || entryPointFileOffset64 < 0 ||
+	entryPointFileOffset64 > dosFileSize64) {
+        std::cerr << "Error: Invalid CS:IP or entry point outside file\n";
         return 1;
     }
+
 
     size_t headerSizeBytes = static_cast<size_t>(headerSizeBytes64);
     size_t dosFileSize = static_cast<size_t>(dosFileSize64);
     size_t loadImageSize = static_cast<size_t>(loadImageSize64);
     size_t entryPointFileOffset = static_cast<size_t>(entryPointFileOffset64);
     size_t entryPointImageOffset = static_cast<size_t>(entryPointImageOffset64);
-    
+
+    int64_t extraBytes = dosFileSize64 - loadImageSize64;
+/*    if(extraBytes > 0) {
+	loadImageSize64 -= extraBytes;
+    }
+*/
+
     // Print static header info
     std::cout << "Display of File " << opts.filename << "\n\n";
     
-    printField("DOS File Size", dosFileSize, 5);
-    printField("Load Image Size", loadImageSize, 5);
+    printField("DOS File Size", dosFileSize64, 5);
+    printField("Load Image Size", loadImageSize64, 5);
     printField("Relocation Table entry count", header.num_reloc, 4);
     printField("Relocation Table address", header.off_reloc, 4);
     printField("Header Size", headerSizeBytes, 4);
-    printField("Minimum Extra Memory", header.mem_extra * 16, 4);
+    printField("Minimum Extra Memory", header.mem_extra, 4);
     
     if (header.mem_max == 0xFFFF) {
         std::cout << std::left << std::setw(50) << "Maximum Memory Requirement"
@@ -143,15 +141,15 @@ int main(int argc, char* argv[]) {
     printSegOff("Initial Stack Segment  (SS:SP)", header.ss, header.sp);
     printSegOff("Program Entry Point    (CS:IP)", header.cs, header.ip);
     
-    if (actualFileSize > static_cast<std::streamsize>(dosFileSize)) {
-        std::cout << "\nNote: File contains " << std::dec << (actualFileSize - dosFileSize) 
+    if (extraBytes > 0) {
+        std::cout << "\nNote: File contains " << std::dec << extraBytes
                   << " extra bytes beyond declared size (overlay/debug data?)\n";
     }
     
     // Read entire file
     file.seekg(0, std::ios::beg);
-    std::vector<uint8_t> fileData(actualFileSize);
-    file.read(reinterpret_cast<char*>(fileData.data()), actualFileSize);
+    std::vector<uint8_t> fileData(dosFileSize64);
+    file.read(reinterpret_cast<char*>(fileData.data()), dosFileSize64);
     file.close();
     
     // Relocation section
@@ -167,8 +165,8 @@ int main(int argc, char* argv[]) {
             const uint64_t tableOffset = header.off_reloc;
             const uint64_t tableSize = static_cast<uint64_t>(header.num_reloc) * sizeof(RelocEntry);
 
-            if (tableOffset <= static_cast<uint64_t>(actualFileSize) &&
-                tableSize <= static_cast<uint64_t>(actualFileSize) - tableOffset) {
+            if (tableOffset <= static_cast<uint64_t>(dosFileSize64) &&
+                tableSize <= static_cast<uint64_t>(dosFileSize64) - tableOffset) {
                 relocs.resize(header.num_reloc);
                 std::memcpy(relocs.data(), fileData.data() + tableOffset, tableSize);
                 
@@ -190,7 +188,7 @@ int main(int argc, char* argv[]) {
             } else {
                 std::cerr << "\n[Warning] Relocation table extends beyond end of file "
                           << "(offset: " << tableOffset << ", size: " << tableSize 
-                          << ", file size: " << actualFileSize << "). Skipping relocation table.\n";
+                          << ", file size: " << dosFileSize64 << "). Skipping relocation table.\n";
             }
         }
         
