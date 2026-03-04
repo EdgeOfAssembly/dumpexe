@@ -2,7 +2,7 @@
 # Author: EdgeOfAssembly <haxbox2000@gmail.com>
 
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -Wextra -O2
+CXXFLAGS = -static -static-libstdc++ -no-pie -Wl,--build-id=none -std=c++23 -Wall -Wextra -O2
 
 HAS_CAPSTONE := $(shell pkg-config --exists capstone && echo 1 || echo 0)
 
