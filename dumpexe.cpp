@@ -104,7 +104,7 @@ int main(int argc, char* argv[]) {
     size_t entryPointFileOffset = static_cast<size_t>(entryPointFileOffset64);
     size_t entryPointImageOffset = static_cast<size_t>(entryPointImageOffset64);
 
-    int64_t extraBytes = dosFileSize64 - loadImageSize64;
+    int64_t extraBytes = dosFileSize64 - loadImageSize64 - headerSizeBytes64;
 
     // Print static header info
     std::cout << "Display of File " << opts.filename << "\n\n";
