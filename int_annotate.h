@@ -21,45 +21,59 @@
 /// Matching priority (best first):
 ///   1. Exact     — int_num + ah + al all match
 ///   2. AH match  — int_num + ah match, entry al is wildcard (0xFF)
-///   3. Generic   — int_num matches, entry ah is wildcard (0xFF)
+///   3. Generic   — int_num matches, entry ah and al are wildcards (0xFF)
 ///
-/// Pass 0xFF for ah/al when the value is unknown.
+/// Pass 0xFF for ah/al when the value is unknown (wildcard).
 /// Returns the description of the best match, or nullopt if not found.
 static inline std::optional<std::string_view>
 annotate_int(uint8_t int_num, uint8_t ah = 0xFF, uint8_t al = 0xFF) {
-    // Binary-search lower bound for (int_num, 0x00, 0x00)
-    IntEntry key{int_num, 0x00, 0x00, {}};
     auto cmp = [](const IntEntry& a, const IntEntry& b) {
         if (a.int_num != b.int_num) return a.int_num < b.int_num;
         if (a.ah      != b.ah)      return a.ah      < b.ah;
         return a.al < b.al;
     };
-    auto it = std::lower_bound(INT_DB.begin(), INT_DB.end(), key, cmp);
 
-    std::optional<std::string_view> generic_match;
-    std::optional<std::string_view> ah_match;
-
-    for (; it != INT_DB.end() && it->int_num == int_num; ++it) {
-        // Exact match
-        if (it->ah == ah && it->al == al)
+    // 1) Exact match: (int_num, ah, al)
+    {
+        IntEntry key_exact{int_num, ah, al, {}};
+        auto it = std::lower_bound(INT_DB.begin(), INT_DB.end(), key_exact, cmp);
+        if (it != INT_DB.end() &&
+            it->int_num == int_num &&
+            it->ah      == ah &&
+            it->al      == al) {
             return it->desc;
-
-        // AH-level match: entry ah matches, entry al is wildcard
-        if (it->ah == ah && it->al == 0xFF && !ah_match)
-            ah_match = it->desc;
-
-        // Generic match: entry ah is wildcard AND entry al is wildcard
-        if (it->ah == 0xFF && it->al == 0xFF && !generic_match)
-            generic_match = it->desc;
+        }
     }
 
-    if (ah_match)      return ah_match;
-    if (generic_match) return generic_match;
+    // 2) AH-level wildcard match: (int_num, ah, 0xFF)
+    {
+        IntEntry key_ah{int_num, ah, 0xFF, {}};
+        auto it = std::lower_bound(INT_DB.begin(), INT_DB.end(), key_ah, cmp);
+        if (it != INT_DB.end() &&
+            it->int_num == int_num &&
+            it->ah      == ah &&
+            it->al      == 0xFF) {
+            return it->desc;
+        }
+    }
+
+    // 3) Generic wildcard match: (int_num, 0xFF, 0xFF)
+    {
+        IntEntry key_generic{int_num, 0xFF, 0xFF, {}};
+        auto it = std::lower_bound(INT_DB.begin(), INT_DB.end(), key_generic, cmp);
+        if (it != INT_DB.end() &&
+            it->int_num == int_num &&
+            it->ah      == 0xFF &&
+            it->al      == 0xFF) {
+            return it->desc;
+        }
+    }
+
     return std::nullopt;
 }
 
 /// Format an annotation comment string for disassembly output.
-/// Returns e.g. "; DOS 1+ - TERMINATE PROGRAM" or "; INT 21h" when not found.
+/// Returns e.g. "; INT 21h - DOS 1+ - TERMINATE PROGRAM" or "; INT 21h" when not found.
 static inline std::string
 format_int_annotation(uint8_t int_num, uint8_t ah = 0xFF, uint8_t al = 0xFF) {
     auto desc = annotate_int(int_num, ah, al);

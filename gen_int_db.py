@@ -19,13 +19,6 @@ OUTPUT_FILE   = os.path.join(os.path.dirname(__file__), "int_db.h")
 # Regex for separator lines: --------X-IIAASSLLL---
 SEP_RE = re.compile(r'^--------')
 
-# Regex for the INT header line inside a block
-INT_LINE_RE = re.compile(
-    r'^INT\s+([0-9A-Fa-f]{1,3})'  # interrupt number (hex, 1-3 hex digits)
-    r'(?:/([0-9A-Fa-f]{1,4}))?'   # optional /XXXX subfunction (AX or AH)
-    r'\s*-\s*(.+)$'               # description (after first ' - ')
-)
-
 # Regex for AH/AL/AX inside a block
 AH_RE = re.compile(r'^\s+AH\s*=\s*([0-9A-Fa-f]{1,2})h', re.IGNORECASE)
 AL_RE = re.compile(r'^\s+AL\s*=\s*([0-9A-Fa-f]{1,2})h', re.IGNORECASE)
