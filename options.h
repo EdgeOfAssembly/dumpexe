@@ -29,6 +29,7 @@ struct Options {
     bool showDisasm = false;    ///< -d, --disassemble
     bool showAll = false;       ///< -a, --all
     bool simulate = false;      ///< --simulate
+    bool noIntAnnot = false;    ///< -n, --no-int-annotations
     uint16_t loadBase = 0x1000; ///< --base=XXXX (default: 1000h, after PSP)
 
     /// Parse command-line arguments
@@ -59,6 +60,8 @@ struct Options {
                 showAll = true;
             } else if (arg == "--simulate") {
                 simulate = true;
+            } else if (arg == "-n" || arg == "--no-int-annotations") {
+                noIntAnnot = true;
             } else if (arg.starts_with("--base=")) {
                 std::string baseStr{arg.substr(7)};
                 try {
@@ -109,6 +112,7 @@ static inline void show_usage(const char* progname) {
         "  -x, --hexdump       Show full hex+ASCII dump from entry point to EOF\n"
         "  -d, --disassemble   Show disassembly from entry point to EOF\n"
         "  -a, --all           Show all sections (relocation + hexdump + disassembly)\n"
+        "  -n, --no-int-annotations  Suppress INT annotation comments in disassembly\n"
         "  --simulate          Enable DOS load simulation with register tracking\n"
         "  --base=XXXX         Set load base segment (hex, default: 1000h)\n\n"
         "If no section options are given, only the EXE header information is displayed.\n"

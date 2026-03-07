@@ -90,7 +90,7 @@ int main(int argc, char* argv[]) {
 
         if (opts.showDisasm || opts.showAll) {
             disassemble(fileData, sizes.entryPointFileOffset,
-                        static_cast<uint16_t>(header.cs), header.ip);
+                        static_cast<uint16_t>(header.cs), header.ip, opts);
         }
 
         run_simulation(opts, header, fileData, relocs, sizes);

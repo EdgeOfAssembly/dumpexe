@@ -10,6 +10,8 @@
 //   registers.h    — 16-bit x86 CPU register state definitions and macros
 //   formatting.h   — TDUMP-style hex/dec formatting and hexdump output
 //   options.h      — CLI options struct (Options) and show_usage()
+//   int_db.h       — Auto-generated constexpr INT annotation database (RBIL)
+//   int_annotate.h — annotate_int() and format_int_annotation() helpers
 //   disasm.h       — Capstone-backed disassemble() (Capstone required)
 //   analysis.h     — File loading, validation, header printing, simulation
 //   sys.h          — DOS device driver (.SYS) format structures and constants
@@ -22,6 +24,7 @@
 #include "registers.h"
 #include "formatting.h"
 #include "options.h"
+#include "int_annotate.h"
 #include "disasm.h"
 #include "analysis.h"
 #include "sys.h"
