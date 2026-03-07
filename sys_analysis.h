@@ -158,9 +158,19 @@ static inline void analyze_sys(const Options& opts, const std::vector<uint8_t>& 
 
     print_sys_header(header, fileSize);
 
-    // Hex dump from strategy entry point (like analysis.h does for MZ files)
     if (opts.showHexdump || opts.showAll) {
-        print_hex_dump(data, 0, data.size(), "=== Hex Dump (full file) ===");
+        const std::size_t dataSize = data.size();
+        const std::size_t strategyOffset = static_cast<std::size_t>(header.strategy);
+        if (strategyOffset < dataSize) {
+            print_hex_dump(data, strategyOffset, dataSize - strategyOffset,
+                           "=== Hex Dump from Strategy Entry Point ===");
+        }
+
+        const std::size_t interruptOffset = static_cast<std::size_t>(header.interrupt);
+        if (interruptOffset < dataSize && interruptOffset != strategyOffset) {
+            print_hex_dump(data, interruptOffset, dataSize - interruptOffset,
+                           "=== Hex Dump from Interrupt Entry Point ===");
+        }
     }
 
     // Disassembly from strategy entry point
