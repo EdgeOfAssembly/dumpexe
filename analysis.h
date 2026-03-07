@@ -20,7 +20,7 @@
 #include <cctype>
 
 #include "exe.h"
-#include "format.h"
+#include "formatting.h"
 #include "options.h"
 #include "registers.h"
 #include "disasm.h"
