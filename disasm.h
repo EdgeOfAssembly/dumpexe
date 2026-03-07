@@ -1,9 +1,10 @@
-// disasm.h - Disassembly functions (Capstone-guarded)
+// disasm.h - Disassembly functions (Capstone)
 // Author: EdgeOfAssembly <haxbox2000@gmail.com>
 // License: GPLv2 | Commercial (contact author)
 //
-// Provides disassemble() using Capstone when available, and a no-op stub
-// otherwise. All functions are static inline.
+// Provides disassemble() using the Capstone disassembly framework.
+// Capstone is a mandatory build dependency; include <capstone/capstone.h>
+// must resolve at compile time. All functions are static inline.
 
 #ifndef DISASM_H
 #define DISASM_H
@@ -14,20 +15,11 @@
 #include <cstdint>
 #include <cstring>
 #include <algorithm>
-
-// Optional Capstone support - check if headers are available
-#if __has_include(<capstone/capstone.h>)
 #include <capstone/capstone.h>
-#define HAS_CAPSTONE 1
-#else
-#define HAS_CAPSTONE 0
-#endif
 
 //=============================================================================
 // Disassembly Functions (Capstone)
 //=============================================================================
-
-#if HAS_CAPSTONE
 
 /// Disassemble code using Capstone from entry point to end of file
 /// @param data Vector containing the binary data
@@ -96,14 +88,5 @@ static inline void disassemble(const std::vector<uint8_t>& data, size_t offset, 
     cs_free(insn, 1);
     cs_close(&handle);
 }
-
-#else
-
-/// Stub disassemble function when Capstone is not available
-static inline void disassemble(const std::vector<uint8_t>&, size_t, uint16_t, uint16_t) {
-    std::cout << "\nDisassembly not available - rebuild with Capstone support\n";
-}
-
-#endif // HAS_CAPSTONE
 
 #endif // DISASM_H
