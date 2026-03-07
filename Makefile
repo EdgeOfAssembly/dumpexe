@@ -1,34 +1,32 @@
 # Makefile for dumpexe - MS-DOS MZ EXE Analyzer & Disassembler
 # Author: EdgeOfAssembly <haxbox2000@gmail.com>
+#
+# Capstone disassembly support is MANDATORY.
+# Install it before building: sudo apt-get install libcapstone-dev
 
 CXX = g++
 CXXFLAGS = -static -static-libstdc++ -no-pie -Wl,--build-id=none -std=c++23 -Wall -Wextra -O2
 
-HAS_CAPSTONE := $(shell pkg-config --exists capstone && echo 1 || echo 0)
-
-ifeq ($(HAS_CAPSTONE),1)
-CAPSTONE_CFLAGS := $(shell pkg-config --cflags capstone)
-CAPSTONE_LIBS := $(shell pkg-config --libs capstone)
-else
-CAPSTONE_CFLAGS :=
-CAPSTONE_LIBS :=
+# Capstone is a hard requirement for compiling — checked only when building,
+# not for `make clean` or `make install` which don't need the library headers.
+ifeq ($(filter clean install,$(MAKECMDGOALS)),)
+ifeq ($(shell pkg-config --exists capstone && echo 1 || echo 0),0)
+$(error Capstone library not found. Install it with: sudo apt-get install libcapstone-dev)
 endif
+endif
+
+CAPSTONE_CFLAGS := $(shell pkg-config --cflags capstone 2>/dev/null)
+CAPSTONE_LIBS   := $(shell pkg-config --libs capstone 2>/dev/null)
 
 .PHONY: all clean install
 
 all: dumpexe
 
-dumpexe: dumpexe.cpp dumpexe.h
-ifeq ($(HAS_CAPSTONE),1)
-	$(CXX) $(CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe dumpexe.cpp $(CAPSTONE_LIBS)
-	@echo "Built dumpexe WITH Capstone disassembly support"
-else
-	$(CXX) $(CXXFLAGS) -o dumpexe dumpexe.cpp
-	@echo "Built dumpexe WITHOUT Capstone (install libcapstone-dev for disassembly)"
-endif
+HEADERS = dumpexe.h exe.h registers.h format.h options.h disasm.h analysis.h
 
-dumpexe-nocap: dumpexe.cpp dumpexe.h
-	$(CXX) $(CXXFLAGS) -o dumpexe dumpexe.cpp
+dumpexe: dumpexe.cpp $(HEADERS)
+	$(CXX) $(CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe dumpexe.cpp $(CAPSTONE_LIBS)
+	@echo "Built dumpexe with Capstone disassembly support"
 
 PREFIX ?= /usr/local
 install: dumpexe

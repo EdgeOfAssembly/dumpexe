@@ -17,6 +17,8 @@ A comprehensive command-line utility for analyzing MS-DOS MZ format executable f
 
 ### Prerequisites
 
+Capstone is a **mandatory** build dependency.
+
 ```bash
 sudo apt-get update
 sudo apt-get install -y build-essential libcapstone-dev
@@ -28,12 +30,7 @@ sudo apt-get install -y build-essential libcapstone-dev
 make
 ```
 
-The Makefile automatically detects Capstone availability. If Capstone is not installed, the tool builds without disassembly support (all other features remain functional).
-
-To build without Capstone intentionally:
-```bash
-make dumpexe-nocap
-```
+> The build will fail with a clear error if `libcapstone-dev` is not installed.
 
 ## Usage
 
@@ -49,7 +46,7 @@ dumpexe [options] <exe_file>
 - `-v, --version` - Show version information
 - `-r, --relocation` - Show relocation table with padding
 - `-x, --hexdump` - Show hex+ASCII dump from entry point to EOF
-- `-d, --disassemble` - Show x86-16 disassembly (requires Capstone)
+- `-d, --disassemble` - Show x86-16 disassembly from entry point to EOF
 - `-a, --all` - Show all sections (relocation + hexdump + disassembly)
 - `--simulate` - Enable DOS load simulation with register tracking
 - `--base=XXXX` - Set load base segment (hex, default: 1000h)
