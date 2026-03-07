@@ -10,7 +10,9 @@
 #define OPTIONS_H
 
 #include <iostream>
+#include <format>
 #include <string>
+#include <string_view>
 #include <cstdint>
 
 //=============================================================================
@@ -41,7 +43,7 @@ struct Options {
         }
 
         for (int i = 1; i < argc; i++) {
-            std::string arg = argv[i];
+            std::string_view arg{argv[i]};
 
             if (arg == "-h" || arg == "--help") {
                 showHelp = true;
@@ -57,8 +59,8 @@ struct Options {
                 showAll = true;
             } else if (arg == "--simulate") {
                 simulate = true;
-            } else if (arg.substr(0, 7) == "--base=") {
-                std::string baseStr = arg.substr(7);
+            } else if (arg.starts_with("--base=")) {
+                std::string baseStr{arg.substr(7)};
                 try {
                     int baseValue = std::stoi(baseStr, nullptr, 16);
                     if (baseValue < 0 || baseValue > 0xFFFF) {
@@ -76,7 +78,7 @@ struct Options {
                 }
             } else if (arg[0] != '-' && filename.empty()) {
                 // Not a flag, assume it's the filename
-                filename = arg;
+                filename = std::string(arg);
             } else {
                 std::cerr << "Error: Unknown option '" << arg << "'\n";
                 return false;
@@ -97,19 +99,21 @@ struct Options {
 /// Print usage information
 /// @param progname argv[0] — used to display the correct invocation name
 static inline void show_usage(const char* progname) {
-    std::cout << "dumpexe - MS-DOS MZ EXE header analyzer and disassembler\n\n";
-    std::cout << "Usage: " << progname << " [options] <exe_file>\n\n";
-    std::cout << "Options:\n";
-    std::cout << "  -h, --help          Show this help message and exit\n";
-    std::cout << "  -v, --version       Show version information and exit\n";
-    std::cout << "  -r, --relocation    Show relocation table (with padding)\n";
-    std::cout << "  -x, --hexdump       Show full hex+ASCII dump from entry point to EOF\n";
-    std::cout << "  -d, --disassemble   Show disassembly from entry point to EOF\n";
-    std::cout << "  -a, --all           Show all sections (relocation + hexdump + disassembly)\n";
-    std::cout << "  --simulate          Enable DOS load simulation with register tracking\n";
-    std::cout << "  --base=XXXX         Set load base segment (hex, default: 1000h)\n\n";
-    std::cout << "If no section options are given, only the EXE header information is displayed.\n";
-    std::cout << "Multiple options can be combined, e.g., -r -x for relocations and hexdump.\n\n";
+    std::cout << std::format(
+        "dumpexe - MS-DOS MZ EXE header analyzer and disassembler\n\n"
+        "Usage: {} [options] <exe_file>\n\n"
+        "Options:\n"
+        "  -h, --help          Show this help message and exit\n"
+        "  -v, --version       Show version information and exit\n"
+        "  -r, --relocation    Show relocation table (with padding)\n"
+        "  -x, --hexdump       Show full hex+ASCII dump from entry point to EOF\n"
+        "  -d, --disassemble   Show disassembly from entry point to EOF\n"
+        "  -a, --all           Show all sections (relocation + hexdump + disassembly)\n"
+        "  --simulate          Enable DOS load simulation with register tracking\n"
+        "  --base=XXXX         Set load base segment (hex, default: 1000h)\n\n"
+        "If no section options are given, only the EXE header information is displayed.\n"
+        "Multiple options can be combined, e.g., -r -x for relocations and hexdump.\n\n",
+        progname);
 }
 
 /// Legacy alias kept for compatibility with call sites using the old name

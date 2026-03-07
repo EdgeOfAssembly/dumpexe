@@ -7,10 +7,10 @@
 
 /// Print version information to stdout
 static inline void print_version() {
-    std::cout << "dumpexe 1.0 — 16-bit MS-DOS MZ EXE Analyzer & Single-Pass Disassembler\n";
-    std::cout << "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n";
-    std::cout << "License: GPLv2 | Commercial (contact author)\n";
-    std::cout << "Built with Capstone disassembly support: yes\n";
+    std::cout << "dumpexe 1.0 — 16-bit MS-DOS MZ EXE Analyzer & Single-Pass Disassembler\n"
+                 "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n"
+                 "License: GPLv2 | Commercial (contact author)\n"
+                 "Built with Capstone disassembly support: yes\n";
 }
 
 int main(int argc, char* argv[]) {

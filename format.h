@@ -3,14 +3,15 @@
 // License: GPLv2 | Commercial (contact author)
 //
 // All functions are static inline (private API, no external linkage).
-// Provides TDUMP-style hex/decimal field printing and canonical hexdump output.
+// Provides TDUMP-style hex/dec formatting and hexdump output.
+// Uses std::format (C++23) for all string construction.
 
 #ifndef FORMAT_H
 #define FORMAT_H
 
+#include <format>
 #include <iostream>
-#include <iomanip>
-#include <sstream>
+#include <string>
 #include <vector>
 #include <array>
 #include <cstdint>
@@ -25,20 +26,16 @@
 /// @param value The numeric value to format
 /// @param width Number of hex digits (default 4)
 /// @return Formatted string like "1000h" or "0ABCDh"
-static inline std::string hex_format(uint32_t value, int width = 4) {
-    std::ostringstream oss;
-    oss << std::uppercase << std::setfill('0') << std::setw(width) << std::hex << value << "h";
-    return oss.str();
+static inline auto hex_format(uint32_t value, int width = 4) {
+    return std::format("{:0{}X}h", value, width);
 }
 
 /// Format a value as decimal with trailing dot (TDUMP style)
 /// @param value The numeric value to format
 /// @param width Minimum field width (default 6)
 /// @return Formatted string like "  1024."
-static inline std::string dec_format(uint32_t value, int width = 6) {
-    std::ostringstream oss;
-    oss << std::setw(width) << std::dec << value << ".";
-    return oss.str();
+static inline auto dec_format(uint32_t value, int width = 6) {
+    return std::format("{:{}}.", value, width);
 }
 
 /// Print a field in TDUMP style with hex and decimal values
@@ -47,10 +44,10 @@ static inline std::string dec_format(uint32_t value, int width = 6) {
 /// @param value Numeric value to display
 /// @param hex_width Number of hex digits (default 4)
 static inline void print_field(const std::string& name, uint32_t value, int hex_width = 4) {
-    const int name_width = 50;
-    std::cout << std::left << std::setw(name_width) << name
-              << std::right << std::setw(hex_width + 1) << hex_format(value, hex_width)
-              << "  (" << std::right << std::setw(7) << dec_format(value) << " )\n";
+    std::cout << std::format("{:<50}{:>{}}  ({:>7} )\n",
+                             name,
+                             hex_format(value, hex_width), hex_width + 1,
+                             dec_format(value));
 }
 
 /// Print a segment:offset pair (e.g., CS:IP or SS:SP)
@@ -58,9 +55,7 @@ static inline void print_field(const std::string& name, uint32_t value, int hex_
 /// @param seg Segment value (16-bit)
 /// @param off Offset value (16-bit)
 static inline void print_seg_off(const std::string& name, uint16_t seg, uint16_t off) {
-    std::cout << name << "\t\t\t  "
-              << std::uppercase << std::setfill('0') << std::hex
-              << std::setw(4) << seg << ":" << std::setw(4) << off << "\n";
+    std::cout << std::format("{}\t\t\t  {:04X}:{:04X}\n", name, seg, off);
 }
 
 /// Print hex dump of data in canonical hexdump -C format with zero-compression
@@ -112,25 +107,20 @@ static inline void print_hex_dump(const std::vector<uint8_t>& data, size_t offse
                 std::cout << "*\n";
                 starPrinted = true;
             }
-            // Skip printing the actual line content
         } else {
             // Line is different from previous, print it normally
             starPrinted = false;
 
             // Print address (8 hex digits, lowercase)
-            std::cout << std::hex << std::nouppercase << std::setw(8) << std::setfill('0')
-                      << (offset + i);
+            std::cout << std::format("{:08x}  ", offset + i);
 
             // Print hex bytes (16 bytes per line, with space after 8th byte)
-            std::cout << "  ";
             for (size_t j = 0; j < 16; j++) {
                 if (j < bytesOnLine) {
-                    std::cout << std::hex << std::nouppercase << std::setw(2) << std::setfill('0')
-                              << (int)currentLine[j];
+                    std::cout << std::format("{:02x} ", currentLine[j]);
                 } else {
-                    std::cout << "  ";  // Padding for incomplete lines
+                    std::cout << "   ";  // Padding for incomplete lines
                 }
-                std::cout << " ";
                 if (j == 7) {
                     std::cout << " ";  // Extra space after 8th byte
                 }
@@ -141,19 +131,13 @@ static inline void print_hex_dump(const std::vector<uint8_t>& data, size_t offse
             for (size_t j = 0; j < bytesOnLine; j++) {
                 uint8_t byte = currentLine[j];
                 // Print printable ASCII chars, otherwise show dot
-                if (byte >= 32 && byte <= 126) {
-                    std::cout << (char)byte;
-                } else {
-                    std::cout << ".";
-                }
+                std::cout << (char)((byte >= 32 && byte <= 126) ? byte : '.');
             }
             // Pad ASCII panel to 16 characters for incomplete lines
             for (size_t j = bytesOnLine; j < 16; j++) {
                 std::cout << " ";
             }
-            std::cout << "|";
-
-            std::cout << "\n";
+            std::cout << "|\n";
         }
 
         // Save current line as previous for next iteration

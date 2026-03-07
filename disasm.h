@@ -9,8 +9,8 @@
 #ifndef DISASM_H
 #define DISASM_H
 
+#include <format>
 #include <iostream>
-#include <iomanip>
 #include <vector>
 #include <cstdint>
 #include <cstring>
@@ -63,14 +63,12 @@ static inline void disassemble(const std::vector<uint8_t>& data, size_t offset, 
     while (cs_disasm_iter(handle, &codePtr, &sizeRemaining, &currentAddress, insn)) {
         // Print file offset
         size_t fileOffset = offset + (insn->address - address);
-        std::cout << std::hex << std::nouppercase << std::setw(8) << std::setfill('0')
-                  << fileOffset << "h  ";
+        std::cout << std::format("{:08x}h  ", fileOffset);
 
         // Print raw bytes (up to 8 bytes to keep formatting reasonable)
         size_t bytesToShow = std::min((size_t)insn->size, (size_t)8);
         for (size_t j = 0; j < bytesToShow; j++) {
-            std::cout << std::hex << std::nouppercase << std::setw(2) << std::setfill('0')
-                      << (int)insn->bytes[j] << " ";
+            std::cout << std::format("{:02x} ", insn->bytes[j]);
         }
         // Pad to 8 bytes for consistent column alignment
         for (size_t j = bytesToShow; j < 8; j++) {
