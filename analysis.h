@@ -11,13 +11,13 @@
 
 #include <iostream>
 #include <fstream>
-#include <iomanip>
+#include <format>
+#include <ranges>
 #include <vector>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <algorithm>
-#include <sstream>
 #include <cctype>
 
 #include "exe.h"
@@ -86,7 +86,7 @@ static inline std::vector<uint8_t> read_exe_file(const std::string& filename, in
 /// @param header The already-read MZ header
 /// @param dosFileSize Actual file size in bytes
 static inline bool validate_header(const MZHeader& header, int64_t dosFileSize) {
-    if (header.signature != 0x5A4D) {   // 'MZ'
+    if (header.signature != MZ_SIGNATURE) {   // 'MZ'
         std::cerr << "Error: Not a valid MZ EXE file\n";
         return false;
     }
@@ -162,9 +162,8 @@ static inline void print_header_info(const Options& opts, const MZHeader& header
     print_field("Minimum Extra Memory",          header.mem_extra,                               4);
 
     if (header.mem_max == 0xFFFF) {
-        std::cout << std::left << std::setw(50) << "Maximum Memory Requirement"
-                  << std::right << std::setw(5) << "FFFFh"
-                  << "  ( 65535. paragraphs = 1048560 bytes, all available )\n";
+        std::cout << std::format("{:<50}{:>5}  ( 65535. paragraphs = 1048560 bytes, all available )\n",
+                                 "Maximum Memory Requirement", "FFFFh");
     } else {
         print_field("Maximum Memory Requirement", header.mem_max * 16,                           4);
     }
@@ -179,8 +178,8 @@ static inline void print_header_info(const Options& opts, const MZHeader& header
     print_seg_off("Program Entry Point    (CS:IP)", static_cast<uint16_t>(header.cs), header.ip);
 
     if (s.extraBytes > 0) {
-        std::cout << "\nNote: File contains " << std::dec << s.extraBytes
-                  << " extra bytes beyond declared size (overlay/debug data?)\n";
+        std::cout << std::format("\nNote: File contains {} extra bytes beyond declared size (overlay/debug data?)\n",
+                                 s.extraBytes);
     }
 }
 
@@ -221,21 +220,17 @@ static inline void dump_relocations(const Options& opts,
             relocs.resize(header.num_reloc);
             std::memcpy(relocs.data(), fileData.data() + relocStart, relocTableBytes);
 
-            std::cout << "\n=== Relocation Table (" << std::dec << header.num_reloc << " entries) ===\n";
+        std::cout << std::format("\n=== Relocation Table ({} entries) ===\n", header.num_reloc);
             std::cout << "Entry  Segment:Offset  File Location (Hex)  Linear Offset\n";
             std::cout << "-----  --------------  -------------------  -------------\n";
 
-            for (size_t i = 0; i < relocs.size(); ++i) {
+            for (auto [i, r] : std::views::enumerate(relocs)) {
                 uint32_t fileLoc = static_cast<uint32_t>(s.headerSizeBytes)
-                                   + (relocs[i].segment * 16u) + relocs[i].offset;
-                uint32_t linear  = (relocs[i].segment * 16u) + relocs[i].offset;
+                                   + (r.segment * 16u) + r.offset;
+                uint32_t linear  = (r.segment * 16u) + r.offset;
 
-                std::cout << std::right << std::setw(5) << std::dec << i << "  "
-                          << std::hex << std::uppercase << std::setfill('0')
-                          << std::setw(4) << relocs[i].segment << ":"
-                          << std::setw(4) << relocs[i].offset << "        "
-                          << std::setw(8) << fileLoc << "h          "
-                          << std::setw(6) << linear  << "h\n";
+                std::cout << std::format("{:05}  {:04X}:{:04X}        {:08X}h          {:06X}h\n",
+                                         i, r.segment, r.offset, fileLoc, linear);
             }
         } else {
             std::cerr << "\n[Warning] Relocation table extends beyond file end. Skipped.\n";
@@ -317,9 +312,7 @@ static inline void reg_set(const std::string& n, uint16_t val) {
 static inline std::string reg_fmt(const std::string& n, uint16_t val) {
     bool isByte = (n.size()==2 && (n[1]=='h'||n[1]=='l') &&
                    (n[0]=='a'||n[0]=='b'||n[0]=='c'||n[0]=='d'));
-    std::ostringstream oss;
-    oss << "0x" << std::hex << std::setfill('0') << std::setw(isByte ? 2 : 4) << val;
-    return oss.str();
+    return std::format("0x{:0{}x}", val, isByte ? 2 : 4);
 }
 
 //=============================================================================
@@ -438,10 +431,10 @@ static inline void run_simulation(const Options& opts,
         std::cout << "Entry  Image Offset  Original Seg  Relocated Seg  Change\n";
         std::cout << "-----  ------------  ------------  -------------  ------\n";
 
-        for (size_t i = 0; i < relocs.size(); i++) {
+        for (auto [i, r] : std::views::enumerate(relocs)) {
             uint32_t fileLocation = static_cast<uint32_t>(s.headerSizeBytes)
-                                    + (relocs[i].segment * 16u) + relocs[i].offset;
-            uint32_t imageOffset  = (relocs[i].segment * 16u) + relocs[i].offset;
+                                    + (r.segment * 16u) + r.offset;
+            uint32_t imageOffset  = (r.segment * 16u) + r.offset;
 
             uint16_t originalSeg = 0;
             if (fileLocation + 1 < fileData.size()) {
@@ -450,12 +443,8 @@ static inline void run_simulation(const Options& opts,
 
             uint16_t relocatedSeg = originalSeg + opts.loadBase;
 
-            std::cout << std::right << std::setw(5) << std::dec << i << "  "
-                      << std::hex << std::uppercase << std::setfill('0')
-                      << std::setw(6) << imageOffset << "h      "
-                      << std::setw(4) << originalSeg << "h          "
-                      << std::setw(4) << relocatedSeg << "h         +"
-                      << std::setw(4) << opts.loadBase << "h\n";
+            std::cout << std::format("{:05}  {:06X}h      {:04X}h          {:04X}h         +{:04X}h\n",
+                                     i, imageOffset, originalSeg, relocatedSeg, opts.loadBase);
         }
     }
 
@@ -484,9 +473,8 @@ static inline void run_simulation(const Options& opts,
 
             if (count > 0) {
                 for (size_t i = 0; i < count; i++) {
-                    std::cout << std::right << std::hex << std::setw(4) << std::setfill('0')
-                              << (insn[i].address & 0xFFFF) << ": "
-                              << insn[i].mnemonic;
+                    std::cout << std::format("{:04x}: {}", insn[i].address & 0xFFFF,
+                                             insn[i].mnemonic);
                     if (insn[i].op_str[0]) std::cout << " " << insn[i].op_str;
 
                     std::string comment = trace_comment(handle, &insn[i]);
