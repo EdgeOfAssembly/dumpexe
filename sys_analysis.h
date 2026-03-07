@@ -177,11 +177,11 @@ static inline void analyze_sys(const Options& opts, const std::vector<uint8_t>& 
     if (opts.showDisasm || opts.showAll) {
         std::cout << "\n=== Disassembly from Strategy Entry Point ===\n";
         // Strategy offset is from start of driver (file offset 0)
-        disassemble(data, header.strategy, 0, header.strategy);
+        disassemble(data, header.strategy, 0, header.strategy, opts);
 
         if (header.interrupt != header.strategy) {
             std::cout << "\n=== Disassembly from Interrupt Entry Point ===\n";
-            disassemble(data, header.interrupt, 0, header.interrupt);
+            disassemble(data, header.interrupt, 0, header.interrupt, opts);
         }
     }
 }

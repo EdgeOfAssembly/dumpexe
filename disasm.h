@@ -31,7 +31,7 @@
 /// @param opts   Parsed CLI options (noIntAnnot flag)
 static inline void disassemble(const std::vector<uint8_t>& data, size_t offset,
                                 uint16_t cs, uint16_t ip,
-                                const Options& opts = Options{}) {
+                                const Options& opts) {
     if (offset >= data.size()) {
         std::cout << "\nDisassembly: Entry point is beyond end of file.\n";
         return;
@@ -70,8 +70,8 @@ static inline void disassemble(const std::vector<uint8_t>& data, size_t offset,
 
     // Track last seen AH/AL immediate values for INT annotation.
     // 0x100 (> 0xFF) means "unknown".
-    uint32_t last_ah = 0x100;
-    uint32_t last_al = 0x100;
+    uint32_t lastAh = 0x100;
+    uint32_t lastAl = 0x100;
 
     while (cs_disasm_iter(handle, &codePtr, &sizeRemaining, &currentAddress, insn)) {
         // Print file offset
@@ -95,8 +95,7 @@ static inline void disassemble(const std::vector<uint8_t>& data, size_t offset,
         }
 
         // Track 'mov ah, imm8' or 'mov ax, imm16' to improve INT annotations
-        const std::string mnem{insn->mnemonic};
-        if (insn->detail && mnem == "mov" &&
+        if (insn->detail && strcmp(insn->mnemonic, "mov") == 0 &&
             insn->detail->x86.op_count == 2 &&
             insn->detail->x86.operands[0].type == X86_OP_REG &&
             insn->detail->x86.operands[1].type == X86_OP_IMM) {
@@ -104,38 +103,37 @@ static inline void disassemble(const std::vector<uint8_t>& data, size_t offset,
             uint32_t imm    = static_cast<uint32_t>(
                                   insn->detail->x86.operands[1].imm);
             if (dst_reg == X86_REG_AH) {
-                last_ah = imm & 0xFF;
+                lastAh = imm & 0xFF;
             } else if (dst_reg == X86_REG_AX) {
-                last_ah = (imm >> 8) & 0xFF;
-                last_al = imm & 0xFF;
+                lastAh = (imm >> 8) & 0xFF;
+                lastAl = imm & 0xFF;
             } else if (dst_reg == X86_REG_AL) {
-                last_al = imm & 0xFF;
+                lastAl = imm & 0xFF;
             }
         }
 
         // Annotate INT instructions
-        if (!opts.noIntAnnot && mnem == "int" &&
+        if (!opts.noIntAnnot && strcmp(insn->mnemonic, "int") == 0 &&
             insn->size >= 2 && insn->bytes[0] == 0xCD) {
             uint8_t int_num = insn->bytes[1];
-            uint8_t use_ah = (last_ah <= 0xFF) ? static_cast<uint8_t>(last_ah)
-                                                : uint8_t{0xFF};
-            uint8_t use_al = (last_al <= 0xFF) ? static_cast<uint8_t>(last_al)
-                                                : uint8_t{0xFF};
+            uint8_t use_ah = (lastAh <= 0xFF) ? static_cast<uint8_t>(lastAh)
+                                               : uint8_t{0xFF};
+            uint8_t use_al = (lastAl <= 0xFF) ? static_cast<uint8_t>(lastAl)
+                                               : uint8_t{0xFF};
             // Only annotate with a description when AH is known; otherwise
             // just label the interrupt number to avoid false matches.
-            std::string annot = (last_ah <= 0xFF)
+            std::string annot = (lastAh <= 0xFF)
                 ? format_int_annotation(int_num, use_ah, use_al)
                 : std::format("; INT {:02X}h", int_num);
             // Pad to a consistent column before the comment
-            std::string line = mnem +
-                               (strlen(insn->op_str) > 0
-                                    ? std::string(" ") + insn->op_str
-                                    : std::string{});
-            int pad = std::max(1, 24 - static_cast<int>(line.size()));
+            size_t op_len  = std::strlen(insn->op_str);
+            size_t line_len = std::strlen(insn->mnemonic) +
+                              (op_len > 0 ? 1 + op_len : 0);
+            int pad = std::max(1, 24 - static_cast<int>(line_len));
             std::cout << std::string(pad, ' ') << annot;
             // Reset AH/AL after INT (interrupt may clobber registers)
-            last_ah = 0x100;
-            last_al = 0x100;
+            lastAh = 0x100;
+            lastAl = 0x100;
         }
 
         std::cout << "\n";
