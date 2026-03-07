@@ -72,8 +72,8 @@ static inline void disassemble(const std::vector<uint8_t>& data, size_t offset, 
             std::cout << std::hex << std::nouppercase << std::setw(2) << std::setfill('0')
                       << (int)insn->bytes[j] << " ";
         }
-        // Pad to 20 characters
-        for (size_t j = bytesToShow; j < 7; j++) {
+        // Pad to 8 bytes for consistent column alignment
+        for (size_t j = bytesToShow; j < 8; j++) {
             std::cout << "   ";
         }
 

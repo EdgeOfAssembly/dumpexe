@@ -34,7 +34,7 @@
 struct ExeSizes {
     size_t  headerSizeBytes;          ///< Header size in bytes (header_size * 16)
     size_t  entryPointFileOffset;     ///< Absolute file offset of the entry point
-    size_t  entryPointImageOffset;    ///< Image-relative offset of the entry point
+    int64_t entryPointImageOffset;    ///< Image-relative offset of the entry point (may be negative)
     int64_t loadImageSize;            ///< Declared load-image size in bytes
     int64_t extraBytes;               ///< Bytes beyond declared size (overlay/debug)
     int64_t dosFileSize;              ///< Actual file size on disk
@@ -56,14 +56,24 @@ static inline std::vector<uint8_t> read_exe_file(const std::string& filename, in
         return {};
     }
 
+    if (dosFileSize < static_cast<int64_t>(sizeof(MZHeader))) {
+        std::cerr << "Error: File '" << filename << "' is too small to contain a valid MZ header\n";
+        return {};
+    }
+
     std::ifstream file(filename, std::ios::binary);
     if (!file) {
         std::cerr << "Error: Cannot open file '" << filename << "'\n";
         return {};
     }
 
-    std::vector<uint8_t> data(static_cast<size_t>(dosFileSize));
-    file.read(reinterpret_cast<char*>(data.data()), dosFileSize);
+    const std::size_t bufferSize = static_cast<std::size_t>(dosFileSize);
+    std::vector<uint8_t> data(bufferSize);
+    file.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(bufferSize));
+    if (!file || file.gcount() != static_cast<std::streamsize>(bufferSize)) {
+        std::cerr << "Error: Failed to read full contents of '" << filename << "'\n";
+        return {};
+    }
     return data;
 }
 
@@ -127,7 +137,7 @@ static inline ExeSizes calculate_sizes(const MZHeader& header, int64_t dosFileSi
 
     s.headerSizeBytes         = static_cast<size_t>(headerSizeBytes64);
     s.entryPointFileOffset    = static_cast<size_t>(entryPointFileOffset64);
-    s.entryPointImageOffset   = static_cast<size_t>(entryPointImageOffset64);
+    s.entryPointImageOffset   = entryPointImageOffset64;
     s.loadImageSize           = loadImageSize64;
     s.extraBytes              = dosFileSize - loadImageSize64 - headerSizeBytes64;
     return s;

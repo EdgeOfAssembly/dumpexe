@@ -31,6 +31,10 @@ int main(int argc, char* argv[]) {
     if (fileData.empty()) return 1;
 
     // Read and validate MZ header
+    if (fileData.size() < sizeof(MZHeader)) {
+        std::cerr << "Error: File is too small to contain a valid MZ header\n";
+        return 1;
+    }
     MZHeader header;
     std::memcpy(&header, fileData.data(), sizeof(header));
     if (!validate_header(header, dosFileSize)) return 1;

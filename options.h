@@ -12,7 +12,6 @@
 #include <iostream>
 #include <string>
 #include <cstdint>
-#include <capstone/capstone.h>
 
 //=============================================================================
 // Command-Line Options
