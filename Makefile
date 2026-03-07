@@ -18,7 +18,9 @@ endif
 
 all: dumpexe
 
-dumpexe: dumpexe.cpp dumpexe.h
+HEADERS = dumpexe.h exe.h registers.h format.h options.h disasm.h analysis.h
+
+dumpexe: dumpexe.cpp $(HEADERS)
 ifeq ($(HAS_CAPSTONE),1)
 	$(CXX) $(CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe dumpexe.cpp $(CAPSTONE_LIBS)
 	@echo "Built dumpexe WITH Capstone disassembly support"
@@ -27,7 +29,7 @@ else
 	@echo "Built dumpexe WITHOUT Capstone (install libcapstone-dev for disassembly)"
 endif
 
-dumpexe-nocap: dumpexe.cpp dumpexe.h
+dumpexe-nocap: dumpexe.cpp $(HEADERS)
 	$(CXX) $(CXXFLAGS) -o dumpexe dumpexe.cpp
 
 PREFIX ?= /usr/local
