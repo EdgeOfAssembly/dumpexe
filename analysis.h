@@ -322,7 +322,8 @@ static inline std::string reg_fmt(const std::string& n, uint16_t val) {
 /// Build a "; reg = value" comment using Capstone's structured operand detail.
 /// Updates the global CPU registers (AX, BX, … SP, DS, …) as a side-effect.
 /// Requires CS_OPT_DETAIL to have been enabled on the handle.
-static inline std::string trace_comment(csh handle, const cs_insn* insn) {
+static inline std::string trace_comment(csh handle, const cs_insn* insn,
+                                         bool no_int_annot = false) {
     if (!insn->detail) return "";
 
     const cs_x86& x86  = insn->detail->x86;
@@ -381,7 +382,12 @@ static inline std::string trace_comment(csh handle, const cs_insn* insn) {
         SP += 2;
         return "; sp = " + reg_fmt("sp", SP);
     } else if (mnem == "int") {
-        return "; interrupt";
+        if (no_int_annot || x86.op_count < 1 ||
+            x86.operands[0].type != X86_OP_IMM) {
+            return "; interrupt";
+        }
+        uint8_t int_num = static_cast<uint8_t>(x86.operands[0].imm);
+        return format_int_annotation(int_num, AH, AL);
     }
     return "";
 }
@@ -478,7 +484,8 @@ static inline void run_simulation(const Options& opts,
                                              insn[i].mnemonic);
                     if (insn[i].op_str[0]) std::cout << " " << insn[i].op_str;
 
-                    std::string comment = trace_comment(handle, &insn[i]);
+                    std::string comment = trace_comment(handle, &insn[i],
+                                                         opts.noIntAnnot);
                     if (!comment.empty()) std::cout << "  " << comment;
 
                     std::cout << "\n";
