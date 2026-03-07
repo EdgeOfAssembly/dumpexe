@@ -1,4 +1,4 @@
-// format.h - Formatting and output utility functions
+// formatting.h - Formatting and output utility functions
 // Author: EdgeOfAssembly <haxbox2000@gmail.com>
 // License: GPLv2 | Commercial (contact author)
 //
@@ -6,8 +6,8 @@
 // Provides TDUMP-style hex/dec formatting and hexdump output.
 // Uses std::format (C++23) for all string construction.
 
-#ifndef FORMAT_H
-#define FORMAT_H
+#ifndef FORMATTING_H
+#define FORMATTING_H
 
 #include <format>
 #include <iostream>
@@ -146,4 +146,4 @@ static inline void print_hex_dump(const std::vector<uint8_t>& data, size_t offse
     }
 }
 
-#endif // FORMAT_H
+#endif // FORMATTING_H
