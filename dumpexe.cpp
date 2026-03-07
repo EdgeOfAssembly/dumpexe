@@ -13,9 +13,9 @@ static inline void print_version() {
                  "Built with Capstone disassembly support: yes\n";
 }
 
-/// Read the first few bytes of a file for format detection.
-/// Returns false and prints an error if the file cannot be opened.
-static inline bool read_file_header(const std::string& filename,
+/// Read the entire contents of a file into a byte vector.
+/// Returns false and prints an error if the file cannot be opened or read.
+static inline bool read_entire_file(const std::string& filename,
                                     std::vector<uint8_t>& data,
                                     int64_t& fileSize) {
     try {
@@ -56,7 +56,7 @@ int main(int argc, char* argv[]) {
     // Load file and detect format from first bytes
     int64_t fileSize = 0;
     std::vector<uint8_t> fileData;
-    if (!read_file_header(opts.filename, fileData, fileSize)) return 1;
+    if (!read_entire_file(opts.filename, fileData, fileSize)) return 1;
 
     if (fileData.size() < 4) {
         std::cerr << "Error: Not a recognized DOS file format\n";
