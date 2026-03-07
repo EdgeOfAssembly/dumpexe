@@ -22,7 +22,7 @@ CAPSTONE_LIBS   := $(shell pkg-config --libs capstone 2>/dev/null)
 
 all: dumpexe
 
-HEADERS = dumpexe.h exe.h registers.h format.h options.h disasm.h analysis.h
+HEADERS = dumpexe.h exe.h registers.h formatting.h options.h disasm.h analysis.h sys.h sys_analysis.h
 
 dumpexe: dumpexe.cpp $(HEADERS)
 	$(CXX) $(CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe dumpexe.cpp $(CAPSTONE_LIBS)
