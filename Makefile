@@ -22,11 +22,15 @@ CAPSTONE_LIBS   := $(shell pkg-config --libs capstone 2>/dev/null)
 
 all: dumpexe
 
-HEADERS = dumpexe.h exe.h registers.h formatting.h options.h disasm.h analysis.h sys.h sys_analysis.h
+HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h analysis.h sys.h sys_analysis.h
 
 dumpexe: dumpexe.cpp $(HEADERS)
 	$(CXX) $(CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe dumpexe.cpp $(CAPSTONE_LIBS)
 	@echo "Built dumpexe with Capstone disassembly support"
+
+# Auto-generate interrupt annotation database from Ralph Brown's Interrupt List
+int_db.h: gen_int_db.py $(wildcard interrupts/INTERRUP.*)
+	python3 gen_int_db.py
 
 PREFIX ?= /usr/local
 install: dumpexe
@@ -36,4 +40,4 @@ install: dumpexe
 	install -m 644 dumpexe.1 $(DESTDIR)$(PREFIX)/share/man/man1/
 
 clean:
-	rm -f dumpexe *.o
+	rm -f dumpexe *.o int_db.h
