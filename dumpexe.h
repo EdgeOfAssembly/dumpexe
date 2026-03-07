@@ -10,7 +10,7 @@
 //   registers.h — 16-bit x86 CPU register state definitions and macros
 //   format.h    — TDUMP-style hex/dec formatting and hexdump output
 //   options.h   — CLI options struct (Options) and show_usage()
-//   disasm.h    — Capstone-backed disassemble() (or no-op stub)
+//   disasm.h    — Capstone-backed disassemble() (Capstone required)
 //   analysis.h  — File loading, validation, header printing, simulation
 
 #ifndef DUMPEXE_H

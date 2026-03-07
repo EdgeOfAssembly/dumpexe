@@ -7,13 +7,16 @@
 CXX = g++
 CXXFLAGS = -static -static-libstdc++ -no-pie -Wl,--build-id=none -std=c++23 -Wall -Wextra -O2
 
-# Capstone is a hard requirement — abort with a clear message if missing
+# Capstone is a hard requirement for compiling — checked only when building,
+# not for `make clean` or `make install` which don't need the library headers.
+ifeq ($(filter clean install,$(MAKECMDGOALS)),)
 ifeq ($(shell pkg-config --exists capstone && echo 1 || echo 0),0)
 $(error Capstone library not found. Install it with: sudo apt-get install libcapstone-dev)
 endif
+endif
 
-CAPSTONE_CFLAGS := $(shell pkg-config --cflags capstone)
-CAPSTONE_LIBS   := $(shell pkg-config --libs capstone)
+CAPSTONE_CFLAGS := $(shell pkg-config --cflags capstone 2>/dev/null)
+CAPSTONE_LIBS   := $(shell pkg-config --libs capstone 2>/dev/null)
 
 .PHONY: all clean install
 
