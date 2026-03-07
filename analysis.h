@@ -12,7 +12,6 @@
 #include <iostream>
 #include <fstream>
 #include <format>
-#include <ranges>
 #include <vector>
 #include <cstdint>
 #include <cstring>
@@ -220,11 +219,12 @@ static inline void dump_relocations(const Options& opts,
             relocs.resize(header.num_reloc);
             std::memcpy(relocs.data(), fileData.data() + relocStart, relocTableBytes);
 
-        std::cout << std::format("\n=== Relocation Table ({} entries) ===\n", header.num_reloc);
+            std::cout << std::format("\n=== Relocation Table ({} entries) ===\n", header.num_reloc);
             std::cout << "Entry  Segment:Offset  File Location (Hex)  Linear Offset\n";
             std::cout << "-----  --------------  -------------------  -------------\n";
 
-            for (auto [i, r] : std::views::enumerate(relocs)) {
+            for (size_t i = 0; i < relocs.size(); ++i) {
+                const auto& r = relocs[i];
                 uint32_t fileLoc = static_cast<uint32_t>(s.headerSizeBytes)
                                    + (r.segment * 16u) + r.offset;
                 uint32_t linear  = (r.segment * 16u) + r.offset;
@@ -431,7 +431,8 @@ static inline void run_simulation(const Options& opts,
         std::cout << "Entry  Image Offset  Original Seg  Relocated Seg  Change\n";
         std::cout << "-----  ------------  ------------  -------------  ------\n";
 
-        for (auto [i, r] : std::views::enumerate(relocs)) {
+        for (size_t i = 0; i < relocs.size(); ++i) {
+            const auto& r = relocs[i];
             uint32_t fileLocation = static_cast<uint32_t>(s.headerSizeBytes)
                                     + (r.segment * 16u) + r.offset;
             uint32_t imageOffset  = (r.segment * 16u) + r.offset;
