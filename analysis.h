@@ -269,8 +269,8 @@ static inline void dump_hex(const Options& opts,
 // DOS load simulation
 //=============================================================================
 
-/// Run a DOS load simulation, printing register state and relocation fixups.
-/// When Capstone is available also performs a short register-trace disassembly.
+/// Run a DOS load simulation, printing register state and relocation fixups,
+/// followed by a Capstone-powered register-trace of the first ~20 instructions.
 /// @param opts     Parsed CLI options (loadBase, simulate flag)
 /// @param header   Validated MZ header
 /// @param fileData Full file contents
@@ -331,7 +331,6 @@ static inline void run_simulation(const Options& opts,
         }
     }
 
-#if HAS_CAPSTONE
     std::cout << "\n=== Register Tracing ===\n";
     std::cout << "Note: Best-effort trace for common instructions.\n\n";
 
@@ -386,7 +385,6 @@ static inline void run_simulation(const Options& opts,
             cs_close(&handle);
         }
     }
-#endif
 }
 
 #endif // ANALYSIS_H

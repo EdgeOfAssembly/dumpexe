@@ -4,6 +4,7 @@
 //
 // Defines the Options struct for holding all parsed CLI flags and the
 // show_usage() helper. All helper functions are static inline.
+// Capstone is a mandatory build dependency.
 
 #ifndef OPTIONS_H
 #define OPTIONS_H
@@ -11,14 +12,7 @@
 #include <iostream>
 #include <string>
 #include <cstdint>
-
-// Optional Capstone support - check if headers are available
-#if __has_include(<capstone/capstone.h>)
 #include <capstone/capstone.h>
-#define HAS_CAPSTONE 1
-#else
-#define HAS_CAPSTONE 0
-#endif
 
 //=============================================================================
 // Command-Line Options
@@ -117,10 +111,6 @@ static inline void show_usage(const char* progname) {
     std::cout << "  --base=XXXX         Set load base segment (hex, default: 1000h)\n\n";
     std::cout << "If no section options are given, only the EXE header information is displayed.\n";
     std::cout << "Multiple options can be combined, e.g., -r -x for relocations and hexdump.\n\n";
-#if !HAS_CAPSTONE
-    std::cout << "Note: This build was compiled without Capstone support.\n";
-    std::cout << "      Disassembly features (-d, -a) are not available.\n\n";
-#endif
 }
 
 /// Legacy alias kept for compatibility with call sites using the old name

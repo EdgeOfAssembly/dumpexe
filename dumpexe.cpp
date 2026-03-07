@@ -10,11 +10,7 @@ static inline void print_version() {
     std::cout << "dumpexe 1.0 — 16-bit MS-DOS MZ EXE Analyzer & Single-Pass Disassembler\n";
     std::cout << "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n";
     std::cout << "License: GPLv2 | Commercial (contact author)\n";
-#if HAS_CAPSTONE
     std::cout << "Built with Capstone disassembly support: yes\n";
-#else
-    std::cout << "Built with Capstone disassembly support: no\n";
-#endif
 }
 
 int main(int argc, char* argv[]) {
@@ -28,16 +24,6 @@ int main(int argc, char* argv[]) {
         show_usage(argv[0]);
         return 1;
     }
-
-    // Warn about disassembly request without Capstone support
-#if !HAS_CAPSTONE
-    if (opts.showDisasm || opts.showAll) {
-        std::cerr << "Warning: Disassembly requested but Capstone support not available\n";
-        std::cerr << "         Rebuild with libcapstone-dev installed for disassembly features\n\n";
-        opts.showDisasm = false;
-        // showAll can still show other sections (reloc, hexdump) even without disasm
-    }
-#endif
 
     // Load file
     int64_t dosFileSize = 0;
@@ -63,12 +49,10 @@ int main(int argc, char* argv[]) {
     dump_hex(opts, fileData, sizes);
 
     // Full disassembly
-#if HAS_CAPSTONE
     if (opts.showDisasm || opts.showAll) {
         disassemble(fileData, sizes.entryPointFileOffset,
                     static_cast<uint16_t>(header.cs), header.ip);
     }
-#endif
 
     // DOS load simulation
     run_simulation(opts, header, fileData, relocs, sizes);
