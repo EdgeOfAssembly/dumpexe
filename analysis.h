@@ -17,6 +17,8 @@
 #include <cstring>
 #include <filesystem>
 #include <algorithm>
+#include <sstream>
+#include <cctype>
 
 #include "exe.h"
 #include "format.h"
@@ -93,8 +95,10 @@ static inline bool validate_header(const MZHeader& header, int64_t dosFileSize) 
     int64_t entryPointImageOffset = csBytes + static_cast<int64_t>(header.ip);
     int64_t entryPointFileOffset  = headerSizeBytes64 + entryPointImageOffset;
 
-    if (csBytes < 0 || entryPointImageOffset < 0 || entryPointFileOffset < 0 ||
-        entryPointFileOffset > dosFileSize) {
+    // cs is a signed relative offset — negative values are valid (e.g. cs=0xFFF0
+    // combined with a matching ip can yield a non-negative entryPointFileOffset).
+    // Only the final file offset needs to be within bounds.
+    if (entryPointFileOffset < 0 || entryPointFileOffset > dosFileSize) {
         std::cerr << "Error: Invalid CS:IP or entry point outside file\n";
         return false;
     }
@@ -266,6 +270,120 @@ static inline void dump_hex(const Options& opts,
 }
 
 //=============================================================================
+// Register helpers — read/write the global CPU state from registers.h
+//=============================================================================
+
+/// Read the current value of a named 8/16-bit register from global state.
+/// Returns false when the name is not a recognised register.
+static inline bool reg_get(const std::string& n, uint16_t& out) {
+    if      (n=="ax"){out=AX;return true;} else if (n=="bx"){out=BX;return true;}
+    else if (n=="cx"){out=CX;return true;} else if (n=="dx"){out=DX;return true;}
+    else if (n=="si"){out=SI;return true;} else if (n=="di"){out=DI;return true;}
+    else if (n=="sp"){out=SP;return true;} else if (n=="bp"){out=BP;return true;}
+    else if (n=="cs"){out=CS;return true;} else if (n=="ds"){out=DS;return true;}
+    else if (n=="es"){out=ES;return true;} else if (n=="ss"){out=SS;return true;}
+    else if (n=="ah"){out=AH;return true;} else if (n=="al"){out=AL;return true;}
+    else if (n=="bh"){out=BH;return true;} else if (n=="bl"){out=BL;return true;}
+    else if (n=="ch"){out=CH;return true;} else if (n=="cl"){out=CL;return true;}
+    else if (n=="dh"){out=DH;return true;} else if (n=="dl"){out=DL;return true;}
+    return false;
+}
+
+/// Write a value to a named 8/16-bit register in global state.
+static inline void reg_set(const std::string& n, uint16_t val) {
+    if      (n=="ax") AX=val;          else if (n=="bx") BX=val;
+    else if (n=="cx") CX=val;          else if (n=="dx") DX=val;
+    else if (n=="si") SI=val;          else if (n=="di") DI=val;
+    else if (n=="sp") SP=val;          else if (n=="bp") BP=val;
+    else if (n=="cs") CS=val;          else if (n=="ds") DS=val;
+    else if (n=="es") ES=val;          else if (n=="ss") SS=val;
+    else if (n=="ah") AH=uint8_t(val); else if (n=="al") AL=uint8_t(val);
+    else if (n=="bh") BH=uint8_t(val); else if (n=="bl") BL=uint8_t(val);
+    else if (n=="ch") CH=uint8_t(val); else if (n=="cl") CL=uint8_t(val);
+    else if (n=="dh") DH=uint8_t(val); else if (n=="dl") DL=uint8_t(val);
+}
+
+/// Format a value as "0xNNNN" (4 digits) or "0xNN" for byte registers.
+static inline std::string reg_fmt(const std::string& n, uint16_t val) {
+    bool isByte = (n.size()==2 && (n[1]=='h'||n[1]=='l') &&
+                   (n[0]=='a'||n[0]=='b'||n[0]=='c'||n[0]=='d'));
+    std::ostringstream oss;
+    oss << "0x" << std::hex << std::setfill('0') << std::setw(isByte ? 2 : 4) << val;
+    return oss.str();
+}
+
+//=============================================================================
+// Capstone-powered register trace
+//=============================================================================
+
+/// Build a "; reg = value" comment using Capstone's structured operand detail.
+/// Updates the global CPU registers (AX, BX, … SP, DS, …) as a side-effect.
+/// Requires CS_OPT_DETAIL to have been enabled on the handle.
+static inline std::string trace_comment(csh handle, const cs_insn* insn) {
+    if (!insn->detail) return "";
+
+    const cs_x86& x86  = insn->detail->x86;
+    const std::string  mnem = insn->mnemonic;
+
+    // Resolve a Capstone register ID → lowercase name string
+    auto rname = [&](x86_reg r) -> std::string {
+        const char* n = cs_reg_name(handle, r);
+        return n ? std::string(n) : "";
+    };
+
+    // Instructions whose first operand is a destination register
+    if (x86.op_count >= 2 && x86.operands[0].type == X86_OP_REG) {
+        std::string dst = rname(x86.operands[0].reg);
+        uint16_t cur = 0;
+        bool curKnown = reg_get(dst, cur);
+
+        if (mnem == "mov") {
+            // mov reg, imm  or  mov reg, reg  →  update dst, show ; dst = val
+            uint16_t val = 0; bool known = false;
+            if (x86.operands[1].type == X86_OP_IMM) {
+                val = static_cast<uint16_t>(x86.operands[1].imm);
+                known = true;
+            } else if (x86.operands[1].type == X86_OP_REG) {
+                known = reg_get(rname(x86.operands[1].reg), val);
+            }
+            if (known) {
+                reg_set(dst, val);
+                uint16_t stored = 0; reg_get(dst, stored);
+                return "; " + dst + " = " + reg_fmt(dst, stored);
+            }
+        } else if ((mnem == "xor" || mnem == "sub") &&
+                   x86.operands[1].type == X86_OP_REG &&
+                   x86.operands[0].reg  == x86.operands[1].reg) {
+            // xor/sub reg, reg  →  reg = 0
+            reg_set(dst, 0);
+            return "; " + dst + " = " + reg_fmt(dst, 0);
+        } else if (mnem == "add" && curKnown &&
+                   x86.operands[1].type == X86_OP_IMM) {
+            uint16_t val = static_cast<uint16_t>(cur + x86.operands[1].imm);
+            reg_set(dst, val);
+            return "; " + dst + " = " + reg_fmt(dst, val);
+        } else if (mnem == "sub" && curKnown &&
+                   x86.operands[1].type == X86_OP_IMM) {
+            uint16_t val = static_cast<uint16_t>(cur - x86.operands[1].imm);
+            reg_set(dst, val);
+            return "; " + dst + " = " + reg_fmt(dst, val);
+        }
+    }
+
+    // Stack / control-flow instructions — track SP
+    if (mnem == "push" || mnem == "call") {
+        SP -= 2;
+        return "; sp = " + reg_fmt("sp", SP);
+    } else if (mnem == "pop" || mnem == "ret" || mnem == "retf") {
+        SP += 2;
+        return "; sp = " + reg_fmt("sp", SP);
+    } else if (mnem == "int") {
+        return "; interrupt";
+    }
+    return "";
+}
+
+//=============================================================================
 // DOS load simulation
 //=============================================================================
 
@@ -348,6 +466,7 @@ static inline void run_simulation(const Options& opts,
         uint32_t entryLinear = (CS * 16) + IP;
 
         if (cs_open(CS_ARCH_X86, CS_MODE_16, &handle) == CS_ERR_OK) {
+            cs_option(handle, CS_OPT_DETAIL, CS_OPT_ON);
             size_t codeSize = std::min((size_t)128, fileData.size() - s.entryPointFileOffset);
             const uint8_t* code = fileData.data() + s.entryPointFileOffset;
 
@@ -355,28 +474,13 @@ static inline void run_simulation(const Options& opts,
 
             if (count > 0) {
                 for (size_t i = 0; i < count; i++) {
-                    std::string mnem = insn[i].mnemonic;
-                    std::string ops  = insn[i].op_str;
-
-                    std::cout << std::hex << std::setw(4) << std::setfill('0')
+                    std::cout << std::right << std::hex << std::setw(4) << std::setfill('0')
                               << (insn[i].address & 0xFFFF) << ": "
-                              << std::setw(8) << std::left << mnem << " " << ops;
+                              << insn[i].mnemonic;
+                    if (insn[i].op_str[0]) std::cout << " " << insn[i].op_str;
 
-                    if (mnem == "xor" && ops.find("ax,ax") != std::string::npos) {
-                        AX = 0;
-                        std::cout << "  ; AX = 0000h";
-                    } else if (mnem == "xor" && ops.find("bx,bx") != std::string::npos) {
-                        BX = 0;
-                        std::cout << "  ; BX = 0000h";
-                    } else if (mnem == "push") {
-                        SP -= 2;
-                        std::cout << "  ; SP = " << hex_format(SP, 4);
-                    } else if (mnem == "pop") {
-                        SP += 2;
-                        std::cout << "  ; SP = " << hex_format(SP, 4);
-                    } else if (mnem == "int") {
-                        std::cout << "  ; interrupt";
-                    }
+                    std::string comment = trace_comment(handle, &insn[i]);
+                    if (!comment.empty()) std::cout << "  " << comment;
 
                     std::cout << "\n";
                 }
