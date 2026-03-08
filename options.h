@@ -30,7 +30,7 @@ struct Options {
     bool showAll = false;           ///< -a, --all
     bool simulate = false;          ///< --simulate
     bool noIntAnnot = false;        ///< -n, --no-int-annotations
-    uint16_t loadBase = 0x1000;     ///< --base=XXXX (default: 1000h, after PSP)
+    uint16_t loadBase = 0x1000;     ///< --base=XXXX (default: 1000h; EXE-style: code segment after PSP, .COM simulate: PSP segment itself)
     bool comForcePsp   = false;     ///< --psp   : force PSP present for .COM (entry at 0x100)
     bool comForceNoPsp = false;     ///< --no-psp: force no PSP for .COM    (entry at 0x000)
 
@@ -135,7 +135,8 @@ static inline void show_usage(const char* progname) {
         "  MZ EXE   — first two bytes are 'MZ' (0x5A4D)\n"
         "  .SYS     — first four bytes are FFFFFFFFh (DOS device driver)\n"
         "  .COM     — all other files (fallback); PSP presence auto-detected\n\n"
-        "If no section options are given, only the file header information is shown.\n"
+        "If no section options are given, the file header information plus a small\n"
+        "entry-point preview (64 bytes) are shown by default.\n"
         "Multiple options can be combined, e.g., -r -x for relocations and hexdump.\n\n",
         progname);
 }

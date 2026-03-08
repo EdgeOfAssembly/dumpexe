@@ -58,9 +58,9 @@ int main(int argc, char* argv[]) {
     std::vector<uint8_t> fileData;
     if (!read_entire_file(opts.filename, fileData, fileSize)) return 1;
 
-    if (fileData.size() < 2) {
+    if (fileData.empty()) {
         // Even a 1-byte .COM is theoretically valid; only reject empty files.
-        std::cerr << "Error: File is empty or too small to be a valid DOS binary\n";
+        std::cerr << "Error: File is empty and cannot be a valid DOS binary\n";
         return 1;
     }
 

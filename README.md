@@ -83,7 +83,7 @@ Use `--psp` or `--no-psp` to override detection when the heuristic guesses wrong
 
 > **Note**: You need to supply your own DOS binary files for testing.
 
-**Show header information only (any format):**
+**Show default summary (header + entry-point preview, any format):**
 ```bash
 ./dumpexe <your_file>
 ```
