@@ -1,7 +1,7 @@
-// dumpexe.cpp - MS-DOS binary analyzer: MZ EXE and device driver (.SYS) support
+// dumpexe.cpp - MS-DOS binary analyzer: MZ EXE, .COM, and device driver (.SYS)
 // Author: EdgeOfAssembly <haxbox2000@gmail.com>
 // License: GPLv2 | Commercial (contact author)
-// Target: 16-bit MS-DOS binaries (MZ EXE and device drivers)
+// Target: 16-bit MS-DOS binaries (MZ EXE, plain .COM, and device drivers)
 
 #include "dumpexe.h"
 
@@ -58,18 +58,24 @@ int main(int argc, char* argv[]) {
     std::vector<uint8_t> fileData;
     if (!read_entire_file(opts.filename, fileData, fileSize)) return 1;
 
-    if (fileData.size() < 4) {
-        std::cerr << "Error: Not a recognized DOS file format\n";
+    if (fileData.empty()) {
+        // Even a 1-byte .COM is theoretically valid; only reject empty files.
+        std::cerr << "Error: File is empty and cannot be a valid DOS binary\n";
         return 1;
     }
 
-    // Content-based format detection
+    // Content-based format detection.
+    // Read up to 4 bytes for signature matching; pad with zeroes for short files.
     const uint16_t sig16 = static_cast<uint16_t>(fileData[0]) |
-                           (static_cast<uint16_t>(fileData[1]) << 8);
-    const uint32_t sig32 = static_cast<uint32_t>(fileData[0])        |
-                           (static_cast<uint32_t>(fileData[1]) << 8)  |
-                           (static_cast<uint32_t>(fileData[2]) << 16) |
-                           (static_cast<uint32_t>(fileData[3]) << 24);
+                           (fileData.size() >= 2
+                                ? static_cast<uint16_t>(fileData[1]) << 8
+                                : uint16_t{0});
+    const uint32_t sig32 = (fileData.size() >= 4)
+        ? (static_cast<uint32_t>(fileData[0])        |
+           (static_cast<uint32_t>(fileData[1]) << 8)  |
+           (static_cast<uint32_t>(fileData[2]) << 16) |
+           (static_cast<uint32_t>(fileData[3]) << 24))
+        : 0u;
 
     if (sig16 == MZ_SIGNATURE) {
         // --- MZ EXE path ---
@@ -100,8 +106,8 @@ int main(int argc, char* argv[]) {
         analyze_sys(opts, fileData, fileSize);
 
     } else {
-        std::cerr << "Error: Not a recognized DOS file format\n";
-        return 1;
+        // --- .COM path (fallback for any unrecognized flat DOS binary) ---
+        analyze_com(opts, fileData, fileSize);
     }
 
     return 0;

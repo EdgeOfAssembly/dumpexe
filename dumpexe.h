@@ -16,6 +16,8 @@
 //   analysis.h     — File loading, validation, header printing, simulation
 //   sys.h          — DOS device driver (.SYS) format structures and constants
 //   sys_analysis.h — DOS device driver analysis functions
+//   com.h          — MS-DOS .COM file format constants
+//   com_analysis.h — MS-DOS .COM file analysis functions
 
 #ifndef DUMPEXE_H
 #define DUMPEXE_H
@@ -29,5 +31,7 @@
 #include "analysis.h"
 #include "sys.h"
 #include "sys_analysis.h"
+#include "com.h"
+#include "com_analysis.h"
 
 #endif // DUMPEXE_H
