@@ -21,16 +21,18 @@
 
 /// Structure holding all command-line options and flags
 struct Options {
-    std::string filename;       ///< EXE file to analyze
-    bool showHelp = false;      ///< -h, --help
-    bool showVersion = false;   ///< -v, --version
-    bool showReloc = false;     ///< -r, --relocation
-    bool showHexdump = false;   ///< -x, --hexdump
-    bool showDisasm = false;    ///< -d, --disassemble
-    bool showAll = false;       ///< -a, --all
-    bool simulate = false;      ///< --simulate
-    bool noIntAnnot = false;    ///< -n, --no-int-annotations
-    uint16_t loadBase = 0x1000; ///< --base=XXXX (default: 1000h, after PSP)
+    std::string filename;           ///< File to analyze
+    bool showHelp = false;          ///< -h, --help
+    bool showVersion = false;       ///< -v, --version
+    bool showReloc = false;         ///< -r, --relocation
+    bool showHexdump = false;       ///< -x, --hexdump
+    bool showDisasm = false;        ///< -d, --disassemble
+    bool showAll = false;           ///< -a, --all
+    bool simulate = false;          ///< --simulate
+    bool noIntAnnot = false;        ///< -n, --no-int-annotations
+    uint16_t loadBase = 0x1000;     ///< --base=XXXX (default: 1000h; EXE-style: code segment after PSP, .COM simulate: PSP segment itself)
+    bool comForcePsp   = false;     ///< --psp   : force PSP present for .COM (entry at 0x100)
+    bool comForceNoPsp = false;     ///< --no-psp: force no PSP for .COM    (entry at 0x000)
 
     /// Parse command-line arguments
     /// @param argc Argument count from main()
@@ -62,6 +64,10 @@ struct Options {
                 simulate = true;
             } else if (arg == "-n" || arg == "--no-int-annotations") {
                 noIntAnnot = true;
+            } else if (arg == "--psp") {
+                comForcePsp = true;
+            } else if (arg == "--no-psp") {
+                comForceNoPsp = true;
             } else if (arg.starts_with("--base=")) {
                 std::string baseStr{arg.substr(7)};
                 try {
@@ -95,6 +101,12 @@ struct Options {
             showDisasm = true;
         }
 
+        // --psp and --no-psp are mutually exclusive
+        if (comForcePsp && comForceNoPsp) {
+            std::cerr << "Error: --psp and --no-psp cannot be used together\n";
+            return false;
+        }
+
         return true;
     }
 };
@@ -103,19 +115,28 @@ struct Options {
 /// @param progname argv[0] — used to display the correct invocation name
 static inline void show_usage(const char* progname) {
     std::cout << std::format(
-        "dumpexe - MS-DOS MZ EXE header analyzer and disassembler\n\n"
-        "Usage: {} [options] <exe_file>\n\n"
+        "dumpexe - MS-DOS binary analyzer: MZ EXE, .COM, and device driver (.SYS)\n\n"
+        "Usage: {} [options] <file>\n\n"
         "Options:\n"
         "  -h, --help          Show this help message and exit\n"
         "  -v, --version       Show version information and exit\n"
-        "  -r, --relocation    Show relocation table (with padding)\n"
+        "  -r, --relocation    Show relocation table (with padding) [EXE only]\n"
         "  -x, --hexdump       Show full hex+ASCII dump from entry point to EOF\n"
         "  -d, --disassemble   Show disassembly from entry point to EOF\n"
         "  -a, --all           Show all sections (relocation + hexdump + disassembly)\n"
         "  -n, --no-int-annotations  Suppress INT annotation comments in disassembly\n"
         "  --simulate          Enable DOS load simulation with register tracking\n"
-        "  --base=XXXX         Set load base segment (hex, default: 1000h)\n\n"
-        "If no section options are given, only the EXE header information is displayed.\n"
+        "  --base=XXXX         Set load base segment (hex, default: 1000h)\n"
+        "  --psp               Force .COM to be treated as having an embedded PSP\n"
+        "                        (entry at file offset 0100h)\n"
+        "  --no-psp            Force .COM to be treated as having no embedded PSP\n"
+        "                        (entry at file offset 0000h)\n\n"
+        "Supported file formats (detected from file content):\n"
+        "  MZ EXE   — first two bytes are 'MZ' (0x5A4D)\n"
+        "  .SYS     — first four bytes are FFFFFFFFh (DOS device driver)\n"
+        "  .COM     — all other files (fallback); PSP presence auto-detected\n\n"
+        "If no section options are given, the file header information plus a small\n"
+        "entry-point preview (64 bytes) are shown by default.\n"
         "Multiple options can be combined, e.g., -r -x for relocations and hexdump.\n\n",
         progname);
 }

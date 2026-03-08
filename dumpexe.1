@@ -1,6 +1,6 @@
-.TH DUMPEXE 1 "February 2026" "RetroCodeMess" "User Commands"
+.TH DUMPEXE 1 "March 2026" "RetroCodeMess" "User Commands"
 .SH NAME
-dumpexe \- MS-DOS MZ EXE header analyzer, disassembler, and simulator
+dumpexe \- MS-DOS binary analyzer: MZ EXE, .COM, and device driver (.SYS)
 .SH SYNOPSIS
 .B dumpexe
 .RB [ \-h | \-\-help ]
@@ -10,20 +10,39 @@ dumpexe \- MS-DOS MZ EXE header analyzer, disassembler, and simulator
 .br
 .B dumpexe
 .RB [ options ]
-.I exe_file
+.I file
 .SH DESCRIPTION
 .B dumpexe
-is a comprehensive utility for analyzing MS-DOS MZ format executable files. It provides TDUMP-style output with multiple analysis modes:
+is a comprehensive utility for analyzing MS-DOS 16-bit binary files.
+It supports three file formats — MZ EXE executables, plain .COM programs,
+and DOS device driver (.SYS) files — and provides TDUMP-style output with
+multiple analysis modes:
 .IP \(bu 2
 Static header analysis with detailed field information
 .IP \(bu 2
-Relocation table display with padding analysis
+Relocation table display with padding analysis (MZ EXE)
 .IP \(bu 2
 Hex+ASCII dumps with zero-compression (like hexdump -C)
 .IP \(bu 2
 x86-16 disassembly using Capstone (static code analysis)
 .IP \(bu 2
 DOS load simulation with register tracking (dynamic execution trace)
+.PP
+The file format is detected automatically from the file content:
+.RS
+.IP \(bu 2
+.B MZ EXE
+\(em first two bytes are
+.B 4Dh 5Ah
+('MZ')
+.IP \(bu 2
+.B .SYS device driver
+\(em first four bytes are
+.B FFFFFFFFh
+.IP \(bu 2
+.B .COM (plain binary)
+\(em fallback for all other DOS binaries
+.RE
 
 .SH OPTIONS
 .SS General Options
@@ -35,29 +54,30 @@ Display usage information and exit. Also shown when no arguments are provided.
 Display version information and exit.
 
 .SS Display Sections
-If no section options are given, only the static EXE header information is displayed.
+If no section options are given, the file header information is displayed, and for MZ EXE and .COM binaries a default 64-byte hex+ASCII preview of the entry point is also shown.
 Multiple options can be combined.
 
 .TP
 .BR \-r ", " \-\-relocation
 Show relocation table with all entries, including header padding before and after the table.
+.B MZ EXE only.
 The relocation table contains segment fixup locations that DOS applies when loading the program.
 .TP
 .BR \-x ", " \-\-hexdump
 Show complete hex+ASCII dump from entry point to end of file.
 Uses canonical hexdump -C format with zero-compression (repeated lines shown as *).
-Useful for examining code, data, and embedded resources.
 .TP
 .BR \-d ", " \-\-disassemble
 Show x86-16 disassembly from entry point to end of file using Capstone.
 This is
 .B static analysis
 \- shows all instructions without execution.
-Requires Capstone library support at build time.
 .TP
 .BR \-a ", " \-\-all
-Show all sections in order: static info, relocation table, hexdump, and disassembly.
-Provides complete analysis of the executable.
+Show all sections in order: static info, relocation table (EXE), hexdump, and disassembly.
+.TP
+.BR \-n ", " \-\-no-int-annotations
+Suppress INT annotation comments in disassembly output.
 
 .SS Simulation Options
 .TP
@@ -69,31 +89,78 @@ by simulating how DOS loads and starts the program. Shows:
 .IP \(bu 2
 Initial CPU register state (CS, IP, SS, SP, DS, ES, FLAGS, etc.)
 .IP \(bu 2
-Relocation fixups applied to the image
+Relocation fixups applied to the image (MZ EXE only)
 .IP \(bu 2
-Register tracing - simple instruction emulation showing register changes
+Register tracing — simple instruction emulation showing register changes
 .RE
 .TP
 .BI \-\-base= XXXX
 Set the load base segment for simulation (hexadecimal value, default: 1000h).
-This is the segment address where DOS loads the program after the PSP (Program Segment Prefix).
+This is the segment address where DOS loads the program.
 Common values: 1000, 2000, etc.
+
+.SS COM-Specific Options
+These options only affect .COM file analysis; they are silently ignored for MZ EXE and .SYS files.
+.TP
+.B \-\-psp
+Force the .COM file to be treated as containing an embedded PSP.
+The entry point will be set to file offset 0100h.
+Overrides the automatic PSP detection heuristic.
+.TP
+.B \-\-no-psp
+Force the .COM file to be treated as
+.B not
+containing an embedded PSP.
+The entry point will be set to file offset 0000h.
+Overrides the automatic PSP detection heuristic.
+These two flags are mutually exclusive.
+
+.SH COM PSP DETECTION
+A standard .COM file on disk starts directly with code/data — the PSP is built by DOS in
+memory at program load time and is
+.B not
+part of the file.  Occasionally a .COM is saved as a raw memory snapshot that begins with a
+256-byte PSP.
+.B dumpexe
+distinguishes these cases using two checks:
+.IP 1. 4
+First two bytes are
+.B CDh 20h
+(INT 20h instruction — the canonical PSP opener).
+.IP 2. 4
+The command-tail at file offset
+.B 80h
+is plausible: the length byte is ≤ 7Eh and the byte at
+.B 81h + length
+is
+.B 0Dh
+(carriage return).
+.PP
+Both checks must pass for a PSP to be declared present.  A file shorter than 256 bytes cannot
+contain a PSP and is always treated as no-PSP.
+Use
+.B \-\-psp
+or
+.B \-\-no-psp
+to override this heuristic.
 
 .SH OUTPUT FORMAT
 .SS Static Header Information
-Always displayed first. Shows comprehensive EXE header analysis in TDUMP style:
-.IP \(bu 2
-DOS File Size, Load Image Size
-.IP \(bu 2
-Relocation Table entry count and address
-.IP \(bu 2
-Header Size, Memory Requirements
-.IP \(bu 2
-Entry Point locations (file offset and image offset)
-.IP \(bu 2
-Initial register values (SS:SP, CS:IP)
+Always displayed first.
+.B MZ EXE:
+comprehensive header analysis including DOS File Size, Load Image Size,
+Relocation Table entry count and address, Header Size, Memory Requirements,
+Entry Point locations (file offset and image offset), and initial SS:SP / CS:IP values.
+.br
+.B COM:
+File Size, Load Model (PSP embedded or not), Entry Point File Offset, and
+initial CS:IP / SS:SP / DS / ES values.
+.br
+.B SYS:
+Driver type (character or block), attributes, strategy and interrupt entry
+point offsets, device name (char) or unit count and signature (block), and file size.
 
-.SS Relocation Table (-r)
+.SS Relocation Table (-r, MZ EXE only)
 Formatted table showing each relocation entry with:
 .IP \(bu 2
 Entry number
@@ -127,15 +194,9 @@ Example:
 
 .SS Disassembly (-d)
 .B Static code analysis
-using Capstone x86-16 disassembler. Shows:
-.IP \(bu 2
-File offset for each instruction
-.IP \(bu 2
-Raw instruction bytes
-.IP \(bu 2
-Mnemonic and operands
-.PP
-This is pure disassembly without execution context - useful for understanding program structure, finding functions, analyzing algorithms.
+using Capstone x86-16 disassembler. Shows file offset, raw bytes, mnemonic, and
+operands for every instruction from the entry point to EOF.  INT instructions
+are annotated with descriptions from the Ralf Brown Interrupt List (RBIL) database.
 
 .SS Simulation (--simulate)
 .B Dynamic execution trace
@@ -143,88 +204,38 @@ that simulates DOS loading and program startup:
 
 .B Initial Register State:
 .RS
-Shows all CPU registers initialized as DOS would set them:
-.IP \(bu 2
-CS:IP = entry point with load base applied
-.IP \(bu 2
-SS:SP = stack pointer with load base applied
-.IP \(bu 2
-DS, ES = load base (typical DOS behavior)
-.IP \(bu 2
-AX, BX, CX, DX, SI, DI, BP = 0
-.IP \(bu 2
-FLAGS = 0002h (bit 1 always set on 8086)
+For MZ EXE: CS and SS are shifted by the load base; DS and ES = load base.
+.br
+For .COM: CS = DS = ES = SS = load base; IP = 0100h; SP = FFFEh.
 .RE
 
-.B Relocation Fixups:
+.B Relocation Fixups (MZ EXE only):
 .RS
-Shows each segment value being adjusted:
-.IP \(bu 2
-Original segment value from file
-.IP \(bu 2
-Relocated value (original + load base)
-.IP \(bu 2
-Demonstrates how DOS patches segment references
+Shows each segment value being adjusted by the load base.
 .RE
 
 .B Register Tracing (with Capstone):
 .RS
-Best-effort emulation of first ~20 instructions showing register changes:
-.IP \(bu 2
-.B xor ax,ax
-/ 
-.B xor bx,bx
-/ 
-.B xor cx,cx
-/ 
-.B xor dx,dx
-\- zeroes specific register
-.IP \(bu 2
-.B push
-/ 
-.B pop
-\- shows SP changes
-.IP \(bu 2
-.B int XX
-\- notes DOS/BIOS interrupts
-
-Not a full emulator - focuses on common register operations for quick insight into program initialization.
-Only specific instruction patterns are recognized.
+Best-effort emulation of first ~20 instructions showing register changes.
+Not a full emulator — focuses on common register operations for quick insight.
 .RE
 
 .SH STATIC vs DYNAMIC ANALYSIS
-.B dumpexe
-provides both analysis modes:
-
 .B Static Analysis (-d):
 .RS
-Disassembles all code without execution. Shows complete instruction stream. Good for:
-.IP \(bu 2
-Understanding program structure
-.IP \(bu 2
-Finding all code paths
-.IP \(bu 2
-Analyzing algorithms
-.IP \(bu 2
-Searching for specific instruction patterns
+Disassembles all code without execution. Shows complete instruction stream. Good for
+understanding program structure, finding all code paths, and analyzing algorithms.
 .RE
 
 .B Dynamic Analysis (--simulate):
 .RS
-Simulates execution from entry point. Shows register state changes. Good for:
-.IP \(bu 2
-Understanding program initialization
-.IP \(bu 2
-Seeing actual register values during startup
-.IP \(bu 2
-Verifying relocation correctness
-.IP \(bu 2
-Quick "what does it do first" analysis
+Simulates execution from entry point. Shows register state changes. Good for
+understanding program initialization and verifying relocation correctness.
 .RE
 
 .B Combined (-d --simulate):
 .RS
-Shows both full disassembly and dynamic trace - complete picture of the executable.
+Shows both full disassembly and dynamic trace — complete picture of the binary.
 .RE
 
 .SH EXIT STATUS
@@ -238,7 +249,7 @@ Error (invalid file, bad arguments, corrupted header)
 .SH EXAMPLES
 .TP
 .B dumpexe program.exe
-Show only static header information
+Show only static header information (MZ EXE)
 .TP
 .B dumpexe -r program.exe
 Show header and relocation table
@@ -258,41 +269,31 @@ Show everything: relocations, hexdump, disassembly
 .B dumpexe -d --simulate --base=2000 game.exe
 Disassemble and simulate loading at segment 2000h
 .TP
-.B dumpexe -x program.exe | less
-Page through hexdump output
-
-.SH CAPSTONE SUPPORT
-.B dumpexe
-can be built with or without Capstone disassembly support:
-
-.B With Capstone:
-.RS
-.IP \(bu 2
-Full x86-16 disassembly available (-d flag)
-.IP \(bu 2
-Register tracing in simulation mode
-.IP \(bu 2
-Build: g++ -std=c++17 -o dumpexe dumpexe.cpp -lcapstone
-.RE
-
-.B Without Capstone:
-.RS
-.IP \(bu 2
-All other features work normally
-.IP \(bu 2
--d and -a flags warn about missing support
-.IP \(bu 2
-Build: g++ -std=c++17 -o dumpexe dumpexe.cpp
-.IP \(bu 2
-Help text indicates Capstone not available
-.RE
-
-To add Capstone support: install libcapstone-dev package and rebuild.
+.B dumpexe program.com
+Analyze a .COM file (PSP presence auto-detected)
+.TP
+.B dumpexe --no-psp -d program.com
+Analyze a .COM file, forcing no-PSP mode (entry at file offset 0)
+.TP
+.B dumpexe --psp -d memdump.com
+Analyze a .COM memory dump that includes a PSP (entry at file offset 0100h)
+.TP
+.B dumpexe driver.sys
+Analyze a DOS device driver
+.TP
+.B dumpexe -x program.com | less
+Page through hexdump output of a .COM file
 
 .SH FILES
 .TP
 .B dumpexe.h
-Header file containing all structures, register definitions, and utility functions
+Umbrella header that includes all modular sub-headers
+.TP
+.B com.h
+MS-DOS .COM format constants (PSP size, entry offset, command-tail offsets)
+.TP
+.B com_analysis.h
+.COM analysis functions: PSP heuristic detection and full analysis output
 .TP
 .B dumpexe.cpp
 Main implementation file
@@ -310,6 +311,26 @@ File size: ((num_blocks-1) × 512) + final_len
 .IP \(bu 2
 Entry point: header_size + (CS × 16) + IP
 
+.SS COM Format
+.IP \(bu 2
+Flat binary image; DOS places the PSP at CS:0000 and loads the file at CS:0100
+.IP \(bu 2
+CS = DS = ES = SS = load segment at startup
+.IP \(bu 2
+SP initialised to 0xFFFE (top of 64 KB segment minus two bytes)
+.IP \(bu 2
+Execution always starts at CS:0100h
+
+.SS SYS Device Driver Format
+.IP \(bu 2
+Starts with 0xFFFFFFFF (next-driver pointer = end of chain)
+.IP \(bu 2
+16-bit attribute word (bit 15 = character device)
+.IP \(bu 2
+Strategy and interrupt handler offsets
+.IP \(bu 2
+8-byte device name (character) or unit count + 7-byte signature (block)
+
 .SS Register State Representation
 Uses packed unions and bitfields for authentic x86 register access:
 .IP \(bu 2
@@ -323,15 +344,17 @@ FLAGS with individual bit access (CF, ZF, SF, OF, etc.)
 
 .SH NOTES
 .IP \(bu 2
-Read-only analysis - never modifies files
+Read-only analysis — never modifies files
 .IP \(bu 2
-Works cross-platform (analyze DOS EXEs on Linux/Unix)
+Works cross-platform (analyze DOS binaries on Linux/Unix)
 .IP \(bu 2
 Zero-compression in hex dumps saves space for AI context windows
 .IP \(bu 2
 Hex values displayed lowercase (canonical format)
 .IP \(bu 2
 Simulation is best-effort, not cycle-accurate emulation
+.IP \(bu 2
+Requires GCC 14+ and libcapstone-dev to build
 
 .SH SEE ALSO
 .BR objdump (1),
