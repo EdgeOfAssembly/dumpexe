@@ -99,6 +99,29 @@ int main(int argc, char* argv[]) {
                         static_cast<uint16_t>(header.cs), header.ip, opts);
         }
 
+        if (opts.showCfg) {
+            // Image bytes at CS-relative IP 0: header + cs*16 within load image.
+            // For typical CS=0 entry, file offset == header size.
+            const size_t img_off = sizes.headerSizeBytes;
+            const size_t img_len = (sizes.loadImageSize > 0)
+                ? static_cast<size_t>(sizes.loadImageSize)
+                : (fileData.size() > img_off ? fileData.size() - img_off : 0);
+            const uint16_t cs_seg = static_cast<uint16_t>(
+                opts.loadBase + static_cast<uint16_t>(header.cs));
+            // Entry IP is header.ip; image[0] is offset 0 of load image, so
+            // instruction at CS:IP is at image offset cs*16+ip — but Capstone
+            // CFG uses IP within the CS segment where image[0] maps to the
+            // start of the load image when header.cs==0 (ICON). When header.cs
+            // != 0, pass a sub-window starting at cs*16.
+            size_t cs_base_in_image = 0;
+            if (header.cs > 0)
+                cs_base_in_image = static_cast<size_t>(static_cast<uint16_t>(header.cs)) * 16u;
+            size_t cfg_file_off = img_off + cs_base_in_image;
+            size_t cfg_len = (img_len > cs_base_in_image) ? img_len - cs_base_in_image : 0;
+            cfg_analyze_image(fileData, cfg_file_off, cfg_len,
+                              header.ip, cs_seg, opts);
+        }
+
         run_simulation(opts, header, fileData, relocs, sizes);
 
     } else if (sig32 == 0xFFFFFFFF) {

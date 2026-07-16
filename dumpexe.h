@@ -13,7 +13,9 @@
 //   int_db.h       — Auto-generated constexpr INT annotation database (RBIL)
 //   int_annotate.h — annotate_int() and format_int_annotation() helpers
 //   disasm.h       — Capstone-backed disassemble() (Capstone required)
-//   analysis.h     — File loading, validation, header printing, simulation
+//   cfg.h          — Static control-flow graph recovery (--cfg)
+//   analysis.h     — File loading, validation, header printing, simulation glue
+//   sim.h          — 1 MiB arena, step loop, breakpoints, INT 21h stubs
 //   sys.h          — DOS device driver (.SYS) format structures and constants
 //   sys_analysis.h — DOS device driver analysis functions
 //   com.h          — MS-DOS .COM file format constants
@@ -28,6 +30,7 @@
 #include "options.h"
 #include "int_annotate.h"
 #include "disasm.h"
+#include "cfg.h"
 #include "analysis.h"
 #include "sys.h"
 #include "sys_analysis.h"

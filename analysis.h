@@ -119,6 +119,15 @@ static inline bool validate_header(const MZHeader& header, int64_t dosFileSize) 
 // Size calculation
 //=============================================================================
 
+/// Declared EXE size on disk from MZ page fields.
+/// final_len == 0 means the last 512-byte page is full (classic MZ rule).
+static inline int64_t mz_declared_file_size(const MZHeader& header) {
+    if (header.final_len == 0)
+        return static_cast<int64_t>(header.num_blocks) * 512LL;
+    return (static_cast<int64_t>(header.num_blocks) - 1LL) * 512LL
+           + static_cast<int64_t>(header.final_len);
+}
+
 /// Compute all derived sizes and offsets from a validated MZ header.
 /// @param header Validated MZ header
 /// @param dosFileSize Actual file size in bytes
@@ -127,18 +136,21 @@ static inline ExeSizes calculate_sizes(const MZHeader& header, int64_t dosFileSi
     ExeSizes s;
     s.dosFileSize = dosFileSize;
 
-    int64_t headerSizeBytes64      = static_cast<int64_t>(header.header_size) * 16LL;
-    int64_t csBytes                = static_cast<int64_t>(header.cs) * 16LL;
+    int64_t headerSizeBytes64       = static_cast<int64_t>(header.header_size) * 16LL;
+    int64_t csBytes                 = static_cast<int64_t>(header.cs) * 16LL;
     int64_t entryPointImageOffset64 = csBytes + static_cast<int64_t>(header.ip);
-    int64_t loadImageSize64        = ((header.num_blocks - 1) * 512 + header.final_len)
-                                     - headerSizeBytes64;
-    int64_t entryPointFileOffset64 = headerSizeBytes64 + entryPointImageOffset64;
+    int64_t declaredFileSize64      = mz_declared_file_size(header);
+    int64_t loadImageSize64         = declaredFileSize64 - headerSizeBytes64;
+    int64_t entryPointFileOffset64  = headerSizeBytes64 + entryPointImageOffset64;
+
+    if (loadImageSize64 < 0)
+        loadImageSize64 = 0;
 
     s.headerSizeBytes         = static_cast<size_t>(headerSizeBytes64);
     s.entryPointFileOffset    = static_cast<size_t>(entryPointFileOffset64);
     s.entryPointImageOffset   = entryPointImageOffset64;
     s.loadImageSize           = loadImageSize64;
-    s.extraBytes              = dosFileSize - loadImageSize64 - headerSizeBytes64;
+    s.extraBytes              = dosFileSize - declaredFileSize64;
     return s;
 }
 
@@ -186,9 +198,32 @@ static inline void print_header_info(const Options& opts, const MZHeader& header
 // Relocation table dump
 //=============================================================================
 
+/// Load relocation entries into @p relocs (always; needed by --simulate).
+/// Returns true if a table was present and loaded (or num_reloc == 0).
+static inline bool load_relocations(const MZHeader& header,
+                                    const std::vector<uint8_t>& fileData,
+                                    std::vector<RelocEntry>& relocs) {
+    relocs.clear();
+    if (header.num_reloc == 0)
+        return true;
+
+    const size_t relocStart      = header.off_reloc;
+    const size_t relocTableBytes = static_cast<size_t>(header.num_reloc) * sizeof(RelocEntry);
+
+    if (relocStart > fileData.size() ||
+        relocTableBytes > fileData.size() - relocStart) {
+        std::cerr << "\n[Warning] Relocation table extends beyond file end. Skipped.\n";
+        return false;
+    }
+
+    relocs.resize(header.num_reloc);
+    std::memcpy(relocs.data(), fileData.data() + relocStart, relocTableBytes);
+    return true;
+}
+
 /// Dump the relocation table (and any surrounding padding) to stdout.
-/// Also populates the relocs vector used later by run_simulation().
-/// @param opts            Parsed CLI options — only called when showReloc/showAll is set
+/// Always loads reloc entries into @p relocs for later use by run_simulation().
+/// @param opts            Parsed CLI options
 /// @param header          Validated MZ header
 /// @param fileData        Full file contents
 /// @param s               Computed size bundle
@@ -198,15 +233,18 @@ static inline void dump_relocations(const Options& opts,
                                     const std::vector<uint8_t>& fileData,
                                     const ExeSizes& s,
                                     std::vector<RelocEntry>& relocs) {
-    if (!opts.showReloc && !opts.showAll) return;
+    // Always load — simulation needs fixups even without -r/--all.
+    load_relocations(header, fileData, relocs);
 
-    size_t relocStart     = header.off_reloc;
-    size_t relocEntrySize = sizeof(RelocEntry);
-    size_t relocTableBytes = static_cast<size_t>(header.num_reloc) * relocEntrySize;
-    size_t relocEnd       = relocStart + relocTableBytes;
+    if (!opts.showReloc && !opts.showAll)
+        return;
 
-    // Padding after fixed header, before relocation area
-    if (relocStart > sizeof(MZHeader)) {
+    const size_t relocStart      = header.off_reloc;
+    const size_t relocTableBytes = static_cast<size_t>(header.num_reloc) * sizeof(RelocEntry);
+    const size_t relocEnd        = relocStart + relocTableBytes;
+
+    // Padding after fixed header, before relocation area (only if table is after header)
+    if (header.num_reloc > 0 && relocStart > sizeof(MZHeader)) {
         size_t padSize = relocStart - sizeof(MZHeader);
         if (padSize > 0) {
             print_hex_dump(fileData, sizeof(MZHeader), padSize, "Padding:");
@@ -214,11 +252,7 @@ static inline void dump_relocations(const Options& opts,
     }
 
     if (header.num_reloc > 0) {
-        if (relocStart <= fileData.size() &&
-            relocTableBytes <= fileData.size() - relocStart) {
-            relocs.resize(header.num_reloc);
-            std::memcpy(relocs.data(), fileData.data() + relocStart, relocTableBytes);
-
+        if (!relocs.empty()) {
             std::cout << std::format("\n=== Relocation Table ({} entries) ===\n", header.num_reloc);
             std::cout << "Entry  Segment:Offset  File Location (Hex)  Linear Offset\n";
             std::cout << "-----  --------------  -------------------  -------------\n";
@@ -232,16 +266,19 @@ static inline void dump_relocations(const Options& opts,
                 std::cout << std::format("{:05}  {:04X}:{:04X}        {:08X}h          {:06X}h\n",
                                          i, r.segment, r.offset, fileLoc, linear);
             }
-        } else {
-            std::cerr << "\n[Warning] Relocation table extends beyond file end. Skipped.\n";
         }
     }
 
-    // Padding between end of reloc area and start of load image
-    if (relocEnd < s.headerSizeBytes) {
-        size_t padSize = s.headerSizeBytes - relocEnd;
+    // Reserved/padding between end of header structures and start of load image.
+    // Never treat the fixed 28-byte MZ header itself as padding (e.g. off_reloc=0,
+    // num_reloc=0 would otherwise dump from file offset 0).
+    size_t padStart = sizeof(MZHeader);
+    if (header.num_reloc > 0 && relocEnd > padStart)
+        padStart = relocEnd;
+    if (padStart < s.headerSizeBytes) {
+        size_t padSize = s.headerSizeBytes - padStart;
         if (padSize > 0) {
-            print_hex_dump(fileData, relocEnd, padSize, "Padding:");
+            print_hex_dump(fileData, padStart, padSize, "Padding:");
         }
     }
 }
@@ -393,12 +430,13 @@ static inline std::string trace_comment(csh handle, const cs_insn* insn,
 }
 
 //=============================================================================
-// DOS load simulation
+// DOS load simulation (execution engine in sim.h)
 //=============================================================================
 
-/// Run a DOS load simulation, printing register state and relocation fixups,
-/// followed by a Capstone-powered register-trace of the first ~20 instructions.
-/// @param opts     Parsed CLI options (loadBase, simulate flag)
+#include "sim.h"
+
+/// Run DOS load simulation: 1 MiB arena, step loop, breakpoints, INT 21 stubs.
+/// @param opts     Parsed CLI options (may be non-const for BP hit counts — cast)
 /// @param header   Validated MZ header
 /// @param fileData Full file contents
 /// @param relocs   Relocation entries (may be empty)
@@ -413,88 +451,32 @@ static inline void run_simulation(const Options& opts,
     std::cout << "\n========================================\n";
     std::cout << "=== DOS LOAD SIMULATION ===\n";
     std::cout << "========================================\n";
-    std::cout << "Load Base Segment: " << hex_format(opts.loadBase, 4) << "\n\n";
-
-    CS = opts.loadBase + static_cast<uint16_t>(header.cs);
-    IP = header.ip;
-    SS = opts.loadBase + static_cast<uint16_t>(header.ss);
-    SP = header.sp;
-    DS = opts.loadBase;
-    ES = opts.loadBase;
-    AX = 0; BX = 0; CX = 0; DX = 0;
-    SI = 0; DI = 0; BP = 0;
-    FLAGS = 0x0002;
-
-    std::cout << "Initial Register State:\n";
-    std::cout << "  CS:IP = " << hex_format(CS, 4) << ":" << hex_format(IP, 4) << "\n";
-    std::cout << "  SS:SP = " << hex_format(SS, 4) << ":" << hex_format(SP, 4) << "\n";
-    std::cout << "  DS    = " << hex_format(DS, 4) << "\n";
-    std::cout << "  ES    = " << hex_format(ES, 4) << "\n";
-    std::cout << "  FLAGS = " << hex_format(FLAGS, 4) << "\n\n";
 
     if (!relocs.empty()) {
-        std::cout << "=== Relocation Fixups ===\n";
+        std::cout << "\n=== Relocation Fixups ===\n";
         std::cout << "Entry  Image Offset  Original Seg  Relocated Seg  Change\n";
         std::cout << "-----  ------------  ------------  -------------  ------\n";
-
         for (size_t i = 0; i < relocs.size(); ++i) {
             const auto& r = relocs[i];
             uint32_t fileLocation = static_cast<uint32_t>(s.headerSizeBytes)
                                     + (r.segment * 16u) + r.offset;
             uint32_t imageOffset  = (r.segment * 16u) + r.offset;
-
             uint16_t originalSeg = 0;
             if (fileLocation + 1 < fileData.size()) {
                 originalSeg = fileData[fileLocation] | (fileData[fileLocation + 1] << 8);
             }
-
             uint16_t relocatedSeg = originalSeg + opts.loadBase;
-
             std::cout << std::format("{:05}  {:06X}h      {:04X}h          {:04X}h         +{:04X}h\n",
                                      i, imageOffset, originalSeg, relocatedSeg, opts.loadBase);
         }
+        std::cout << "\n";
     }
 
-    std::cout << "\n=== Register Tracing ===\n";
-    std::cout << "Note: Best-effort trace for common instructions.\n\n";
-
-    // Guard against entry point beyond file size
-    if (s.entryPointFileOffset >= fileData.size()) {
-        std::cout << "Register tracing skipped: entry point file offset ("
-                  << s.entryPointFileOffset
-                  << ") is beyond file size (" << fileData.size()
-                  << ").\n";
-    } else {
-        csh handle;
-        cs_insn *insn;
-
-        // Calculate entry linear address for disassembly
-        uint32_t entryLinear = (CS * 16) + IP;
-
-        if (cs_open(CS_ARCH_X86, CS_MODE_16, &handle) == CS_ERR_OK) {
-            cs_option(handle, CS_OPT_DETAIL, CS_OPT_ON);
-            size_t codeSize = std::min((size_t)128, fileData.size() - s.entryPointFileOffset);
-            const uint8_t* code = fileData.data() + s.entryPointFileOffset;
-
-            size_t count = cs_disasm(handle, code, codeSize, entryLinear, 20, &insn);
-
-            if (count > 0) {
-                for (size_t i = 0; i < count; i++) {
-                    std::cout << std::format("{:04x}: {}", insn[i].address & 0xFFFF,
-                                             insn[i].mnemonic);
-                    if (insn[i].op_str[0]) std::cout << " " << insn[i].op_str;
-
-                    std::string comment = trace_comment(handle, &insn[i],
-                                                         opts.noIntAnnot);
-                    if (!comment.empty()) std::cout << "  " << comment;
-
-                    std::cout << "\n";
-                }
-                cs_free(insn, count);
-            }
-            cs_close(&handle);
-        }
-    }
+    // sim_run_mz mutates breakpoint hit counters
+    Options opts_mut = opts;
+    sim_run_mz(opts_mut, header, fileData, relocs,
+               s.headerSizeBytes, s.loadImageSize);
 }
+
 
 #endif // ANALYSIS_H

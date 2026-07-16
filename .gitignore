@@ -17,3 +17,11 @@ int_db.h
 .DS_Store
 Thumbs.db
 a.out
+
+# Game RE runtime / debugtrace outputs
+**/game_trace.log
+**/opcodes.bin
+**/opcodes.bin.bitmap
+
+# Experimental map decode intermediates (keep selected .png)
+games/**/map_preview/*.ppm
