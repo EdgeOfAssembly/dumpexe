@@ -16,11 +16,13 @@ ICON_DIR="$(cd "$(dirname "$0")" && pwd)"
 DUMMY_DIR="$(cd "$ICON_DIR/../dummy" && pwd)"
 CONF="$ICON_DIR/dosbox-staging.conf"
 AUTO_CONF="$ICON_DIR/dosbox-auto.conf"
-CYCLES="${CYCLES:-20000}"
+# ICON intros are slow at 3000; automation defaults much higher.
+CYCLES="${CYCLES:-100000}"
 TITLE_FRAMES="${TITLE_FRAMES:-8}"
-ANI_FRAMES="${ANI_FRAMES:-6}"
-FRAME_GAP="${FRAME_GAP:-0.35}"   # seconds between Ctrl+F10
-BOOT_WAIT="${BOOT_WAIT:-2.5}"    # wait after launch for title
+ANI_FRAMES="${ANI_FRAMES:-8}"
+FRAME_GAP="${FRAME_GAP:-0.25}"   # host seconds between Ctrl+F10
+BOOT_WAIT="${BOOT_WAIT:-2.0}"    # after focus settle, before first keys
+ANI_WAIT="${ANI_WAIT:-4.0}"      # after ESC title, wait for particle intro
 
 # Logs on stderr so `w=$(start_icon)` only gets the window id on stdout.
 log() { printf '[auto_icon] %s\n' "$*" >&2; }
@@ -67,15 +69,10 @@ wid_for_pid() {
 }
 
 find_wid() {
-	local p w=""
+	local p w="" geo W H
 	for p in $(dosbox_pids); do
 		w=$(wid_for_pid "$p")
-		if [[ -n "$w" && "$best_a" != "0" ]]; then
-			:
-		fi
 		if [[ -n "$w" ]]; then
-			# Require a real game-sized window (not 1x1)
-			local geo W H
 			geo=$(xdotool getwindowgeometry "$w" 2>/dev/null | awk '/Geometry:/{print $2}')
 			W=${geo%x*}; H=${geo#*x}
 			if [[ -n "$W" && -n "$H" && "$W" -ge 200 && "$H" -ge 150 ]]; then
@@ -238,9 +235,13 @@ start_icon() {
 
 	local w
 	w=$(wait_wid)
-	log "window id=$w"
-	activate "$w"
-	sleep "$BOOT_WAIT"
+	# Browser often holds focus until DOSBox finishes opening — wait it out.
+	settle_focus || true
+	# Extra settle for ICON.EXE to paint title after window is up
+	sleep "${BOOT_WAIT:-1.5}"
+	settle_focus || true
+	w=$(find_wid)
+	log "ready wid=$w name=$(xdotool getwindowname "$w" 2>/dev/null || echo '?')"
 	echo "$w"
 }
 
@@ -272,16 +273,21 @@ cmd_title_frames() {
 }
 
 cmd_ani_frames() {
-	log "=== capture ani multi-frame ==="
+	log "=== capture ani multi-frame (cycles=$CYCLES, ANI_WAIT=${ANI_WAIT}s) ==="
 	rm -f "$ICON_DIR/screen_dumps"/*
-	BOOT_WAIT="${BOOT_WAIT:-1.2}"
-	FRAME_GAP="${FRAME_GAP:-0.3}"
+	# High cycles so particle intro starts sooner after ESC
+	CYCLES="${CYCLES:-100000}"
+	BOOT_WAIT="${BOOT_WAIT:-1.5}"
+	FRAME_GAP="${FRAME_GAP:-0.25}"
+	ANI_WAIT="${ANI_WAIT:-4.0}"
 	local w
 	w=$(start_icon)
-	# skip title — give ring a moment then ESC
-	sleep 1.5
+	# Let title paint a bit, then skip; wait for second intro to begin
+	sleep 1.0
 	press "$w" Escape
-	sleep 1.5
+	log "waiting ${ANI_WAIT}s for particle intro (increase ANI_WAIT if still on title)"
+	sleep "$ANI_WAIT"
+	settle_focus || true
 	local i
 	for i in $(seq 1 "$ANI_FRAMES"); do
 		log "ani dump $i/$ANI_FRAMES"

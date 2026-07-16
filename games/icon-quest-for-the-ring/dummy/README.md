@@ -48,7 +48,16 @@ cd games/icon-quest-for-the-ring/ICON
 ./auto_icon.sh kill    # Ctrl+F9 + SIGTERM
 ```
 
-Env knobs: `CYCLES=30000 TITLE_FRAMES=8 ANI_FRAMES=6 FRAME_GAP=0.3 BOOT_WAIT=1.2`
+Env knobs (defaults are already high for speed):
+
+```bash
+CYCLES=100000          # fixed cycles (was 3000 interactive)
+TITLE_FRAMES=8
+ANI_FRAMES=8
+FRAME_GAP=0.25         # host delay between F10 dumps
+BOOT_WAIT=2.0          # after focus settle
+ANI_WAIT=4.0           # after ESC title, wait for particles
+```
 
 Manual pack (if you already have hotkey dumps):
 
