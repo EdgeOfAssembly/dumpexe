@@ -171,6 +171,18 @@ Decoder: `decode_map.py` (full map + `--camera X,Y` viewport).
 python3 games/icon-quest-for-the-ring/decode_map.py LA --camera 7,75
 ```
 
+### Live DS dumps (DOSBox `mem_dump`)
+
+With `mem_dump = true` (see `ICON/dosbox-staging.conf`), **Ctrl+F11** writes guest regions while ICON is running:
+
+| File stem name | Default region | Purpose |
+|----------------|----------------|---------|
+| `…_stamps_…` | `ds:207A+1200` | Runtime stamp bank (192×24 B) |
+| `…_map_…` | `ds:31D4+0F00` | MAP index table (LA size) |
+| `…_offscr_…` | `ds:206C->near+2000` | Follow near ptr @ `DS:206C` → offscreen text buffer |
+
+Outputs go under `mem_dumps/` next to the conf (same pattern as `screen_dumps/`). Compare `stamps` to on-disk `BA.DAT‖BB.DAT` (byte-swapped vs B800) to settle the bake/remap question; inspect `offscr` for scroll alignment vs B800.
+
 ## Level MAP (`L*.MAP`) — **strong** (index formula confirmed)
 
 | File | Size | Notes |

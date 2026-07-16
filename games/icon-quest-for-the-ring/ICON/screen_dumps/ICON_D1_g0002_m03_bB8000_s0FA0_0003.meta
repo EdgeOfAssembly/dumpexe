@@ -1,0 +1,12 @@
+game=ICON_D1
+reason=mode_set_delayed
+generation=2
+seq=3
+mode=0x03
+base=0xB8000
+size=0x0FA0
+cols=80
+rows=25
+kind=text
+t_ms=6166
+layout=char_attr_le
