@@ -1,12 +1,12 @@
 game=ICON
-reason=mode_set_delayed
-generation=7
-seq=5
+reason=hotkey
+generation=3
+seq=7
 mode=0x01
 base=0xB8000
 size=0x07D0
 cols=40
 rows=25
 kind=text
-t_ms=22452
+t_ms=11661
 layout=char_attr_le
