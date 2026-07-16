@@ -1,0 +1,10 @@
+game=ICON
+reason=hotkey
+generation=13
+seq=3
+name=offscr
+base=0x0E41C
+size=0x2000
+ds=0x0E2F
+resolve=near*[ds:0E2F:206C]=012C -> ds:0E2F:012C
+t_ms=20533

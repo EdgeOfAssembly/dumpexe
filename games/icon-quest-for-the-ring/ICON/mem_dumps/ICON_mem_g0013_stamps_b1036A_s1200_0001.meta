@@ -1,0 +1,10 @@
+game=ICON
+reason=hotkey
+generation=13
+seq=1
+name=stamps
+base=0x1036A
+size=0x1200
+ds=0x0E2F
+resolve=ds:0E2F:207A
+t_ms=20532

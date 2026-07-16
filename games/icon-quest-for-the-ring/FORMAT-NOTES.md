@@ -181,7 +181,16 @@ With `mem_dump = true` (see `ICON/dosbox-staging.conf`), **Ctrl+F11** writes gue
 | `…_map_…` | `ds:31D4+0F00` | MAP index table (LA size) |
 | `…_offscr_…` | `ds:206C->near+2000` | Follow near ptr @ `DS:206C` → offscreen text buffer |
 
-Outputs go under `mem_dumps/` next to the conf (same pattern as `screen_dumps/`). Compare `stamps` to on-disk `BA.DAT‖BB.DAT` (byte-swapped vs B800) to settle the bake/remap question; inspect `offscr` for scroll alignment vs B800.
+Outputs go under `mem_dumps/`. **Priority:** feed `STAMPS.BIN` / `MAPRT.BIN` into `dummy/` (see `dummy/README.md`) and match B800 there — do **not** block on file→PNG.
+
+### Working order (agreed)
+
+1. **Dummy draw path in ASM** (map index → stamp → B800) until terrain is byte-identical or sprite-only deltas.
+2. **Then** host PNG / disk tools that reuse the same blit rules.
+3. Load-time bake (`LA.MAP`→`31D4`, `BA.DAT`→`207A`) only when file-mode fidelity needs it.
+
+**Parity result (mem dump g0013 + B800 `…0008`):** 19 full stamps + col-39 half-stamp; **100% terrain** bytes; remaining diffs = player sprite (bottom, cols 7–9).  
+**BA.DAT note:** leading `5Ah` then char,attr stream matches runtime stamps **0..90** when the header byte is dropped.
 
 ## Level MAP (`L*.MAP`) — **strong** (index formula confirmed)
 
