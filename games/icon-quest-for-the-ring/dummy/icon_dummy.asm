@@ -51,7 +51,9 @@ msg_rt          db      'Loaded STAMPS.BIN + MAPRT.BIN (parity mode).',0Dh,0Ah,'
 msg_file        db      'Loaded BA/BB + LA.MAP (file mode, BA bake).',0Dh,0Ah,'$'
 msg_no_ba       db      'FCB open BA.DAT failed.',0Dh,0Ah,'$'
 msg_no_map      db      'FCB open LA.MAP / MAPRT.BIN failed.',0Dh,0Ah,'$'
-msg_bye         db      0Dh,0Ah,'ICON dummy exit.',0Dh,0Ah,'$'
+msg_bye         db      0Dh,0Ah,'ICON dummy exit. mode was: $'
+msg_bye_rt      db      'parity (STAMPS+MAPRT)',0Dh,0Ah,'$'
+msg_bye_file    db      'file (BA/BB+LA.MAP)',0Dh,0Ah,'$'
 
 ; FCB: drive, 8.3 name, 25 reserved (UASM: split db lines)
 fcb_stamps:
@@ -269,7 +271,17 @@ rst_file:
 do_exit:
         mov     ax, 0003h
         int     10h
+        ; Mode-set wipes the pre-video banner — report mode here in 80-col text.
         mov     dx, offset msg_bye
+        mov     ah, 09h
+        int     21h
+        cmp     byte ptr mode_rt, 0
+        je      bye_file
+        mov     dx, offset msg_bye_rt
+        jmp     bye_print
+bye_file:
+        mov     dx, offset msg_bye_file
+bye_print:
         mov     ah, 09h
         int     21h
         mov     ax, 4C00h

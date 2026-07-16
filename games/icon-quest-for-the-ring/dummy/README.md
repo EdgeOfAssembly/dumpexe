@@ -47,6 +47,8 @@ icon_dummy.com
 Keys: **←↑↓→** camera, **R** reset, **ESC** quit.  
 DOS 8.3 name → dumps as `ICON_D1_...`.
 
+**Note:** Boot text is cleared when mode 01h starts (BIOS wipe). On **ESC**, mode 03 returns and prints whether the run was **parity** or **file**. Confirm loads via `game_trace.log` (`STAMPS.BIN` / `MAPRT.BIN` FCB lines) or by matching `expected_b800_parity.bin`.
+
 ## Expected match
 
 | Compare | Result |
