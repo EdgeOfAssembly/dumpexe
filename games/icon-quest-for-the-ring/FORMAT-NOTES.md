@@ -110,6 +110,25 @@ python3 games/icon-quest-for-the-ring/decode_screen_dump.py
 # → map_preview/b800_ICON_….png
 ```
 
+### BA stamp geometry (refined from live dump)
+
+| Evidence | Conclusion |
+|----------|------------|
+| Exact 2×2 windows on `…0006` | **288** sequential **2×2** cells in `BA.DAT` (8 B each, on-disk `attr,char`) match solid terrain |
+| Solid stamp IDs on screen | **283** = all `DE/77` floor, **197** = all `B1/02` green, **188** = all `83/04` red |
+| Char-only 2×6 windows | Also match BA as **96** stamps of 2×6 (24 B) for solid fills (ids 0/10/11/12/14…) |
+| ICON1 draw @ `2D9A` | Still **2×6** `movsw` loop from `207A + id*24` — runtime table may be built from BA |
+
+Attrs on screen can differ from BA defaults (lighting / recolor); **characters** are the stable key.
+
+### MAP ↔ screen camera — *open*
+
+Brute-force aligning MAP (`index = x*100 + y`, tile = `byte & 0x7F`) as a 19×3 (or ×4) stamp window into the live char plane peaks around **~50%** cell match (best tried ~`(7,74)` / rph phase variants). **Not locked.**
+
+Likely still missing: autotile / edge stamps, scroll pixel offset inside a stamp, or a runtime remap table from MAP id → BA stamp.
+
+Previews: `map_preview/map_camera_*.png`, `map_preview/map_vs_live_stack.png`.
+
 ## Level MAP (`L*.MAP`) — **strong** (index formula confirmed)
 
 | File | Size | Notes |
