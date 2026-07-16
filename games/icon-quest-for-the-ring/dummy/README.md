@@ -66,13 +66,24 @@ Mode-03 banners list each stage so you can see the chain even when mode 01 wipes
 - Bank is **char,attr**; `BA.DAT` bake drops leading `5Ah`  
 - Parity: `STAMPS.BIN`+`MAPRT.BIN` → exact gold B800 terrain  
 
+## What you should see vs ICON.EXE
+
+| Stage | Expected in dummy | Not yet |
+|-------|-------------------|---------|
+| TITLE | Same **B800 page** as your Ctrl+F10; needs `icon_mode_01` (8×8 font + CRTC) | Regenerating title in ASM |
+| ANI | **One frozen frame** of the particle screen | Moving animation loop |
+| PLAY | Terrain map (parity tables / BA+MAP) | Hero, monsters, HUD, combat |
+
+If title still looks like “half ring + garbage”, the dump is fine but **video init** was wrong — rebuild with current COM (`icon_mode_01` mirrors ICON.EXE ~`1DF8`).
+
 ## What is *not* authentic yet
 
 | Item | Notes |
 |------|--------|
 | Pascal MT+ / real OVL execute | OVL is **FCB block-read only** (same rec counts as log), not jumped into |
 | Title/ani generators | We **replay** captured B800 pages, not re-run ICON.EXE draw code |
+| Animation motion | Single frame in `ANI.BIN` |
 | Menus / story / copy-protect | Skipped; go assets → PLAY after intros |
-| Player sprites / HUD | Not drawn |
+| Player sprites / HUD / mobs | Not drawn |
 
-Next authenticity steps: capture full TITLE/ANI; RE ICON.EXE title paint into ASM; optional menu stubs.
+Next: multi-frame ANI if desired; sprite layer; optional menu stubs.

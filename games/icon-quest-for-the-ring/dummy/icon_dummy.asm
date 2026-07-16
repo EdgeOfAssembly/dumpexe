@@ -1,24 +1,24 @@
-; icon_dummy.asm — ICON.EXE-like staged loader + terrain play (UASM)
+; icon_dummy.asm - ICON.EXE-like staged loader + terrain play (UASM)
 ;
 ; Goal: authentic *loading sequence* corresponding to real ICON.EXE, with
-; the draw path we already proved — not a full Pascal MT+ reimplementation.
+; the draw path we already proved - not a full Pascal MT+ reimplementation.
 ;
 ; Real chain (live FCB log):
 ;   ICON.EXE
-;     → mode 00/01 title + intro animation (ESC skip)
-;     → ICON0.OVL  (block-read)
-;     → BA.DAT, LA.MAP, LA.DAT, MA.DAT
-;     → ICON1.OVL  (block-read)
-;     → overworld play (mode 01h terrain)
+;     -> mode 00/01 title + intro animation (ESC skip)
+;     -> ICON0.OVL  (block-read)
+;     -> BA.DAT, LA.MAP, LA.DAT, MA.DAT
+;     -> ICON1.OVL  (block-read)
+;     -> overworld play (mode 01h terrain)
 ;
 ; Our stages (same order / same FCB names; OVL bytes read+discarded):
 ;   STAGE_TITLE   mode 01, blit TITLE.BIN (captured intro), wait ESC
 ;   STAGE_ANI     blit ANI.BIN (captured animation frame), wait ESC
 ;   STAGE_OVL0    FCB open+block-read ICON0.OVL (discard records)
 ;   STAGE_ASSETS  BA[.DAT] bake, BB optional, LA.MAP, LA.DAT, MA.DAT
-;                 (if STAMPS.BIN+MAPRT.BIN exist → parity tables instead of bake)
+;                 (if STAMPS.BIN+MAPRT.BIN exist -> parity tables instead of bake)
 ;   STAGE_OVL1    FCB open+block-read ICON1.OVL (discard)
-;   STAGE_PLAY    clear B800, map→stamp blit, arrows/R/ESC
+;   STAGE_PLAY    clear B800, map->stamp blit, arrows/R/ESC
 ;
 ; Build:  uasm -bin -Fo icon_dummy.com icon_dummy.asm
 ; Run:    from ICON/ directory
@@ -60,7 +60,7 @@ OVL1_RECS       equ     399
 ; ---------------------------------------------------------------------------
 ; Messages (shown in mode 03 between stages or on error/exit)
 ; ---------------------------------------------------------------------------
-msg_banner      db      'ICON dummy loader v4 — stages mirror ICON.EXE',0Dh,0Ah
+msg_banner      db      'ICON dummy loader v4 - stages mirror ICON.EXE',0Dh,0Ah
                 db      'TITLE -> ANI -> ICON0 -> assets -> ICON1 -> PLAY',0Dh,0Ah
                 db      'ESC skips title/ani; arrows in PLAY; ESC quits PLAY.',0Dh,0Ah,'$'
 msg_stage_t     db      '[stage] TITLE (mode 01, TITLE.BIN or blank)',0Dh,0Ah,'$'
@@ -70,8 +70,8 @@ msg_stage_as    db      '[stage] BA/BB + LA.MAP + LA.DAT + MA.DAT',0Dh,0Ah,'$'
 msg_stage_rt    db      '[stage] assets: STAMPS.BIN + MAPRT.BIN (parity)',0Dh,0Ah,'$'
 msg_stage_1     db      '[stage] ICON1.OVL FCB block-read',0Dh,0Ah,'$'
 msg_stage_p     db      '[stage] PLAY (terrain)',0Dh,0Ah,'$'
-msg_no_title    db      '(no TITLE.BIN — blank title)',0Dh,0Ah,'$'
-msg_no_ani      db      '(no ANI.BIN — blank ani)',0Dh,0Ah,'$'
+msg_no_title    db      '(no TITLE.BIN - blank title)',0Dh,0Ah,'$'
+msg_no_ani      db      '(no ANI.BIN - blank ani)',0Dh,0Ah,'$'
 msg_no_ovl0     db      'FCB open ICON0.OVL failed (continuing).',0Dh,0Ah,'$'
 msg_no_ovl1     db      'FCB open ICON1.OVL failed (continuing).',0Dh,0Ah,'$'
 msg_no_ba       db      'FCB open BA.DAT failed.',0Dh,0Ah,'$'
@@ -81,7 +81,7 @@ msg_bye_rt      db      'parity tables',0Dh,0Ah,'$'
 msg_bye_file    db      'file BA+LA.MAP',0Dh,0Ah,'$'
 
 ; ---------------------------------------------------------------------------
-; FCBs — 8.3 space-padded (UASM: split db lines)
+; FCBs - 8.3 space-padded (UASM: split db lines)
 ; ---------------------------------------------------------------------------
 fcb_title:
         db 0, 'TITLE   ', 'BIN', 25 dup (0)
@@ -129,7 +129,7 @@ main:
         int     21h
 
 ; ===========================================================================
-; STAGE_TITLE — ICON.EXE intro title (captured B800 page)
+; STAGE_TITLE - ICON.EXE intro title (captured B800 page)
 ; ===========================================================================
 stage_title:
         mov     dx, offset msg_stage_t
@@ -157,17 +157,14 @@ title_blank:
         xor     al, al
         rep     stosb
 title_show:
-        ; Real ICON: INT 10 AH=00 AL=00 then AL=01
-        mov     ax, 0000h
-        int     10h
-        mov     ax, 0001h
-        int     10h
+        call    icon_mode_01            ; mode 00/01 + font/CRTC like ICON.EXE
         mov     si, offset scr_title
         call    blit_scr_page
         call    wait_esc
 
 ; ===========================================================================
-; STAGE_ANI — intro animation frame (ESC skips like original)
+; STAGE_ANI - intro animation frame (ESC skips like original)
+; Single captured frame (not a live particle loop).
 ; ===========================================================================
 stage_ani:
         mov     ax, 0003h
@@ -195,16 +192,13 @@ ani_blank:
         xor     al, al
         rep     stosb
 ani_show:
-        mov     ax, 0000h
-        int     10h
-        mov     ax, 0001h
-        int     10h
+        call    icon_mode_01
         mov     si, offset scr_ani
         call    blit_scr_page
         call    wait_esc
 
 ; ===========================================================================
-; STAGE_OVL0 — ICON0.OVL block-read (same rec count as live log)
+; STAGE_OVL0 - ICON0.OVL block-read (same rec count as live log)
 ; ===========================================================================
 stage_ovl0:
         mov     ax, 0003h
@@ -226,7 +220,7 @@ ovl0_fail:
         int     21h
 
 ; ===========================================================================
-; STAGE_ASSETS — BA/BB/MAP or parity dumps + LA.DAT + MA.DAT
+; STAGE_ASSETS - BA/BB/MAP or parity dumps + LA.DAT + MA.DAT
 ; ===========================================================================
 stage_assets:
         mov     byte ptr mode_rt, 0
@@ -299,7 +293,7 @@ load_map:
         mov     word ptr cam_y, CAM_Y0_FILE
 
 assets_ladat:
-        ; LA.DAT (small) — load if present
+        ; LA.DAT (small) - load if present
         mov     dx, offset fcb_ladat
         call    fcb_open
         jc      assets_madat
@@ -329,7 +323,7 @@ err_map:
         jmp     exit_err
 
 ; ===========================================================================
-; STAGE_OVL1 — ICON1.OVL then PLAY
+; STAGE_OVL1 - ICON1.OVL then PLAY
 ; ===========================================================================
 stage_ovl1:
         mov     dx, offset msg_stage_1
@@ -349,18 +343,14 @@ ovl1_fail:
         int     21h
 
 ; ===========================================================================
-; STAGE_PLAY — ICON1 terrain (proven path)
+; STAGE_PLAY - ICON1 terrain (proven path)
 ; ===========================================================================
 stage_play:
         mov     dx, offset msg_stage_p
         mov     ah, 09h
         int     21h
 
-        ; Real game re-enters mode 00/01 around play start
-        mov     ax, 0000h
-        int     10h
-        mov     ax, 0001h
-        int     10h
+        call    icon_mode_01            ; same video state as ICON play
 
 main_loop:
         call    clear_b800
@@ -440,7 +430,76 @@ exit_err:
         int     21h
 
 ; ---------------------------------------------------------------------------
-; bake_ba: disk BA = 5Ah + char,attr stream → bank_buf char,attr
+; icon_mode_01 - match ICON.EXE @ ~1DF8..1E5C
+;   INT 10 set mode 00 then 01
+;   AX=1102 load ROM 8x8 font into blocks 0 and 1 (EGA/VGA)
+;   CRTC reg 09 = 81h (scan-line / cell geometry ICON expects)
+;   ATC: mode control + palette enable
+; Without this, TITLE/ANI B800 dumps look like garbage / wrong scale.
+; ---------------------------------------------------------------------------
+icon_mode_01:
+        push    ax
+        push    bx
+        push    dx
+
+        mov     ax, 0000h
+        int     10h
+        mov     ax, 0001h
+        int     10h
+
+        ; Probe EGA/VGA font services (ICON: AX=1130 BH=FFh)
+        mov     ax, 1130h
+        mov     bh, 0FFh
+        int     10h
+        cmp     bh, 0FFh
+        je      im01_crtc_only          ; no EGA font path
+
+        mov     ax, 1102h               ; load ROM 8x8
+        xor     bx, bx                  ; block 0
+        int     10h
+        mov     ax, 1102h
+        mov     bx, 0001h               ; block 1
+        int     10h
+
+        ; Attribute controller: index 30h <- 0 (after 3DAh reset)
+        mov     dx, 03DAh
+        in      al, dx
+        mov     dx, 03C0h
+        mov     al, 30h
+        out     dx, al
+        xor     al, al
+        out     dx, al
+
+im01_crtc_only:
+        ; CRTC maximum scan line = 81h (ICON.EXE)
+        mov     dx, 03D4h
+        mov     al, 09h
+        out     dx, al
+        inc     dx
+        mov     al, 81h
+        out     dx, al
+
+        ; ATC mode control index 10h <- 04h, then enable (20h)
+        mov     dx, 03DAh
+        in      al, dx
+        mov     dx, 03C0h
+        mov     al, 10h
+        out     dx, al
+        mov     al, 04h
+        out     dx, al
+        mov     dx, 03DAh
+        in      al, dx
+        mov     dx, 03C0h
+        mov     al, 20h
+        out     dx, al
+
+        pop     dx
+        pop     bx
+        pop     ax
+        ret
+
+; ---------------------------------------------------------------------------
+; bake_ba: disk BA = 5Ah + char,attr stream -> bank_buf char,attr
 ; ---------------------------------------------------------------------------
 bake_ba:
         push    si
@@ -467,7 +526,7 @@ wait_esc:
         ret
 
 ; ---------------------------------------------------------------------------
-; blit_scr_page: SI → 2000-byte char,attr page → B800:0000
+; blit_scr_page: SI -> 2000-byte char,attr page -> B800:0000
 ; ---------------------------------------------------------------------------
 blit_scr_page:
         push    es
@@ -521,7 +580,7 @@ fcb_rd_loop:
         loop    fcb_rd_loop
         ret
 
-; DX=FCB, CX=#records — read into dta_scratch, discard (OVL traffic)
+; DX=FCB, CX=#records - read into dta_scratch, discard (OVL traffic)
 fcb_read_discard:
 fcb_disc_loop:
         push    cx
@@ -555,7 +614,7 @@ clear_b800:
         ret
 
 ; ---------------------------------------------------------------------------
-; blit_viewport — ICON1: 19 full stamps + col-39 half (char,attr bank)
+; blit_viewport - ICON1: 19 full stamps + col-39 half (char,attr bank)
 ; ---------------------------------------------------------------------------
 blit_viewport:
         push    es
