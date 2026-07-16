@@ -35,6 +35,9 @@ need xdotool
 
 # Title becomes "ICON.EXE - ..." so name search for DOSBox fails after start.
 # Prefer: pgrep dosbox -> xdotool search --pid $pid windowmap windowactivate --sync
+#
+# Launch race: desktop often focuses the *browser* first; DOSBox appears later
+# on top. We must wait until the DOSBox window exists AND is focused before keys.
 dosbox_pids() {
 	local p=""
 	if [[ -f /tmp/auto_icon_dosbox.pid ]]; then
@@ -47,37 +50,100 @@ dosbox_pids() {
 	pgrep -x dosbox 2>/dev/null || pgrep -x dosbox-staging 2>/dev/null || true
 }
 
+# Largest mapped window for a pid (skip tiny helper/GL stubs).
+wid_for_pid() {
+	local p="$1" w best="" best_a=0 a W H
+	for w in $(xdotool search --pid "$p" 2>/dev/null || true); do
+		W=$(xdotool getwindowgeometry "$w" 2>/dev/null | awk '/Geometry:/{print $2}' | cut -dx -f1)
+		H=$(xdotool getwindowgeometry "$w" 2>/dev/null | awk '/Geometry:/{print $2}' | cut -dx -f2)
+		[[ -z "$W" || -z "$H" ]] && continue
+		a=$((W * H))
+		if [[ $a -gt $best_a ]]; then
+			best_a=$a
+			best=$w
+		fi
+	done
+	echo "$best"
+}
+
 find_wid() {
 	local p w=""
 	for p in $(dosbox_pids); do
-		# May return several client windows; take last (usually the toplevel)
-		w=$(xdotool search --pid "$p" 2>/dev/null | tail -1 || true)
+		w=$(wid_for_pid "$p")
+		if [[ -n "$w" && "$best_a" != "0" ]]; then
+			:
+		fi
 		if [[ -n "$w" ]]; then
-			echo "$w"
-			return 0
+			# Require a real game-sized window (not 1x1)
+			local geo W H
+			geo=$(xdotool getwindowgeometry "$w" 2>/dev/null | awk '/Geometry:/{print $2}')
+			W=${geo%x*}; H=${geo#*x}
+			if [[ -n "$W" && -n "$H" && "$W" -ge 200 && "$H" -ge 150 ]]; then
+				echo "$w"
+				return 0
+			fi
 		fi
 	done
-	# Last resort: class / name (works before ICON rewrites the title)
 	w=$(xdotool search --class dosbox-staging 2>/dev/null | tail -1 || true)
 	[[ -z "$w" ]] && w=$(xdotool search --class dosbox 2>/dev/null | tail -1 || true)
-	[[ -z "$w" ]] && w=$(xdotool search --name 'DOSBox' 2>/dev/null | tail -1 || true)
-	[[ -z "$w" ]] && w=$(xdotool search --name 'ICON' 2>/dev/null | tail -1 || true)
 	echo "$w"
 }
 
 wait_wid() {
 	local i=0 w=""
-	while [[ $i -lt 60 ]]; do
+	while [[ $i -lt 80 ]]; do
 		w=$(find_wid)
 		if [[ -n "$w" ]]; then
-			log "window id=$w pid(s)=$(dosbox_pids | tr '\n' ' ')"
+			log "window appeared id=$w name=$(xdotool getwindowname "$w" 2>/dev/null || echo '?') pid(s)=$(dosbox_pids | tr '\n' ' ')"
 			echo "$w"
 			return 0
 		fi
-		sleep 0.2
+		sleep 0.25
 		i=$((i + 1))
 	done
 	log "no DOSBox window (pgrep dosbox / xdotool search --pid)"
+	return 1
+}
+
+# After window exists, steal focus back from browser and keep it.
+# Returns 0 when getwindowfocus == dosbox wid for 2 consecutive checks.
+settle_focus() {
+	local w tries=0 foc name
+	w=$(find_wid)
+	[[ -z "$w" ]] && return 1
+	while [[ $tries -lt 40 ]]; do
+		xdotool windowmap "$w" windowraise "$w" windowactivate --sync "$w" 2>/dev/null || true
+		local geo X Y WIDTH HEIGHT cx cy
+		geo=$(xdotool getwindowgeometry --shell "$w" 2>/dev/null || true)
+		if [[ -n "$geo" ]]; then
+			# shellcheck disable=SC2086
+			eval "$geo"
+			cx=$((X + WIDTH / 2))
+			cy=$((Y + HEIGHT / 2))
+			xdotool mousemove --sync "$cx" "$cy" click 1 2>/dev/null || true
+			xdotool windowactivate --sync "$w" 2>/dev/null || true
+		fi
+		sleep 0.2
+		foc=$(xdotool getwindowfocus 2>/dev/null || true)
+		name=$(xdotool getwindowname "$w" 2>/dev/null || true)
+		if [[ "$foc" == "$w" ]]; then
+			# Confirm still focused after a short pause (browser may steal again)
+			sleep 0.35
+			foc=$(xdotool getwindowfocus 2>/dev/null || true)
+			if [[ "$foc" == "$w" ]]; then
+				log "focus settled wid=$w name=$name"
+				return 0
+			fi
+			log "focus stolen after settle (foc=$foc), retry"
+		else
+			log "waiting focus (want=$w have=$foc) try=$tries"
+		fi
+		# Re-resolve in case window id changed when title updated
+		w=$(find_wid)
+		[[ -z "$w" ]] && return 1
+		tries=$((tries + 1))
+	done
+	log "warn: could not hold focus on DOSBox; keys may miss"
 	return 1
 }
 
@@ -103,10 +169,11 @@ dosbox_xdo() {
 
 # Focus + click center so SDL grabs keyboard.
 activate() {
-	local w geo X Y WIDTH HEIGHT cx cy
+	local w
 	w=$(find_wid)
 	[[ -z "$w" ]] && return 1
-	xdotool windowmap "$w" windowactivate --sync "$w" 2>/dev/null || true
+	xdotool windowmap "$w" windowraise "$w" windowactivate --sync "$w" 2>/dev/null || true
+	local geo X Y WIDTH HEIGHT cx cy
 	geo=$(xdotool getwindowgeometry --shell "$w" 2>/dev/null || true)
 	if [[ -n "$geo" ]]; then
 		# shellcheck disable=SC2086
@@ -116,7 +183,7 @@ activate() {
 		xdotool mousemove --sync "$cx" "$cy" click 1 2>/dev/null || true
 		xdotool windowmap "$w" windowactivate --sync "$w" 2>/dev/null || true
 	fi
-	sleep 0.1
+	sleep 0.08
 }
 
 # $1 wid optional — always re-resolve via pgrep/pid
