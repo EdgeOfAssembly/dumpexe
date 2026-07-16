@@ -22,22 +22,27 @@ ICON.EXE → mode 00/01 title → (ESC) animation → ICON0.OVL
          → BA.DAT, LA.MAP, LA.DAT, MA.DAT → ICON1.OVL → play
 ```
 
-## Capture authentic TITLE / ANI pages
+## Capture multi-frame title / ani (ring animation)
 
-You never pick timestamps. Empty the dump dir, capture two hotkeys, we copy.
+No timestamps. Two separate capture passes (title vs particles).
 
+### Title ring (loop)
 ```bash
 cd games/icon-quest-for-the-ring/dummy
-make clean-dumps          # empties ICON/screen_dumps/
-# DOSBox: ICON.EXE
-#   on title (start.png look)     → Ctrl+F10
-#   ESC
-#   on animation (animation.png) → Ctrl+F10
-make install-intro        # 1st hotkey → TITLE.BIN, 2nd → ANI.BIN
+make clean-dumps
+# DOSBox: ICON.EXE — on the gold ring, spam Ctrl+F10 several times
+#         while it animates, then quit
+make install-title-frames    # -> TITLES.BIN (+ TITLE.BIN = frame 1)
 ```
 
-`install-intro` only uses dumps with `reason=hotkey` in the `.meta` file (ignores auto mode-set dumps).  
-`TITLE.BIN` / `ANI.BIN` are **2000-byte** mode 01h pages (char,attr).
+### Particle screen (loop)
+```bash
+make clean-dumps
+# DOSBox: ICON.EXE — ESC past title, spam Ctrl+F10 on particles, quit
+make install-ani-frames      # -> ANIS.BIN (+ ANI.BIN = frame 1)
+```
+
+Only `reason=hotkey` metas are packed (max 8 frames). Dummy **loops** frames until **ESC**.
 
 ## Build / install
 

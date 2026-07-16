@@ -12,13 +12,20 @@
 ;     -> overworld play (mode 01h terrain)
 ;
 ; Our stages (same order / same FCB names; OVL bytes read+discarded):
-;   STAGE_TITLE   mode 01, blit TITLE.BIN (captured intro), wait ESC
-;   STAGE_ANI     blit ANI.BIN (captured animation frame), wait ESC
+;   STAGE_TITLE   loop TITLES.BIN frames (or TITLE.BIN x1) until ESC
+;   STAGE_ANI     loop ANIS.BIN frames (or ANI.BIN x1) until ESC
 ;   STAGE_OVL0    FCB open+block-read ICON0.OVL (discard records)
-;   STAGE_ASSETS  BA[.DAT] bake, BB optional, LA.MAP, LA.DAT, MA.DAT
-;                 (if STAMPS.BIN+MAPRT.BIN exist -> parity tables instead of bake)
+;   STAGE_ASSETS  BA/BB/LA.MAP/LA.DAT/MA.DAT or STAMPS+MAPRT
 ;   STAGE_OVL1    FCB open+block-read ICON1.OVL (discard)
 ;   STAGE_PLAY    clear B800, map->stamp blit, arrows/R/ESC
+;
+; Capture (no timestamps):
+;   make clean-dumps
+;   ICON.EXE: spam Ctrl+F10 while ring animates, then quit
+;   make install-title-frames   -> TITLES.BIN
+;   make clean-dumps
+;   ICON.EXE: ESC title, spam Ctrl+F10 on particles, quit
+;   make install-ani-frames     -> ANIS.BIN
 ;
 ; Build:  uasm -bin -Fo icon_dummy.com icon_dummy.asm
 ; Run:    from ICON/ directory
@@ -51,6 +58,8 @@ BB_SIZE         equ     2304
 BANK_SIZE       equ     BA_SIZE + BB_SIZE
 MAP_SIZE        equ     3840
 SCR_SIZE        equ     40*25*2         ; 2000 = mode 01 page
+MAX_FRAMES      equ     8               ; max title/ani frames in RAM
+FRAME_DELAY     equ     2               ; BIOS timer ticks (~110ms) per frame
 LADAT_MAX       equ     128             ; LA.DAT is 96 on disk
 MADAT_MAX       equ     512             ; MA.DAT is 502
 ; ICON0 31744/128 = 248; log used 243. ICON1 51712/128 = 404; log used 399.
@@ -60,18 +69,18 @@ OVL1_RECS       equ     399
 ; ---------------------------------------------------------------------------
 ; Messages (shown in mode 03 between stages or on error/exit)
 ; ---------------------------------------------------------------------------
-msg_banner      db      'ICON dummy loader v4 - stages mirror ICON.EXE',0Dh,0Ah
-                db      'TITLE -> ANI -> ICON0 -> assets -> ICON1 -> PLAY',0Dh,0Ah
-                db      'ESC skips title/ani; arrows in PLAY; ESC quits PLAY.',0Dh,0Ah,'$'
-msg_stage_t     db      '[stage] TITLE (mode 01, TITLE.BIN or blank)',0Dh,0Ah,'$'
-msg_stage_a     db      '[stage] ANI (ANI.BIN or blank)',0Dh,0Ah,'$'
+msg_banner      db      'ICON dummy loader v5 - stages + multi-frame intro',0Dh,0Ah
+                db      'TITLE loop -> ANI loop -> OVL0 -> assets -> OVL1 -> PLAY',0Dh,0Ah
+                db      'ESC skips loops; arrows in PLAY; ESC quits PLAY.',0Dh,0Ah,'$'
+msg_stage_t     db      '[stage] TITLE (TITLES.BIN multi-frame loop)',0Dh,0Ah,'$'
+msg_stage_a     db      '[stage] ANI (ANIS.BIN multi-frame loop)',0Dh,0Ah,'$'
 msg_stage_0     db      '[stage] ICON0.OVL FCB block-read',0Dh,0Ah,'$'
 msg_stage_as    db      '[stage] BA/BB + LA.MAP + LA.DAT + MA.DAT',0Dh,0Ah,'$'
 msg_stage_rt    db      '[stage] assets: STAMPS.BIN + MAPRT.BIN (parity)',0Dh,0Ah,'$'
 msg_stage_1     db      '[stage] ICON1.OVL FCB block-read',0Dh,0Ah,'$'
 msg_stage_p     db      '[stage] PLAY (terrain)',0Dh,0Ah,'$'
-msg_no_title    db      '(no TITLE.BIN - blank title)',0Dh,0Ah,'$'
-msg_no_ani      db      '(no ANI.BIN - blank ani)',0Dh,0Ah,'$'
+msg_no_title    db      '(no TITLES.BIN/TITLE.BIN - blank title)',0Dh,0Ah,'$'
+msg_no_ani      db      '(no ANIS.BIN/ANI.BIN - blank ani)',0Dh,0Ah,'$'
 msg_no_ovl0     db      'FCB open ICON0.OVL failed (continuing).',0Dh,0Ah,'$'
 msg_no_ovl1     db      'FCB open ICON1.OVL failed (continuing).',0Dh,0Ah,'$'
 msg_no_ba       db      'FCB open BA.DAT failed.',0Dh,0Ah,'$'
@@ -80,13 +89,15 @@ msg_bye         db      0Dh,0Ah,'ICON dummy exit. last stage play; mode was: $'
 msg_bye_rt      db      'parity tables',0Dh,0Ah,'$'
 msg_bye_file    db      'file BA+LA.MAP',0Dh,0Ah,'$'
 
+; ASCIZ paths for handle I/O (multi-frame files)
+path_titles     db      'TITLES.BIN',0
+path_title1     db      'TITLE.BIN',0
+path_anis       db      'ANIS.BIN',0
+path_ani1       db      'ANI.BIN',0
+
 ; ---------------------------------------------------------------------------
 ; FCBs - 8.3 space-padded (UASM: split db lines)
 ; ---------------------------------------------------------------------------
-fcb_title:
-        db 0, 'TITLE   ', 'BIN', 25 dup (0)
-fcb_ani:
-        db 0, 'ANI     ', 'BIN', 25 dup (0)
 fcb_ovl0:
         db 0, 'ICON0   ', 'OVL', 25 dup (0)
 fcb_ovl1:
@@ -112,8 +123,9 @@ fcb_madat:
 cam_x   dw      CAM_X0_FILE
 cam_y   dw      CAM_Y0_FILE
 mode_rt db      0                       ; 1 = parity STAMPS+MAPRT
-have_title db   0
-have_ani   db   0
+nframes_t db    0                       ; title frame count
+nframes_a db    0                       ; ani frame count
+frame_i   db    0                       ; playback index
 
 ; ---------------------------------------------------------------------------
 main:
@@ -129,26 +141,29 @@ main:
         int     21h
 
 ; ===========================================================================
-; STAGE_TITLE - ICON.EXE intro title (captured B800 page)
+; STAGE_TITLE - multi-frame loop (TITLES.BIN) or single TITLE.BIN
 ; ===========================================================================
 stage_title:
         mov     dx, offset msg_stage_t
         mov     ah, 09h
         int     21h
 
-        mov     byte ptr have_title, 0
-        mov     dx, offset fcb_title
-        call    fcb_open
-        jc      title_blank
-        mov     dx, offset fcb_title
+        mov     byte ptr nframes_t, 0
+        mov     dx, offset path_titles
         mov     bx, offset scr_title
-        mov     cx, SCR_SIZE / 128      ; 15 records = 1920; need 2000
-        ; read 16 records (2048) into scr_title (2000 used)
-        mov     cx, 16
-        call    fcb_read_all
-        mov     byte ptr have_title, 1
-        jmp     title_show
-title_blank:
+        call    load_frames
+        mov     byte ptr nframes_t, al
+        cmp     al, 0
+        jne     title_play
+
+        ; fallback single TITLE.BIN
+        mov     dx, offset path_title1
+        mov     bx, offset scr_title
+        call    load_frames
+        mov     byte ptr nframes_t, al
+        cmp     al, 0
+        jne     title_play
+
         mov     dx, offset msg_no_title
         mov     ah, 09h
         int     21h
@@ -156,15 +171,16 @@ title_blank:
         mov     cx, SCR_SIZE
         xor     al, al
         rep     stosb
-title_show:
-        call    icon_mode_01            ; mode 00/01 + font/CRTC like ICON.EXE
-        mov     si, offset scr_title
-        call    blit_scr_page
-        call    wait_esc
+        mov     byte ptr nframes_t, 1
+
+title_play:
+        call    icon_mode_01
+        mov     al, nframes_t
+        mov     bx, offset scr_title
+        call    play_frames             ; until ESC
 
 ; ===========================================================================
-; STAGE_ANI - intro animation frame (ESC skips like original)
-; Single captured frame (not a live particle loop).
+; STAGE_ANI - multi-frame loop (ANIS.BIN) or single ANI.BIN
 ; ===========================================================================
 stage_ani:
         mov     ax, 0003h
@@ -173,17 +189,21 @@ stage_ani:
         mov     ah, 09h
         int     21h
 
-        mov     byte ptr have_ani, 0
-        mov     dx, offset fcb_ani
-        call    fcb_open
-        jc      ani_blank
-        mov     dx, offset fcb_ani
+        mov     byte ptr nframes_a, 0
+        mov     dx, offset path_anis
         mov     bx, offset scr_ani
-        mov     cx, 16
-        call    fcb_read_all
-        mov     byte ptr have_ani, 1
-        jmp     ani_show
-ani_blank:
+        call    load_frames
+        mov     byte ptr nframes_a, al
+        cmp     al, 0
+        jne     ani_play
+
+        mov     dx, offset path_ani1
+        mov     bx, offset scr_ani
+        call    load_frames
+        mov     byte ptr nframes_a, al
+        cmp     al, 0
+        jne     ani_play
+
         mov     dx, offset msg_no_ani
         mov     ah, 09h
         int     21h
@@ -191,11 +211,13 @@ ani_blank:
         mov     cx, SCR_SIZE
         xor     al, al
         rep     stosb
-ani_show:
+        mov     byte ptr nframes_a, 1
+
+ani_play:
         call    icon_mode_01
-        mov     si, offset scr_ani
-        call    blit_scr_page
-        call    wait_esc
+        mov     al, nframes_a
+        mov     bx, offset scr_ani
+        call    play_frames
 
 ; ===========================================================================
 ; STAGE_OVL0 - ICON0.OVL block-read (same rec count as live log)
@@ -485,13 +507,142 @@ bake_ba:
         ret
 
 ; ---------------------------------------------------------------------------
-; wait_esc: block until ESC (AH=01 from INT 16h)
+; load_frames: DX -> ASCIZ path, BX -> dest buffer
+;   Reads up to MAX_FRAMES * SCR_SIZE bytes via handle I/O.
+;   Returns AL = frame count (0 if open/read failed).
 ; ---------------------------------------------------------------------------
-wait_esc:
+load_frames:
+        push    bx
+        push    cx
+        push    dx
+        push    si
+        push    di
+
+        mov     si, bx                  ; dest base
+        mov     ax, 3D00h               ; open read-only
+        int     21h
+        jc      lf_fail
+        mov     bx, ax                  ; handle
+
+        xor     di, di                  ; frame count
+lf_loop:
+        cmp     di, MAX_FRAMES
+        jae     lf_close
+
+        ; dest = si + di * SCR_SIZE
+        mov     ax, di
+        mov     cx, SCR_SIZE
+        mul     cx                      ; DX:AX
+        add     ax, si
+        mov     dx, ax                  ; buffer offset
+
+        push    bx
+        mov     ah, 3Fh
+        mov     cx, SCR_SIZE
+        int     21h                     ; BX=handle, DX=buf, CX=2000
+        pop     bx
+        jc      lf_close
+        cmp     ax, SCR_SIZE
+        jb      lf_close                ; short read = EOF
+        inc     di
+        jmp     lf_loop
+
+lf_close:
+        mov     ah, 3Eh
+        int     21h                     ; close BX
+        mov     ax, di
+        jmp     lf_done
+lf_fail:
+        xor     ax, ax
+lf_done:
+        pop     di
+        pop     si
+        pop     dx
+        pop     cx
+        pop     bx
+        ret
+
+; ---------------------------------------------------------------------------
+; play_frames: AL=nframes, BX=buffer base. Loop until ESC.
+; ---------------------------------------------------------------------------
+play_frames:
+        push    ax
+        push    bx
+        push    cx
+        push    dx
+        push    si
+
+        mov     byte ptr frame_i, 0
+        cmp     al, 0
+        jne     pf_ok
+        mov     al, 1
+pf_ok:
+        mov     dl, al                  ; DL = nframes
+
+pf_loop:
+        ; SI = BX + frame_i * SCR_SIZE
+        mov     al, frame_i
+        xor     ah, ah
+        push    dx
+        mov     cx, SCR_SIZE
+        mul     cx
+        pop     dx
+        add     ax, bx
+        mov     si, ax
+        call    blit_scr_page
+
+        ; delay FRAME_DELAY ticks, abort on ESC
+        call    wait_frame_or_esc
+        jc      pf_done                 ; ESC
+
+        inc     byte ptr frame_i
+        mov     al, frame_i
+        cmp     al, dl
+        jb      pf_loop
+        mov     byte ptr frame_i, 0
+        jmp     pf_loop
+
+pf_done:
+        pop     si
+        pop     dx
+        pop     cx
+        pop     bx
+        pop     ax
+        ret
+
+; ---------------------------------------------------------------------------
+; wait_frame_or_esc: wait FRAME_DELAY timer ticks. CF=1 if ESC pressed.
+; ---------------------------------------------------------------------------
+wait_frame_or_esc:
+        push    ax
+        push    bx
+        push    cx
+        push    es
+        mov     ax, 0040h
+        mov     es, ax
+        mov     bx, word ptr es:[006Ch] ; timer low
+wfe_loop:
+        mov     ah, 01h                 ; key waiting?
+        int     16h
+        jz      wfe_notkey
         xor     ah, ah
         int     16h
-        cmp     ah, 01h
-        jne     wait_esc
+        cmp     ah, 01h                 ; ESC scan
+        je      wfe_esc
+wfe_notkey:
+        mov     ax, word ptr es:[006Ch]
+        sub     ax, bx
+        cmp     ax, FRAME_DELAY
+        jb      wfe_loop
+        clc
+        jmp     wfe_done
+wfe_esc:
+        stc
+wfe_done:
+        pop     es
+        pop     cx
+        pop     bx
+        pop     ax
         ret
 
 ; ---------------------------------------------------------------------------
@@ -719,10 +870,11 @@ blit_done:
 ; ---------------------------------------------------------------------------
 dta_scratch:
         db      128 dup (0)
+; Multi-frame intro pages (MAX_FRAMES * 2000 each)
 scr_title:
-        db      SCR_SIZE dup (0)
+        db      (MAX_FRAMES * SCR_SIZE) dup (0)
 scr_ani:
-        db      SCR_SIZE dup (0)
+        db      (MAX_FRAMES * SCR_SIZE) dup (0)
 ladat_buf:
         db      LADAT_MAX dup (0)
 madat_buf:
