@@ -1,68 +1,79 @@
-# ICON dummy stub (v3)
+# ICON dummy loader (v4)
 
-DOS COM that implements the **ICON1 terrain draw path** in assembly.
-PNG / full-disk decode is **out of scope** here — once this blit matches, a host
-tool can reuse the same rules.
+DOS COM that mirrors **ICON.EXE load staging** in assembly, then runs the
+proven terrain play loop. Not a full Pascal MT+ reimplementation — same
+**order of modes, FCB names, and ESC-skippable intros**, then PLAY.
 
-## Modes
+## Visual order (matches real ICON.EXE)
 
-| Mode | Data files | Camera default | Purpose |
-|------|------------|----------------|---------|
-| **Parity** | `STAMPS.BIN` + `MAPRT.BIN` | (0,0) | Near byte-id with live ICON B800 (terrain) |
-| **File** | `BA.DAT` [+`BB.DAT`] + `LA.MAP` | (7,75) | Work from on-disk assets (BA leading `5Ah` stripped) |
+| # | You see in ICON.EXE | Dummy stage | Asset (8.3) |
+|---|---------------------|-------------|-------------|
+| 1 | Title — gold ring “icon” (`/tmp/start.png`) | `STAGE_TITLE` | `TITLE.BIN` |
+| 2 | After ESC — particle/anim (`/tmp/animation.png`) | `STAGE_ANI` | `ANI.BIN` |
+| 3 | (overlay load) | `STAGE_OVL0` | FCB `ICON0.OVL` (read+discard) |
+| 4 | Level assets | `STAGE_ASSETS` | `BA.DAT`… or `STAMPS.BIN`+`MAPRT.BIN` |
+| 5 | (gameplay overlay) | `STAGE_OVL1` | FCB `ICON1.OVL` (read+discard) |
+| 6 | Overworld terrain | `STAGE_PLAY` | map→stamp blit |
 
-Parity dumps are copies of DOSBox `mem_dumps` (runtime `DS:207A` / `DS:31D4`).
-Install them next to the COM (see Makefile `install-rt`).
+Real chain (live log):
 
-## Draw rules (ICON1)
-
-```
-clear B800 to 00,00
-for sr in 0..3:
-  for sc in 0..18:
-    id = map[(cam_x+sc)*100 + (cam_y+sr)]   ; full byte, mod 192
-    blit 2×6 char,attr cells at (col=1+2*sc, row=2+6*sr)
-  ; right edge (live col 39): left cell of stamp at map x=cam_x+19
+```text
+ICON.EXE → mode 00/01 title → (ESC) animation → ICON0.OVL
+         → BA.DAT, LA.MAP, LA.DAT, MA.DAT → ICON1.OVL → play
 ```
 
-Stamp cells in the bank are **char,attr** (B800 order).  
-On-disk `BA.DAT` is `5Ah` + char,attr stream → bake = drop first byte.
+## Capture authentic TITLE / ANI pages
 
-## Build
+Auto dumps right after mode-set often hit **mid-paint** (incomplete ring).
+For screens that match `start.png` / `animation.png`:
+
+1. Run **ICON.EXE** in DOSBox with `screen_dump = true`.
+2. On the **first** screen (title): **Ctrl+F10** → copy that `.bin` to `ICON/TITLE.BIN`.
+3. **ESC**, on the **animation** screen: **Ctrl+F10** → copy to `ICON/ANI.BIN`.
+4. Or: `make install-intro` if you name dumps as below.
+
+```bash
+# example after hotkey dumps exist:
+cp screen_dumps/ICON_gXXXX_m01_..._title.bin  TITLE.BIN
+cp screen_dumps/ICON_gXXXX_m01_..._ani.bin    ANI.BIN
+```
+
+`TITLE.BIN` / `ANI.BIN` are raw **mode 01h** pages: **2000 bytes** (40×25×2 char,attr).
+
+## Build / install
 
 ```bash
 cd games/icon-quest-for-the-ring/dummy
-make && make install          # COM → ICON/
-make install-rt               # STAMPS.BIN + MAPRT.BIN from mem_dumps/
+make && make install
+make install-rt      # STAMPS.BIN + MAPRT.BIN for byte-id terrain
+# make install-intro # optional: seed TITLE/ANI from latest m01 dumps
 ```
 
-## Run
-
-From `ICON/`:
+## Run (from `ICON/`)
 
 ```text
 icon_dummy.com
 ```
 
-Keys: **←↑↓→** camera, **R** reset, **ESC** quit.  
-DOS 8.3 name → dumps as `ICON_D1_...`.
+- **ESC** — skip TITLE, then ANI; in PLAY, quit  
+- **←↑↓→** — camera in PLAY  
+- **R** — reset camera  
 
-**Note:** Boot text is cleared when mode 01h starts (BIOS wipe). On **ESC**, mode 03 returns and prints whether the run was **parity** or **file**. Confirm loads via `game_trace.log` (`STAMPS.BIN` / `MAPRT.BIN` FCB lines) or by matching `expected_b800_parity.bin`.
+Mode-03 banners list each stage so you can see the chain even when mode 01 wipes the screen.
 
-## Expected match
+## PLAY terrain (unchanged)
 
-| Compare | Result |
-|---------|--------|
-| Parity blit vs live `ICON_g0013_…0008` | **1988/2000** bytes; **100% terrain** (player sprite cols 7–9 bottom only) |
-| `expected_b800_parity.bin` | Offline gold for parity mode |
-| File mode vs live overworld | Not expected equal (runtime map ≠ `LA.MAP`) |
+- 19×2×6 stamps + column-39 half-stamp  
+- Bank is **char,attr**; `BA.DAT` bake drops leading `5Ah`  
+- Parity: `STAMPS.BIN`+`MAPRT.BIN` → exact gold B800 terrain  
 
-```bash
-# after Ctrl+F10 dump in parity mode:
-cmp -l ICON/screen_dumps/ICON_D1_*m01*0002.bin dummy/expected_b800_parity.bin | head
-```
+## What is *not* authentic yet
 
-## Later (not this stub)
+| Item | Notes |
+|------|--------|
+| Pascal MT+ / real OVL execute | OVL is **FCB block-read only** (same rec counts as log), not jumped into |
+| Title/ani generators | We **replay** captured B800 pages, not re-run ICON.EXE draw code |
+| Menus / story / copy-protect | Skipped; go assets → PLAY after intros |
+| Player sprites / HUD | Not drawn |
 
-- MAP/BA file → PNG tools that **call the same blit rules**
-- Load-time bake RE (`LA.MAP` → `MAPRT`, full `207A` build) when needed for file mode fidelity
+Next authenticity steps: capture full TITLE/ANI; RE ICON.EXE title paint into ASM; optional menu stubs.

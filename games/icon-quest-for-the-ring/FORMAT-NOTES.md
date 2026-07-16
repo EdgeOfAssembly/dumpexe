@@ -186,11 +186,31 @@ Outputs go under `mem_dumps/`. **Priority:** feed `STAMPS.BIN` / `MAPRT.BIN` int
 ### Working order (agreed)
 
 1. **Dummy draw path in ASM** (map index → stamp → B800) until terrain is byte-identical or sprite-only deltas.
-2. **Then** host PNG / disk tools that reuse the same blit rules.
-3. Load-time bake (`LA.MAP`→`31D4`, `BA.DAT`→`207A`) only when file-mode fidelity needs it.
+2. **Authentic load staging** in the same COM (see `dummy/` v4): mirror ICON.EXE order in `.asm`.
+3. **Then** host PNG / disk tools that reuse the same blit rules.
+4. Load-time bake (`LA.MAP`→`31D4`, `BA.DAT`→`207A`) when file-mode fidelity needs it.
 
 **Parity result (mem dump g0013 + B800 `…0008`):** 19 full stamps + col-39 half-stamp; **100% terrain** bytes; remaining diffs = player sprite (bottom, cols 7–9).  
 **BA.DAT note:** leading `5Ah` then char,attr stream matches runtime stamps **0..90** when the header byte is dropped.
+
+### Dummy loader stages (v4) vs ICON.EXE
+
+User-visible intro order:
+
+1. **Title** — gold ring / “icon” / Macrocom (e.g. `/tmp/start.png`)  
+2. **Animation** — after ESC (e.g. `/tmp/animation.png`)  
+3. Then menus/story/OVL/assets → overworld  
+
+| Stage | ASM label | Authentic bit |
+|-------|-----------|----------------|
+| TITLE | `stage_title` | mode 00→01; blit `TITLE.BIN` (2000 B B800 page); wait ESC |
+| ANI | `stage_ani` | mode 00→01; blit `ANI.BIN`; wait ESC |
+| OVL0 | `stage_ovl0` | FCB `ICON0.OVL`, 243×128 sequential read (discard) |
+| ASSETS | `stage_assets` | BA/BB/LA.MAP/LA.DAT/MA.DAT **or** STAMPS+MAPRT |
+| OVL1 | `stage_ovl1` | FCB `ICON1.OVL`, 399×128 read (discard) |
+| PLAY | `stage_play` | terrain blit (ICON1 rules) |
+
+Capture `TITLE.BIN` / `ANI.BIN` with **Ctrl+F10** while each screen is fully painted (mode-set auto-dumps are often mid-frame).
 
 ## Level MAP (`L*.MAP`) — **strong** (index formula confirmed)
 
