@@ -24,11 +24,14 @@ ICON.EXE → mode 00/01 title → (ESC) animation → ICON0.OVL
 
 ## Capture multi-frame title / ani (automated)
 
-Script uses the same xdotool focus chain as a working feh loop:
+Script focuses DOSBox by **PID** (title becomes `ICON.EXE ...` after start):
 
 ```bash
-xdotool search --class dosbox-staging windowmap windowactivate --sync key ...
+pid=$(pgrep -x dosbox)   # or /tmp/auto_icon_dosbox.pid
+xdotool search --pid "$pid" windowmap windowactivate --sync key ctrl+F10
 ```
+
+(Same `windowmap windowactivate --sync` chain as a working feh loop.)
 
 ```bash
 cd games/icon-quest-for-the-ring/ICON

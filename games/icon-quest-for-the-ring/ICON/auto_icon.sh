@@ -33,32 +33,36 @@ need dosbox
 need xdotool
 [[ -n "${DISPLAY:-}" ]] || { log "DISPLAY not set"; exit 1; }
 
-# Window match for DOSBox Staging (try class first, then name).
-# Pattern follows working feh loops:
-#   xdotool search --class feh windowmap windowactivate --sync key ...
-DOSBOX_SEARCH_ARGS=( )
-dosbox_search_args() {
-	# Prefer WM_CLASS used by staging builds, then name fallbacks.
-	if xdotool search --class dosbox-staging >/dev/null 2>&1; then
-		DOSBOX_SEARCH_ARGS=(search --class dosbox-staging)
-	elif xdotool search --class dosbox >/dev/null 2>&1; then
-		DOSBOX_SEARCH_ARGS=(search --class dosbox)
-	elif xdotool search --name 'DOSBox' >/dev/null 2>&1; then
-		DOSBOX_SEARCH_ARGS=(search --name 'DOSBox')
-	elif xdotool search --name 'ICON' >/dev/null 2>&1; then
-		DOSBOX_SEARCH_ARGS=(search --name 'ICON')
-	else
-		DOSBOX_SEARCH_ARGS=()
+# Title becomes "ICON.EXE - ..." so name search for DOSBox fails after start.
+# Prefer: pgrep dosbox -> xdotool search --pid $pid windowmap windowactivate --sync
+dosbox_pids() {
+	local p=""
+	if [[ -f /tmp/auto_icon_dosbox.pid ]]; then
+		p=$(cat /tmp/auto_icon_dosbox.pid 2>/dev/null || true)
+		if [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null; then
+			echo "$p"
+			return 0
+		fi
 	fi
+	pgrep -x dosbox 2>/dev/null || pgrep -x dosbox-staging 2>/dev/null || true
 }
 
 find_wid() {
-	dosbox_search_args
-	if [[ ${#DOSBOX_SEARCH_ARGS[@]} -eq 0 ]]; then
-		echo ""
-		return 0
-	fi
-	xdotool "${DOSBOX_SEARCH_ARGS[@]}" 2>/dev/null | tail -1 || true
+	local p w=""
+	for p in $(dosbox_pids); do
+		# May return several client windows; take last (usually the toplevel)
+		w=$(xdotool search --pid "$p" 2>/dev/null | tail -1 || true)
+		if [[ -n "$w" ]]; then
+			echo "$w"
+			return 0
+		fi
+	done
+	# Last resort: class / name (works before ICON rewrites the title)
+	w=$(xdotool search --class dosbox-staging 2>/dev/null | tail -1 || true)
+	[[ -z "$w" ]] && w=$(xdotool search --class dosbox 2>/dev/null | tail -1 || true)
+	[[ -z "$w" ]] && w=$(xdotool search --name 'DOSBox' 2>/dev/null | tail -1 || true)
+	[[ -z "$w" ]] && w=$(xdotool search --name 'ICON' 2>/dev/null | tail -1 || true)
+	echo "$w"
 }
 
 wait_wid() {
@@ -66,69 +70,69 @@ wait_wid() {
 	while [[ $i -lt 60 ]]; do
 		w=$(find_wid)
 		if [[ -n "$w" ]]; then
+			log "window id=$w pid(s)=$(dosbox_pids | tr '\n' ' ')"
 			echo "$w"
 			return 0
 		fi
 		sleep 0.2
 		i=$((i + 1))
 	done
-	log "no DOSBox/ICON window found"
+	log "no DOSBox window (pgrep dosbox / xdotool search --pid)"
 	return 1
 }
 
-# Map + activate (same chain as your feh example). Returns 0 if search hit.
-# Usage: dosbox_xdo windowmap windowactivate --sync key Escape
+# Like feh chain, but PID-based (title rename safe):
+#   xdotool search --pid $pid windowmap windowactivate --sync key ...
 dosbox_xdo() {
-	dosbox_search_args
-	if [[ ${#DOSBOX_SEARCH_ARGS[@]} -eq 0 ]]; then
-		log "dosbox_xdo: no window to target"
-		return 1
+	local p
+	p=$(dosbox_pids | head -1)
+	if [[ -n "$p" ]]; then
+		if xdotool search --pid "$p" windowmap windowactivate --sync "$@" 2>/dev/null; then
+			return 0
+		fi
 	fi
-	# Chain like: search --class dosbox-staging windowmap windowactivate --sync ...
-	xdotool "${DOSBOX_SEARCH_ARGS[@]}" windowmap windowactivate --sync "$@"
-}
-
-# Focus only (call once after boot, and before bursts if needed).
-activate() {
-	local w="${1:-}"
-	if [[ -n "$w" ]]; then
-		xdotool windowmap "$w" windowactivate --sync "$w" 2>/dev/null || true
-	else
-		dosbox_xdo 2>/dev/null || true
-	fi
-	# Click center so SDL grabs keyboard (DOSBox often ignores keys until click)
+	local w
 	w=$(find_wid)
 	if [[ -n "$w" ]]; then
-		local geo X Y WIDTH HEIGHT cx cy
-		geo=$(xdotool getwindowgeometry --shell "$w" 2>/dev/null || true)
-		if [[ -n "$geo" ]]; then
-			# shellcheck disable=SC2086
-			eval "$geo"
-			cx=$((X + WIDTH / 2))
-			cy=$((Y + HEIGHT / 2))
-			xdotool mousemove --sync "$cx" "$cy" click 1 2>/dev/null || true
-			# Re-activate after click
-			xdotool windowmap "$w" windowactivate --sync "$w" 2>/dev/null || true
-		fi
+		xdotool windowmap "$w" windowactivate --sync "$w" "$@" 2>/dev/null
+		return $?
+	fi
+	log "dosbox_xdo: no window (pids: $(dosbox_pids | tr '\n' ' '))"
+	return 1
+}
+
+# Focus + click center so SDL grabs keyboard.
+activate() {
+	local w geo X Y WIDTH HEIGHT cx cy
+	w=$(find_wid)
+	[[ -z "$w" ]] && return 1
+	xdotool windowmap "$w" windowactivate --sync "$w" 2>/dev/null || true
+	geo=$(xdotool getwindowgeometry --shell "$w" 2>/dev/null || true)
+	if [[ -n "$geo" ]]; then
+		# shellcheck disable=SC2086
+		eval "$geo"
+		cx=$((X + WIDTH / 2))
+		cy=$((Y + HEIGHT / 2))
+		xdotool mousemove --sync "$cx" "$cy" click 1 2>/dev/null || true
+		xdotool windowmap "$w" windowactivate --sync "$w" 2>/dev/null || true
 	fi
 	sleep 0.1
 }
 
-# Re-focus via search|windowmap|windowactivate then send key (your feh pattern).
-# $1 wid is ignored for targeting (kept for call-site compatibility).
+# $1 wid optional — always re-resolve via pgrep/pid
 press() {
-	shift # drop wid; always re-search so we hit the live DOSBox window
+	shift || true
+	activate || true
 	dosbox_xdo key --clearmodifiers --delay 60 "$@"
 }
 
 dump_f10() {
-	shift || true
-	# Capital F required by xdotool key names
+	activate || true
 	dosbox_xdo key --clearmodifiers ctrl+F10
 }
 
 dump_f11() {
-	shift || true
+	activate || true
 	dosbox_xdo key --clearmodifiers ctrl+F11
 }
 
