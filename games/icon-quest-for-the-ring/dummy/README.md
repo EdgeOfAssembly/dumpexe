@@ -22,27 +22,38 @@ ICON.EXE → mode 00/01 title → (ESC) animation → ICON0.OVL
          → BA.DAT, LA.MAP, LA.DAT, MA.DAT → ICON1.OVL → play
 ```
 
-## Capture multi-frame title / ani (ring animation)
+## Capture multi-frame title / ani (automated)
 
-No timestamps. Two separate capture passes (title vs particles).
+Script uses the same xdotool focus chain as a working feh loop:
 
-### Title ring (loop)
 ```bash
-cd games/icon-quest-for-the-ring/dummy
-make clean-dumps
-# DOSBox: ICON.EXE — on the gold ring, spam Ctrl+F10 several times
-#         while it animates, then quit
-make install-title-frames    # -> TITLES.BIN (+ TITLE.BIN = frame 1)
+xdotool search --class dosbox-staging windowmap windowactivate --sync key ...
 ```
 
-### Particle screen (loop)
 ```bash
-make clean-dumps
-# DOSBox: ICON.EXE — ESC past title, spam Ctrl+F10 on particles, quit
-make install-ani-frames      # -> ANIS.BIN (+ ANI.BIN = frame 1)
+cd games/icon-quest-for-the-ring/ICON
+
+# Title ring: spam Ctrl+F10, pack TITLES.BIN
+./auto_icon.sh title-frames
+
+# Particles: ESC title, spam Ctrl+F10, pack ANIS.BIN
+./auto_icon.sh ani-frames
+
+# Skip menus to overworld + optional F10/F11 dumps (see ICON_gameplay.txt)
+./auto_icon.sh to-play
+
+./auto_icon.sh kill    # Ctrl+F9 + SIGTERM
 ```
 
-Only `reason=hotkey` metas are packed (max 8 frames). Dummy **loops** frames until **ESC**.
+Env knobs: `CYCLES=30000 TITLE_FRAMES=8 ANI_FRAMES=6 FRAME_GAP=0.3 BOOT_WAIT=1.2`
+
+Manual pack (if you already have hotkey dumps):
+
+```bash
+cd ../dummy && make install-title-frames   # or install-ani-frames
+```
+
+Only `reason=hotkey` metas are packed (max 8 frames). Dummy **loops** until **ESC**.
 
 ## Build / install
 
