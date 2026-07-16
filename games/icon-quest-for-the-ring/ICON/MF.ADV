@@ -1,0 +1,113 @@
+15
+Bat 0
+Bat 1
+1
+1
+0
+400
+15
+5
+8000
+8000
+0
+7
+2
+20
+Rat left
+Rat left
+2
+3
+1
+350
+10
+4
+6500
+6500
+0
+10
+1
+0
+Rat right
+Rat right
+2
+3
+1
+350
+10
+4
+6500
+6500
+0
+10
+1
+0
+Poison_Mushroom 0
+Poison_Mushroom 1
+4
+4
+1
+0
+9000
+1
+9999
+0
+0
+0
+1
+1
+Dragon
+Dragon
+5
+5
+1
+0
+50
+30
+9999
+0
+0
+0
+100
+1
+Dragon's_Tail 0
+Dragon's_Tail 1
+6
+6
+1
+0
+50
+60
+9999
+0
+0
+0
+100
+15
+Alligator left 0
+Alligator left 1
+7
+8
+2
+300
+30
+7
+7500
+8000
+0
+10
+10
+0
+Alligator right 0
+Alligator right 1
+7
+8
+2
+300
+30
+7
+7500
+8000
+0
+10
+10
+

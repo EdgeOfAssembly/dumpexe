@@ -307,7 +307,7 @@ Signature: 'MZ' (0x5A4D little-endian)
 .IP \(bu 2
 Header sizes in paragraphs (16-byte units)
 .IP \(bu 2
-File size: ((num_blocks-1) × 512) + final_len
+File size: num_blocks × 512 when final_len is 0 (last page full); otherwise ((num_blocks-1) × 512) + final_len
 .IP \(bu 2
 Entry point: header_size + (CS × 16) + IP
 

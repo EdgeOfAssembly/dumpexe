@@ -1,0 +1,658 @@
+<Picture: UGO>
+<Picture>
+
+<Picture: Spoiler>
+
+
+------------------------------------------------------------------------
+
+
+
+
+	Solution to Knights of Legend
+
+Introduction
+
+	In this game, you can form up a party of up to six characters. 
+  There are many classes you can choose your character from. The most  
+  important statistics in this game is foresight, strength, endurance 
+  and body points. Good foresight will allow your characters to foresee 
+  the opponents moves and respond to it. Balance represents your 
+  character's courage when faced with terrifying creatures. Speed is 
+  also not very crucial as speed boot can be found in the game. In this 
+  game you will find lots of quests to complete. The main aim is to 
+  rescue Seggallion the knight from Pildar. To complete the game, you 
+  will need to complete all 24 quests in the game. 
+
+General tips and combat
+
+  	The map is rather big and you will need to explore it 
+  thoroughly. Every towns/areas have an entry point, and if you did
+  not position yourself at the right place, you won't be able to get 
+  inside there.
+  
+  When you are creating your party, make sure that you have a good mix
+  of characters from the different races. There are certain location
+  where certain races are not welcome, ie the person there won't talk
+  to a certain race. Make sure you have at least two characters from
+  difference races with charisma above 80 so that you can obtain quests
+  from people of all kind. Have one or more archer with very good 
+  foresight. Get at least one kelder as they are the strongest fighter.
+  As for spell caster, make sure they have at least intelligence of 70
+  so that they can join magical order. You will need at least two spell
+  caster for those tough battle against giants.
+
+Tips on how to gain money and extra items:
+	
+	In this game, money is very important, because you need cash to
+  save your party to the inn, buy weapons and armours. And if you lose
+  a combat battle, there is a high chance for you to be robbed. But,
+  there is no option for you to transfer money from one character to 
+  another in this game. You can only trade items between characters.
+  So it is very important to learn how to gain extra money.
+
+  	To gain extra money is a tedious but rewarding job. You must 
+  first create a few dummy characters, preferably Brettle Regular 
+  because they start off with 3000 GC. Have them bought as much 
+  plate armour as possible. Then, trade the armour to a single one of 
+  them, said dummy A. Now, save dummy A to to the disk by going to the 
+  inn, do not save the rest of the dummies. At this point, quit the
+  game by pressing ctrl-q when you are outside the inn. Load the game 
+  again, this time bring in your own party. Leave an extra room for 
+  the dummy, Have him trade all his armours to your party. Do not save
+  the dummy afterwards. After that sell the armours to the armour shop 
+  for extra cash. Repeat this as many time as you like until you are 
+  satisfied with your money. You should give the dummy the most 
+  expensive item possible so that the number of time you need to 
+  repeat this is lesser.
+
+ 	With this in mind, you can also give the dummy any useful 
+  items you may want to duplicate, eg Truth Sword, courage coat, etc. 
+  Make sure you keep at least one copy of these items in your dummy, 
+  because you might lost your weapons when you flee from any battle.
+
+Combat:
+
+	The combat sequence in this game is extremely long. When in
+  combat, let your archer check through all the opponents action by 
+  aiming at all possible enemy. Take note of the oppenents move and 
+  their direction of attack. Your archer must have high foresight in 
+  order to see their moves. Have your characters respond to the 
+  attack using the information you have gathered.
+ 
+	Jump is very effective against attack to the lower part of the 
+  body. Duck is very effective against high attack. As for attack to 
+  the middle, backup is useful though it sometimes depend on your 
+  weapon defensive skill. With higher skill level, you can parry the 
+  opponent attack even when you move straight into their blade. To 
+  kill opponents fast, attack their chest (berserk) until it is all
+  red, then with another attack to the chest, you can kill them 
+  instantly. Attack to the arms will disable their arms so that they
+  cannot fight anymore. Attack to the legs will make them impossible
+  to jump. So, the usual  option for attack is : thrust to the area 
+  the opponent is moving. Jump, duck if you know that your opponent 
+  is attacking in that area. Backup and thrust to the middle if your
+  don't know what your opponent actions are. 
+
+  	When you find the truth sword, you can kill most of the
+  opponent easily. The sword is powerful and light weight. However,
+  you will almost certainly get wounded during the battle because
+  you can't improve your skill for it. However, if you greatsword
+  skill is high, you hit slightly better.
+
+	Before your characters found courage coat, you may find your
+  characters frozen in terror when face with creatures like trolls,
+  giants, etc. This is because your characters courage is not high
+  enough and the only way to overcome it is to wear a courage coat.
+
+	If you encounter creatures your party cannot due with, don't
+  be afraid to flee the battle. But before you flee from the battle,
+  put your weapon back to your belt first, otherwise you might lost
+  your weapons in the process. However, this does not apply to 
+  missile weapons like bow, crossbow, etc. ie you may still have them
+  in hand when you flee.
+
+  	When your party is on horseback, there is a option for you
+  to attempt to run away. Learn how to recognise which message
+  represent what kinds of creatures. If you think that you can win
+  them, don't run away, whack them for more experience points and
+  items. Also, don't run away from travelling healer, otherwise
+  you will have to pay for healing in town.
+
+Magic :
+
+	Your characters can only join one magic order at one time.
+  And they cannot quit the order they are in. It is best to learn as
+  many difference kinds of spells from all the difference order 
+  before you try to join any order.
+	
+  	Though you can only learn the basic spells if you don't
+  join any order, when you join an order later, you will be able 
+  to modify those spells you have already learned but the only thing 
+  you cannot change is the race. For example, if you have join the 
+  white pearl order, you can only select spells for human and elves, 
+  but if you have already learn some spells for dwarf and kelder 
+  before joining the order, you will be allowed to modify the spell 
+  for dwarf and kelder provided you don't change the race, ie you may 
+  also heal a kelder greatly though you are in the white pearl order.
+
+	You will be allowed to modify spells only if you have join
+  a certain magic order. To modify the spell, you will need enough
+  experience point to do the modification. The more powerful the
+  spell, the more expensive it will be. When you are in the modify
+  spell menu, use the arrow keys to select and modify the parts of
+  the spell. As for races in which subclass need to be specified,
+  try to learn a spell that is higher in the subclass list, ie at
+  the bottom of the list. If your spell can effect a certain subclass, 
+  than all other subclass below it will also be effected. For example, 
+  if your spells effect the subclass 'walbar', than it can effect the 
+  rest of the subclasses because it is the highest subclass. 
+
+Magic Order :
+
+  Order		Location	Races
+  ============================================
+  White Pearl 	Brettle		Human,Elf
+  Blue Gem	Tegal Forest	Kelder,Dwarf
+  Black Onyx	Shellernoon	Elemental
+  Secret Storm  Poitle Lock	Giant
+  Red Mist	Thimblewald	Legendary
+  Dark Stone	Olanthen  	Undead
+
+
+Gaining Levels and Skills:
+
+	In this game, you might not advance in certain skill level
+  because this game is opened for expansion and there is a option
+  to harbour masters from other scenerio. So, do not be disappointed
+  when you cannot find the appropriate masters to advance your skills.
+
+	I have list below a list of all the weapon master I have 
+  found and what level they will teach. You can use it to choose the
+  skill you would like to learn. If you intend to carry on with the
+  next scenerio, you may try to pick those better skill like 
+  greatsword, great axe, etc. But if you just want to play this
+  scenerio only, you might choose those skills in which you can gain
+  higher skill level. But you have to remember one thing, you may
+  only learn up to four skills. The number of skill point you can
+  have is dependent on your rank. The formula is as follows :
+
+	total skill points = 20 * level
+
+		where peasant = level 1
+  		      serf    = level 2
+ 		      .... etc
+
+  So, if you manage to reach level 25 which is Knight - Baronet,
+  you learn up to 25*20 = 500 skill points.
+
+  Since most weapon have a offense and defense skill, said 100 skill
+  point each, then you may learn up to two hand weapons and a missile
+  weapon. For the hand weapons, you may choose a one hand weapon
+  followed by a two handed one. 
+
+  At higher level, you foresight will improved, and will hence hit
+  more often. But in long run, a higher skill level is crucial to
+  your success in the game.
+
+  When you train with a weapon master, you can train at most 5 skills
+  level per session and you need the corresponding amount of 
+  experience. A raw estimate is about 100 experience points to 1 skill
+  level. You may gain experience by winning battles or completing 
+  quests. When you have used up the amount of skill points you can have 
+  for your current level, you will be asked to fight in the arena. If
+  you refuse, you will never be promoted to a higher rank. The arena
+  is located somewhere north of Brettle. Just follow the north road,
+  after passing a 3 ways junction, head north for about 2 days and
+  you will see a building by the side of the road. This is the 
+  arena, where you will fight a monster randomly chosen. If you lose
+  the battle, you will be kick out of it and you will have to try 
+  again. If you win, you will gain a level. So, prepare yourself 
+  carefully before entering the arena because you will have to fight 
+  the monster alone without the help from the rest of the party. Learn 
+  the weak points every kind of creatures and react to it. A Truth 
+  Sword is very effective against man sized creatures but if the 
+  opponent skill is high, try to use your skill against it. 
+
+
+The masters and their skills :
+
+  Fortress of Brettle,	Hvrad Myth
+
+  	Longsword	 0 - 30
+	Broadsword	 0 - 30
+	Short Spear	 0 - 30
+	Battle Axe	 0 - 30
+
+  Tower at 3-way junction north of Brettle, Fistan Stockhard
+
+	Broad Axe	 0 - 45
+	Hand Axe	 0 - 45
+ 	Hvy Crossbow	 0 - 45
+	Great Axe	 0 - 45
+
+  Htron, a residence, Zachary Bladeshure
+
+	Scimitar	46 - 95
+	Greatsword	 0 - 30
+	Shortsword	 0 - 55
+	Bastard Swd	 0 - 45
+
+  Htron, Training Grounds, Mornag the Merciless (kelder not welcomed)
+
+	Scimitar	 0 - 50
+	Mace		 0 - 60
+	Lt Crossbow	 0 - 55
+	War Hammer	 0 - 50
+
+  Tegal Forest, The Portal, Monvin the Elder
+
+	Halberd		 > 45
+	Morningstar	 > 55
+	Flail		 0 - ??
+  	Broadsword	 > 30
+
+  Building along Krell Way near the Hobe, Weapon Master, Nigel Gulliam
+
+	Club		 0 - 45
+	Halberd		 0 - 45
+	Great Hammer	 0 - 45
+	Quarterstaff	 0 - 45
+
+  Shellernoon, Weapon Trainer, Kelmore Stratsmoth
+
+	Long Spear	 0 - 25
+	Morningstar	 0 - 55
+ 	War Maul	 0 - 25
+	Heavy Maul	 0 - 45
+
+  Olanthen, Rhun Manor, Rhunholland
+
+	Longsword	 > 30
+	Broadsword	 > 30
+	Bastard Swd	 > 45
+	Greatsword	 > 30
+
+  Klvar Wood, Klvar Tree House, Tyrolliar Cellana
+
+	Self Bow	 0 - 55
+	Elf Bow		15 - 70
+	Long Bow	12 - 35
+	Dagger		 0 - 60
+
+Weapon and Armor :
+
+	Two handed weapons are effective but your characters must be
+  strong enough to wield them. If they are not strong enough, they
+   will get tired very fast thus increasing fatigue. When using one
+  handed weapon, you can equip a shield to increase protection. If
+  you want archer, it is best to let them use elf bow but since the
+  master only train you if your skill is at least 15, it is only 
+  possible if you choose characters who have it as their basic skill.
+  You can buy elf bow from Htron if you need them.
+
+	Magic ingot can be forge into a weapon. You will be allow to
+  give it a name. However, changing the name to some common weapons
+  do not make them behave as one. If you name it as 'longsword', it
+  don't look like one or behave as one, since when you see a two
+  handed longsword? So, even if you have longsword skill, there is
+  really not much effect. You may called them Dragon Slayer, Soul
+  Stealer, etc if you want you character to process something 
+  special. Use them just like the Truth Sword you have found.
+  
+	The armour for the your character have to depend on their size,
+  strength and the weapon they used. Smaller size means smaller armour
+  hence lesser weight. Strength determines how much weight your 
+  characters can take. And if they are using heavy weapons, they can't
+  fight well if their armour is too heavy. 
+
+Quests :
+
+	There are 24 quests in this game. You will need to obtain 
+  these quests from differece people you find in the game. In order 
+  for them to give you the quest, you must talk to them using the 
+  right word. You may find clues to these words by talking to other 
+  people. When the correct word is used, the person will ask you 
+  whether you will like to take on the quest, if you reply 'no', 
+  the quest will not be given. As long as at least one person in 
+  your party is given a particular quest, the rest of the party can 
+  take part in it. So make sure the character that is given the quest 
+  is present when you go for a quest. To play it safe, you might want 
+  everyone inside your party to be given the quest, you can do this by
+  making them talk to the person who give you the quest. 
+
+	After obtaining a quest, you need to talk to other people
+  in order to find out the quest location. I have enclosed a map with 
+  all the quest locations marked. When your party is ready for the
+  quest, you will have to travel to the quest location. It is best to
+  buy a horse for everyone in the party. Remember that you party 
+  movement speed is equal to that of the slowest character. So be sure
+  to find good horse for everyone in the party. You can find stables in
+  many towns, but some stable don't welcome certain races. In that 
+  case, try another one in another town. Now, with good horses, you
+  will travel faster and reach the quest location in fewer days. 
+
+	When you come to a quest location, you will find a long message 
+  being displayed on the screen ending with the question " Will you 
+  partake ?" Answer yes and you will be entering the quest location. 
+  There you will find certain creatures guarding the item you are 
+  looking for. 
+
+	There are two ways to complete the quest. Firstly, you can kill 
+  all the monsters in the location and you will automatically exit from 
+  the location, you may then get the quest item after the battle. So, 
+  be sure to take note of the number of creatures at the start of the 
+  quest as that is the number of creatures you will need to kill. 
+  Secondly, you may fight your way in and let one of your character get
+  hold of the quest item, then that particular character with the item 
+  must run to the exit (the place you enter the location, so make sure 
+  you know the way out!). At the exit, you will be asked if you want 
+  to flee, answer yes you will exit from the quest. This method has 
+  some drawbacks because you will lost all the experiences for killing
+  these creatures. Completing quest offers slightly more experience 
+  points than normal encounters. There is one thing you must remember 
+  if you attempt to run to the exit, do not attempt to flee the battle
+  before reaching the exit, otherwise the quest is not completed and 
+  you have to do it one more time though you can have the quest item.
+  Also, put your quest item in your backpack after the quest. 
+  Otherwise the next time you flee a battle, you might lose the item. 
+  Going back without the quest item after completing the quest will 
+  not do you any good as you need to go for the quest again.
+
+	After completing the quest, go back to the person who give you 
+  the quest, when you step into their house, a message will be 
+  displayed telling you that the quest is completed and you might be 
+  given rewards or clues in return. At the same time. a medal will be 
+  given to you, check your medal to see how many more quest you have 
+  to  complete. You have to be careful when you enter their house, if
+  you miss the message being displayed, you will never get it back 
+  unless you complete the quest another time. The message may contain
+  useful information, so it is wise to save the game before you go to
+  the quest personnel just in case you want to read it again.
+
+The 24 quests :
+
+	There is no need to complete the quest in the order being 
+  stated, they just happen to come in my mind in that order. If you
+  cannot complete a certain quest, simply skip to the next one and
+  come back to them when you are stronger. Do not be afraid to flee
+  when you find the creatures too tough. Go back to town to customize
+  a spell to counter the creatures if possible and try again. 
+
+	It is necessary to complete all the quests in the game.
+  Otherwise, the last quest to save Seggallion will not be given.
+
+1.	Find Stephanie in Brettle. Talk to her about 'gavel' and she 
+  will give you a quest. She will ask you to retrieve the gavel from 
+  the Ruffians that have stolen it and escape into the Tantowyn. Just 
+  go out of Brettle and move along the River Passing. At a point where 
+  the river just enter the Great Wood which is roughly one day journey 
+  from Brettle, you will find the creatures you are seeking. The 
+  Ruffians aren't very tough so the fight shouldn't be a problem. When 
+  you have find the gavel, return it to Stephanie and she will tell 
+  you a code word 'Kydar'. Note down the first letter, you will need 
+  it later on.
+
+2.	Find Stephen in Brettle. Talk to him about 'standard' and he 
+  will give you a quest. The standard of Stephen's guild is stolen by 
+  a bunch of bandits and have escaped to the north. Go outside Brettle 
+  and follow the road north, at a three ways junction with a broken 
+  tower. Turn left into Krell Way, just move along the path and you 
+  will find the bandits. The bandits are not very strong but slightly 
+  difficult to get hit. If your characters foresight is good, you will 
+  have a higher chance to hit them. After finding the standard which 
+  is a flag, return it to Stephen. He will tell you another code word
+  'Aklom', note down the first letter too.
+
+3.	Find Hegissa in Brettle. Talk to her about 'knight' and she 
+  will give you a quest. This time you will need to find the quill 
+  which is stolen. The thieves have entered the Klvar Wood. So, head 
+  for the wood which is to the south east of Brettle. Just walk along 
+  the Sheller Road for one day, the head south until you are in Klvar 
+  Wood. This time you will encounter some ghouls who are guarding the 
+  quill. When you return the quill to Hegissa, she will tell you the 
+  third code word 'Moram', similarly note down the first letter.
+
+4.	Now go to see the mayor of Brettle, Benjamin. Combine the three 
+  letters you have found and then tell him. He will ask you to look for 
+  the sword of truth which was stolen by the goblins. This time, you'll 
+  need to head south to the south coast. At the coastal area wear of 
+  Usip Wood, you will find the creatures you are seeking. When you have 
+  found the Truth Sword, bring it to the mayor and he will give it to 
+  your party as a reward. The Truth Sword is a very powerful weapon and 
+  it will help you in the other quest. It can do a demage of 4-32 and 
+  it is very light. So using it enable your character to do great 
+  demage to his/her oppenents without losing lots of energy. However, 
+  there is one drawback of using it. The fact that it is special 
+  sword, indicate that there is no place for you to train the skill 
+  for using it which means that you will not hit creatures with very 
+  high skill level. However it is very effective when used in the 
+  arena against most creatures. 
+
+5.	Find Biblik the Sage in Htron. Talk to him to get the quest. 
+  Go to the Tegal River and move along it. At somewhere near the middle
+  of the river, you will find the creatures guarding the crown. Return 
+  it to the Sage and you will be rewarded with a flying cloak. Wearing 
+  it allow your characters to fly. 
+
+6.	Talk to Sam in Htron about 'stod' and he will ask you to find 
+  parth oil for him. This time you'll need to go all the way to 
+  Berthand's Bay in the southern part of Ashtalarea. Walk along the 
+  coastal area of the bay and you will find the creatures guarding the 
+  quest item. Give the oil to Sam and he will tell you to mention 
+  'Nobjor' to pirates.
+
+7.	The pirates lives in a small house to the west of Stone Island. 
+  When you reach there, talk to Pegleg about 'Nobjor'. He will ask you 
+  to look for his shipwheel. Go to Erwenwald just to the north of the 
+  pirates' house. You will find some hobgoblins guarding the shipwheel. 
+  In return for the shipwheel, the pirate will give you a map.
+
+8.	Bring the map to Scotty next door of Pegleg and ask him about 
+  'map'. He will then ask you to look for his pirate hat. Go all the 
+  way to Prazen Point and you will encounter some slyphs. Make use of
+  the terrain there to shoot arrows or cast spells at the slyphs when 
+  they cannot reach you. In this way, you will kill most of them. 
+  Afterall, slyphs are water elements which ones should carefully deal
+  with. Upon retreiving the hat. Scotty will ask you to look for 
+  someone with initials T.D.
+
+9.	Go to Htron to look for T.D. You should have guess it by now, 
+  the person you are looking for is Tulliana Daverland. Ask her about 
+  'map' and she will ask you to find her iron chest. Go to Ebbwater and 
+  you will find minotaurs guarding the chest. Minotaurs are creatures 
+  that should not be underestimated. They are slow in combat but they 
+  do lots of demage when they hit. It is best to throw spells at them 
+  before fighting. Truth Sword will help you little because this only 
+  make you easier to be hitted unless you can kill the minotaur first 
+  before he can hit you. Bring the chest to Tulliana, she will open 
+  the chest and give you a red ring.
+
+10.	Talk to Belinda in Olanthen. She will ask you to look for a 
+  golden necklace. Go to the Mountain of Lorr to the east. You will 
+  find orcs guarding the necklace. Belinda will give you a magic ingot 
+  as a reward. Use it to make a weapon for your character or sell it
+  for cash.
+
+11.	Talk to Orofin in Poitle Lock. He will ask you to find the wand 
+  for him. Go outside town and you will find two rivers. Walk along the 
+  southern river towards Pauper Valley. After a short journey, you will
+  find skeletons guarding the wand. The skeletons are very easy 
+  opponnents, they will collapsed into pieces if they move too much. 
+  When you have complete the quest, Orofin will tell you to say 'gold' 
+  to Sedfrey.
+
+12	Talk to Sedfrey in Poitle Lock. You will be ask to search for 
+  the coat of arms in the heart of the Tegal Forest. At the centre of 
+  Tegal Forest, you will find the thugs who have stolen the coat. 
+  Return it to Sedfrey and he will reward you with the courage coat.
+  The courage coat will give you courage to face terrible creatures,
+  without it you can't complete certain quest.
+
+13.	Talk to Milinya in Thimberwald. She will ask you to look for 
+  the oil of changeling in the downing swamp. The swamp is to the east 
+  to the town. The swamp is not very big so there should not be any 
+  problems finding the quest location. You will enter some muck things 
+  there. They are not very tough though they might look horrible. In 
+  return for the oil, Milinya will tell you the name of the spy, Delmor.
+
+14.	Find Trimrose at Thimberwald and mention the name of the spy to 
+  him. He will ask you to look for a cloak in the Karg Hill. You will 
+  find the quest location at Northwald. Return the cloak to Trimrose, 
+  and he will tell you to say 'follies' to Yardley. Saying that to 
+  Yardley and he will tell you to talk to the Kelder.
+
+15.	Talk to the Keldinarr in Thimblewald about 'vial'. He will 
+  then ask you to look for it. You can find the quest location at
+  Windy Run.  Return the vial to him and he will tell you to say 
+  'scalfeth' to the warrior soul.
+
+16.	Talk to Ballaster (the warrior soul) at Krag Keep. He'll ask 
+  you to help him find his millet. You can find the quest location at 
+  Wesswald. There you'll find mist giants guarding the item. In that 
+  place you will need to move along corridor will is only a person 
+  width. So you will need to fight with the mist giant one to one. So 
+  it is best to put your strongest character at the front followed by 
+  archer and spell caster. Here you'll need to have very high weapon 
+  skill so that you will avoid being hit by the mist giants. A spell 
+  or two that increased the skill level with help a lot. After that 
+  very tough battle to recover the millet. Ballaster will give you his
+  deathblade will can do a demage of 5-27. He will also tell you to 
+  talk to the Fostering about 'rhording'.
+
+17.	The Fostering is at the northern part of the Tegal Forest. 
+  Talk to Dunnigen. She will ask you to look for something in the Wood 
+  of Dream. Go to The Darkwood south of Krell Swamp. You'll find some 
+  orges guarding the quest item. If you have defeated the mist giants, 
+  the orges shouldn't be a problem as you will need to use the same 
+  tactics here. Returning the golden chalice to Dunnigen and she will 
+  tell you to say 'inthos' to the Hobe.
+
+18.	Talk to Lord Stiveron in the Hobean Keep. You'll be ask to 
+  look for the hidden staff in the Downing Mountains. The quest 
+  location is at the southeastern end of the mountains. You will find 
+  stone ogres there. The stone ogres are tough in nature, hence the 
+  name. You can defeat them with spells or when your skill is high 
+  enough. You will get a pair of speed boot when you return the staff 
+  to Lord Stiveron. Wearing the boots will allow your character to 
+  move faster.
+
+19.	Talk to Rodrigard at the Sheller Bridge. Tell him 'bryor' 
+  and he will ask you to find a wristband. Go to the Sheller Ridge and 
+  you will find ettins there. After getting the item, Rodrigard will 
+  tell you to talk to Aurin about 'grey'.
+
+20.	Talk to Aurin (next door to Rodrigard). He will ask to look 
+  for something at the Thanakesh Hills. Fight the djinns there to get 
+  the quest item. Return it to Aurin and he will tell you to mention 
+  his name to the main guard.
+
+21.	Tell the Sheller Elite Guard that Aurin sent you. He will ask
+  you to find the shade ring in Westwash. The ring is heavily guarded
+  by cliff trolls. You will need courage coat in order to face them.
+  Return the ring to the main guard and he will tell you to say 
+  'silver knot' to Norgan.
+
+22.	Talk to the Lord of Shellernoon, Norgan. He will ask you to 
+  recover the ward from Sodden Hills. The ward is guarded by sledge.
+  Beware of this area, when you enter the quest location, your
+  party will be split into six groups which mean that your characters
+  must fight their own battle before they can group themselves 
+  together again. The sledge main weakness is at their head. But you
+  have to be tall enough to hit the head. Return the ward to Norgan
+  and he will give you the shade ring and tell you to see Dundle.
+
+23.	Talk to Denswurth in Olanthen. He will ask you to find the 
+  statuette. Go to the Missip Valley south of the Mytrone Hills. 
+  You'll find trolls guarding the statuette. The troll are terrible
+  creatures which will make your characters freeze in terror if 
+  their courage is not high enough. Make sure you have the courage 
+  coat before you come to this place. Return the statuette to 
+  Denswurth, and he will give you a great shield. The shield offers 
+  a great amount of protection and weighs little and you can change
+  the pattern of the shield with the edit shield option in the 
+  openning menu if you want fancy shields.
+
+24.	You must complete the above 23 quests before Dundle give you
+  the last quest. You can find him at the Assembly Building in the
+  Olanthen Barrier outside the Mountains of Lorr. Talk to him about
+  'Seggallion' and he will give you the quest. Go to the Ghor Hills
+  to find the quest location. You will find cyclops guarding the
+  area. The final battle is quite tough and requires the same tactics
+  when you are fighting storm giants. After defeating the cyclops,
+  you will be rewarded with a mini slide show. After rescueing 
+  Seggallion, he will give you his shuckles as an evident. Go back
+  to see the black dwarf, and he will reward you with a black ingot
+  which can do a demage of 3-36.
+
+  At this stage, you have cleared all the quests in this scenerio,
+  so watch out for the next one.
+
+
+
+Do not read this part unless you are desperate !
+
+Tips on hacking the game
+
+	I will only touch on the first character. The rest of the
+  characters will simply begin at difference offsets.
+	This part is illustrated using Norton Utilities, you may
+  want to use other programs to do the same job.
+	Type in 'path:nu chardata' to start editing the character
+  file. I do not want to spoil the fun by revealing the exact 
+  details for the characters attributes, so I will simply touch
+  on how to get the quest from people if you cannot find the
+  right word to say. I careful player should have no problem in
+  finding the right word, so this portion is for those with some
+  difficulty. 
+	Between file offsets 482, hex 1E2 to 487, hex 1E7 is 6 bytes
+  containing the status of your quests. The six bytes have a total
+  of 12 hexidecimal digits, so each corresponds to two quests as
+  there are a total of twenty four.
+
+	The meaning of the binary code used is as follows :
+
+		00	quest not yet given
+ 		01	quest given but not yet complete
+		10	quest complete but medal not yet given
+		11	medal given to quest
+
+	So what they actually do is to combine two of these to form
+  a hexidecimal digit.
+
+	Here are the conversion from hexidecimal to binary :
+
+		0000	0	1000	8
+		0001	1	1001	9
+		0010	2	1010	A
+		0011	3	1011	B
+		0100	4	1100	C
+		0101	5	1101	D
+		0110	6	1110	E
+		0111	7	1111	F
+
+  The position of the quests in the code correspond to that you see
+  in the medal display. So just locate the appropriate quest and do
+  the changes.
+
+  Warnings :
+
+	Do not attempt to set the quest to 10, ie completed, because
+  in that case the person who give you the quest won't reward you 
+  since you did not return with the quest item. So, at most set it
+  to 01 and go for the quest, completing it will reward you will
+  useful items or clues. If you set them to FFFFFF, then you in
+  fact have completed the game without fighting a single battle, but
+  then you will miss the end game slide show completely. And you 
+  won't have all the useful items when the next scenerio is added.
+
+					      VOLUME
+					      benghai@iss.nus.sg
+					      isslbh@nusvm.bitnet
+
+
+
+
+------------------------------------------------------------------------
+The Spoiler Centre 
+

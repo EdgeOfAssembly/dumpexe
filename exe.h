@@ -27,7 +27,7 @@ inline constexpr uint16_t MZ_SIGNATURE = 0x5A4D;
 #pragma pack(push,1)
 struct MZHeader {
     uint16_t signature;         ///< 0x00: "MZ" signature (0x5A4D in little-endian)
-    uint16_t final_len;         ///< 0x02: Bytes in last 512-byte page (0 = full page)
+    uint16_t final_len;         ///< 0x02: Bytes in last 512-byte page (0 = full 512-byte page)
     uint16_t num_blocks;        ///< 0x04: Number of 512-byte pages in file
     uint16_t num_reloc;         ///< 0x06: Number of relocation entries
     uint16_t header_size;       ///< 0x08: Header size in 16-byte paragraphs

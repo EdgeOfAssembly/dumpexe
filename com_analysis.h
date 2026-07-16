@@ -42,6 +42,7 @@
 #include "formatting.h"
 #include "options.h"
 #include "disasm.h"
+#include "cfg.h"
 #include "registers.h"
 #include "analysis.h"   // trace_comment(), reg_get(), reg_set(), reg_fmt()
 
@@ -257,6 +258,33 @@ static inline void analyze_com(const Options& opts,
     if (opts.showDisasm || opts.showAll) {
         disassemble(data, entry_offset,
                     opts.loadBase, COM_ENTRY_IP, opts);
+    }
+
+    if (opts.showCfg) {
+        // COM: file image maps to CS:0100 (or CS:0000 if PSP embedded).
+        // Build CFG in a virtual image where IP 0100 is entry for no-PSP files.
+        if (has_psp) {
+            cfg_analyze_image(data, 0, data.size(), COM_ENTRY_IP, opts.loadBase, opts);
+        } else {
+            // Prepend 0x100 zero bytes so IPs match DOS (code at 0100h).
+            std::vector<uint8_t> virt(COM_PSP_SIZE + data.size(), 0);
+            std::memcpy(virt.data() + COM_PSP_SIZE, data.data(), data.size());
+            // file offsets in dump will be wrong by +100h for virt — pass file base 0
+            // and note in analysis; use image that starts at 0 with code at 100h.
+            CfgGraph g = cfg_build(virt, COM_ENTRY_IP, opts.loadBase, 0,
+                                   opts.cfgFollowCalls, 20000);
+            cfg_annotate(g, virt);
+            // Fix displayed file offsets: real file off = ip - 0x100
+            for (auto& [ip, blk] : g.blocks) {
+                (void)ip;
+                if (blk.start_ip >= COM_PSP_SIZE)
+                    blk.file_off = blk.start_ip - COM_PSP_SIZE;
+                for (auto& in : blk.insns)
+                    if (in.ip >= COM_PSP_SIZE)
+                        in.file_off = in.ip - COM_PSP_SIZE;
+            }
+            cfg_print(g, opts);
+        }
     }
 
     if (opts.simulate) {

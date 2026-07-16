@@ -201,7 +201,7 @@ Dynamic execution trace:
 - Signature: `MZ` (0x5A4D little-endian)
 - 28-byte minimum header
 - Header sizes in paragraphs (16-byte units)
-- File size: `((num_blocks-1) × 512) + final_len`
+- File size: `num_blocks × 512` when `final_len == 0` (last page full); otherwise `((num_blocks-1) × 512) + final_len`
 - Entry point: `header_size + (CS × 16) + IP`
 
 ### COM Format

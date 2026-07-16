@@ -1,0 +1,43 @@
+ICON/BA.DAT:    data
+ICON/BB.DAT:    data
+ICON/DR.DAT:    data
+ICON/ICON.EXE:  MS-DOS executable, MZ for MS-DOS
+ICON/ICON0.OVL: MS-DOS executable, MZ for MS-DOS
+ICON/ICON1.OVL: MS-DOS executable, MZ for MS-DOS
+ICON/ICON2.OVL: MS-DOS executable, MZ for MS-DOS
+ICON/LA.ADV:    data
+ICON/LA.DAT:    data
+ICON/LA.MAP:    data
+ICON/LB.ADV:    data
+ICON/LB.DAT:    data
+ICON/LB.MAP:    data
+ICON/LC.ADV:    data
+ICON/LC.DAT:    data
+ICON/LC.MAP:    data
+ICON/LD.ADV:    data
+ICON/LD.DAT:    data
+ICON/LD.MAP:    data
+ICON/LE.ADV:    data
+ICON/LE.DAT:    data
+ICON/LE.MAP:    data
+ICON/LF.ADV:    data
+ICON/LF.DAT:    data
+ICON/LF.MAP:    data
+ICON/LG.ADV:    data
+ICON/LG.DAT:    data
+ICON/LG.MAP:    data
+ICON/MA.ADV:    data
+ICON/MA.DAT:    data
+ICON/MB.ADV:    data
+ICON/MB.DAT:    data
+ICON/MC.ADV:    data
+ICON/MC.DAT:    data
+ICON/MD.ADV:    data
+ICON/MD.DAT:    data
+ICON/ME.ADV:    data
+ICON/ME.DAT:    data
+ICON/MF.ADV:    data
+ICON/MF.DAT:    data
+ICON/MG.ADV:    data
+ICON/MG.DAT:    data
+ICON/SP.DAT:    data
