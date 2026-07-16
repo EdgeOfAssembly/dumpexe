@@ -24,21 +24,20 @@ ICON.EXE → mode 00/01 title → (ESC) animation → ICON0.OVL
 
 ## Capture authentic TITLE / ANI pages
 
-Auto dumps right after mode-set often hit **mid-paint** (incomplete ring).
-For screens that match `start.png` / `animation.png`:
-
-1. Run **ICON.EXE** in DOSBox with `screen_dump = true`.
-2. On the **first** screen (title): **Ctrl+F10** → copy that `.bin` to `ICON/TITLE.BIN`.
-3. **ESC**, on the **animation** screen: **Ctrl+F10** → copy to `ICON/ANI.BIN`.
-4. Or: `make install-intro` if you name dumps as below.
+You never pick timestamps. Empty the dump dir, capture two hotkeys, we copy.
 
 ```bash
-# example after hotkey dumps exist:
-cp screen_dumps/ICON_gXXXX_m01_..._title.bin  TITLE.BIN
-cp screen_dumps/ICON_gXXXX_m01_..._ani.bin    ANI.BIN
+cd games/icon-quest-for-the-ring/dummy
+make clean-dumps          # empties ICON/screen_dumps/
+# DOSBox: ICON.EXE
+#   on title (start.png look)     → Ctrl+F10
+#   ESC
+#   on animation (animation.png) → Ctrl+F10
+make install-intro        # 1st hotkey → TITLE.BIN, 2nd → ANI.BIN
 ```
 
-`TITLE.BIN` / `ANI.BIN` are raw **mode 01h** pages: **2000 bytes** (40×25×2 char,attr).
+`install-intro` only uses dumps with `reason=hotkey` in the `.meta` file (ignores auto mode-set dumps).  
+`TITLE.BIN` / `ANI.BIN` are **2000-byte** mode 01h pages (char,attr).
 
 ## Build / install
 
