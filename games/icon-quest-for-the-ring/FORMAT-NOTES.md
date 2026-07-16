@@ -121,13 +121,55 @@ python3 games/icon-quest-for-the-ring/decode_screen_dump.py
 
 Attrs on screen can differ from BA defaults (lighting / recolor); **characters** are the stable key.
 
-### MAP ↔ screen camera — *open*
+### MAP → stamp draw (ICON1) — **confirmed path**
 
-Brute-force aligning MAP (`index = x*100 + y`, tile = `byte & 0x7F`) as a 19×3 (or ×4) stamp window into the live char plane peaks around **~50%** cell match (best tried ~`(7,74)` / rph phase variants). **Not locked.**
+```
+tile_x = (world_x - 2880) / 288      ; DS:822C
+tile_y = (world_y - 2400) / 288      ; DS:8230
 
-Likely still missing: autotile / edge stamps, scroll pixel offset inside a stamp, or a runtime remap table from MAP id → BA stamp.
+; horizontal strip, i = 0..0x12 (19 stamps):
+screen_col = (i << 1) + 1           ; 1,3,5,...,37   (c2f7 = SHL)
+screen_row = row_arg * 6 + 2        ; 2,8,14,20       (strip calls)
 
-Previews: `map_preview/map_camera_*.png`, `map_preview/map_vs_live_stack.png`.
+map_byte = [DS:31D4 + (tile_x + i) * 100 + (tile_y + row_arg)]
+SI       = DS:207A + map_byte * 24  ; NO lo7 mask — full byte is stamp index
+call draw_2x6                       ; 2D9A: 6 rows × 2× movsw
+```
+
+Implications:
+
+| Item | Value |
+|------|--------|
+| MAP stride | **100** on X (`width≈38`, `height=100` for LA 3800 used) |
+| Stamp id | **full MAP byte** (0..180 observed) |
+| Bank size | `BA.DAT` alone = 96 stamps; **BA‖BB = 192** covers max id 180 |
+| Viewport | **19×N** stamps; col phase **1**, row phase **2** |
+| Scroll | Off-screen text buffer; ±6 rows (`0x1E0` bytes) memmoves |
+
+Stamp examples (chars only; attrs recolored live):
+
+| Id | Pattern | Role |
+|----|---------|------|
+| 0, 12 | all `DE` | floor |
+| 10, 14 | all `B1` | green wall |
+| 11 | all `83` | red brick |
+| 130+ | mixed DE/B1/B0 | edge / transition (BB range) |
+
+### MAP ↔ live dump `0006` — *partial*
+
+Direct blit of `map_byte → BA‖BB stamp` at fixed phase peaks ~**44%** char match over the viewport (best ~`(7,75)`). Majority-vote **learned** MAP→stamp tables at other origins reach ~**82–87%** but look overfitted (MAP `0` not stably “floor”).
+
+Likely remaining gaps:
+
+1. Runtime stamp table at `207A` may not be a raw `BA‖BB` concat (remap / bake step).
+2. Visible B800 is a **scrolled window** into a taller buffer — dump may not be stamp-grid aligned the way a cold camera is.
+3. Sprites (player column) and HUD overwrite terrain cells.
+
+Decoder: `decode_map.py` (full map + `--camera X,Y` viewport).
+
+```bash
+python3 games/icon-quest-for-the-ring/decode_map.py LA --camera 7,75
+```
 
 ## Level MAP (`L*.MAP`) — **strong** (index formula confirmed)
 
