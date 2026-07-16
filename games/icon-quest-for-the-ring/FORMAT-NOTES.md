@@ -204,6 +204,7 @@ User-visible intro order:
 | Stage | ASM label | Authentic bit |
 |-------|-----------|----------------|
 | TITLE | `stage_title` | mode 00→01; blit `TITLE.BIN` (2000 B B800 page); wait ESC |
+| video | `icon_mode_01` | INT10 00/01 + AX=1102 fonts + CRTC 09=81h (ICON.EXE) |
 | ANI | `stage_ani` | mode 00→01; blit `ANI.BIN`; wait ESC |
 | OVL0 | `stage_ovl0` | FCB `ICON0.OVL`, 243×128 sequential read (discard) |
 | ASSETS | `stage_assets` | BA/BB/LA.MAP/LA.DAT/MA.DAT **or** STAMPS+MAPRT |

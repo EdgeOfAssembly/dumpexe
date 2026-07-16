@@ -8,5 +8,5 @@ size=0x07D0
 cols=40
 rows=25
 kind=text
-t_ms=10864
+t_ms=13477
 layout=char_attr_le
