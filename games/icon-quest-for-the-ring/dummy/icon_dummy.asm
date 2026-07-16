@@ -430,17 +430,18 @@ exit_err:
         int     21h
 
 ; ---------------------------------------------------------------------------
-; icon_mode_01 - match ICON.EXE @ ~1DF8..1E5C
-;   INT 10 set mode 00 then 01
-;   AX=1102 load ROM 8x8 font into blocks 0 and 1 (EGA/VGA)
-;   CRTC reg 09 = 81h (scan-line / cell geometry ICON expects)
-;   ATC: mode control + palette enable
-; Without this, TITLE/ANI B800 dumps look like garbage / wrong scale.
+; icon_mode_01 - safe subset of ICON.EXE video setup
+;   INT 10: mode 00 then 01
+;   AX=1102: ROM 8x8 font into blocks 0 and 1 (EGA/VGA)
+;
+; NOTE: ICON also pokes CRTC 09=81h + ATC. Doing that alone in DOSBox
+; shrinks cells so only a thin band at the top is visible (world map
+; mostly black). Full CRTC state needs a live register dump; until then
+; mode + font only.
 ; ---------------------------------------------------------------------------
 icon_mode_01:
         push    ax
         push    bx
-        push    dx
 
         mov     ax, 0000h
         int     10h
@@ -452,7 +453,7 @@ icon_mode_01:
         mov     bh, 0FFh
         int     10h
         cmp     bh, 0FFh
-        je      im01_crtc_only          ; no EGA font path
+        je      im01_done
 
         mov     ax, 1102h               ; load ROM 8x8
         xor     bx, bx                  ; block 0
@@ -461,39 +462,7 @@ icon_mode_01:
         mov     bx, 0001h               ; block 1
         int     10h
 
-        ; Attribute controller: index 30h <- 0 (after 3DAh reset)
-        mov     dx, 03DAh
-        in      al, dx
-        mov     dx, 03C0h
-        mov     al, 30h
-        out     dx, al
-        xor     al, al
-        out     dx, al
-
-im01_crtc_only:
-        ; CRTC maximum scan line = 81h (ICON.EXE)
-        mov     dx, 03D4h
-        mov     al, 09h
-        out     dx, al
-        inc     dx
-        mov     al, 81h
-        out     dx, al
-
-        ; ATC mode control index 10h <- 04h, then enable (20h)
-        mov     dx, 03DAh
-        in      al, dx
-        mov     dx, 03C0h
-        mov     al, 10h
-        out     dx, al
-        mov     al, 04h
-        out     dx, al
-        mov     dx, 03DAh
-        in      al, dx
-        mov     dx, 03C0h
-        mov     al, 20h
-        out     dx, al
-
-        pop     dx
+im01_done:
         pop     bx
         pop     ax
         ret
