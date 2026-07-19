@@ -1,12 +1,12 @@
 game=ICON
 reason=hotkey
 generation=3
-seq=8
+seq=11
 mode=0x01
 base=0xB8000
 size=0x07D0
 cols=40
 rows=25
 kind=text
-t_ms=7189
+t_ms=8735
 layout=char_attr_le

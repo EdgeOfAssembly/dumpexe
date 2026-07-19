@@ -32,8 +32,8 @@ clean-dumps:
 	rm -f $(SCREENS)/*
 	@echo "emptied $(SCREENS)"
 
-# Concatenate all hotkey dumps (sorted by name/seq) into one multi-frame file.
-# Each frame = first 2000 bytes of the dump. Max MAX_FRAMES frames.
+# Concatenate unique hotkey dumps (sorted) into multi-frame file.
+# Skips byte-identical frames. Each frame = first 2000 bytes. Max MAX_FRAMES.
 define PACK_HOTKEY_FRAMES
 	mkdir -p $(SCREENS); \
 	metas=$$(for m in $(SCREENS)/*.meta; do \
@@ -46,15 +46,30 @@ define PACK_HOTKEY_FRAMES
 	  echo "  make clean-dumps && run ICON.EXE && spam Ctrl+F10, then re-run this target"; \
 	  exit 1; \
 	fi; \
-	out="$(1)"; rm -f "$$out"; n=0; \
+	out="$(1)"; rm -f "$$out"; n=0; tmp=$$(mktemp -d); \
 	for m in $$metas; do \
 	  [ "$$n" -ge $(MAX_FRAMES) ] && break; \
 	  b=$${m%.meta}.bin; \
-	  dd if="$$b" bs=2000 count=1 status=none >> "$$out"; \
-	  n=$$((n+1)); \
-	  echo "  frame $$n <- $$b"; \
+	  dd if="$$b" of="$$tmp/cand" bs=2000 count=1 status=none; \
+	  keep=1; \
+	  if [ "$$n" -gt 0 ]; then \
+	    for prev in "$$tmp"/f*; do \
+	      [ -f "$$prev" ] || continue; \
+	      if cmp -s "$$tmp/cand" "$$prev"; then keep=0; break; fi; \
+	    done; \
+	  fi; \
+	  if [ "$$keep" -eq 1 ]; then \
+	    n=$$((n+1)); \
+	    cp "$$tmp/cand" "$$tmp/f$$n"; \
+	    cat "$$tmp/cand" >> "$$out"; \
+	    echo "  frame $$n <- $$b (unique)"; \
+	  else \
+	    echo "  skip dup <- $$b"; \
+	  fi; \
 	done; \
-	echo "wrote $$out ($$n frames, $$((n*2000)) bytes)"
+	rm -rf "$$tmp"; \
+	if [ "$$n" -eq 0 ]; then echo "no unique frames"; exit 1; fi; \
+	echo "wrote $$out ($$n unique frames, $$((n*2000)) bytes)"
 endef
 
 # Title ring animation: clean-dumps, ICON, spam F10 on title, quit, then:

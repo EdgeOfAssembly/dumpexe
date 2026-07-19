@@ -246,11 +246,12 @@ start_icon() {
 }
 
 cmd_title_frames() {
-	log "=== capture title multi-frame (spam Ctrl+F10) ==="
+	log "=== capture title multi-frame (early+dense F10 while ring draws) ==="
 	rm -f "$ICON_DIR/screen_dumps"/*
-	# Dump early while ring may still be drawing
-	BOOT_WAIT="${BOOT_WAIT:-1.0}"
-	FRAME_GAP="${FRAME_GAP:-0.25}"
+	# Dump ASAP after focus — progressive paint is early, not after settle idle
+	BOOT_WAIT="${BOOT_WAIT:-0.15}"
+	FRAME_GAP="${FRAME_GAP:-0.12}"
+	TITLE_FRAMES="${TITLE_FRAMES:-16}"
 	local w
 	w=$(start_icon)
 	local i
@@ -273,20 +274,18 @@ cmd_title_frames() {
 }
 
 cmd_ani_frames() {
-	log "=== capture ani multi-frame (cycles=$CYCLES, ANI_WAIT=${ANI_WAIT}s) ==="
+	log "=== capture ani multi-frame (cycles=$CYCLES; dump while intro runs) ==="
 	rm -f "$ICON_DIR/screen_dumps"/*
-	# High cycles so particle intro starts sooner after ESC
 	CYCLES="${CYCLES:-100000}"
-	BOOT_WAIT="${BOOT_WAIT:-1.5}"
-	FRAME_GAP="${FRAME_GAP:-0.25}"
-	ANI_WAIT="${ANI_WAIT:-4.0}"
+	BOOT_WAIT="${BOOT_WAIT:-0.8}"
+	FRAME_GAP="${FRAME_GAP:-0.15}"
+	ANI_FRAMES="${ANI_FRAMES:-16}"
+	# Brief pause so title is up, then ESC and dump immediately (do not idle 5s)
 	local w
 	w=$(start_icon)
-	# Let title paint a bit, then skip; wait for second intro to begin
-	sleep 1.0
+	sleep 0.6
 	press "$w" Escape
-	log "waiting ${ANI_WAIT}s for particle intro (increase ANI_WAIT if still on title)"
-	sleep "$ANI_WAIT"
+	log "dumping during particle intro (FRAME_GAP=${FRAME_GAP}s x ${ANI_FRAMES})"
 	settle_focus || true
 	local i
 	for i in $(seq 1 "$ANI_FRAMES"); do
