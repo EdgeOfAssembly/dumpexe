@@ -1,0 +1,44 @@
+
+                  SOURCER DEFINITION - ICON.EXE (batch / Go)
+
+ Section 1: CONTROL INFORMATION
+
+Input filename     = WORK\ICON.EXE
+Output filename    = WORK\ICON.LST
+Format             = LST
+Code style         = exe
+Passes             = 5
+uP                 = 8088
+Remark             = All
+Xref               = ON
+Header             = ICON.EXE Quest for the Ring
+Target assembler   = MASM-5.1
+Narrow             = OFF
+Go
+
+
+ Section 2: RANGE DEFINITION
+
+ Segments
+
+  begin      end      default      seg   seg
+ seg:off     off     ds     es     type  size
+ -------     ----    ----   ----   ----- -----
+none
+
+
+ Section 3: REFERENCE DEFINITIONS
+
+ Subroutines
+  seg:off   type & options     label           comments
+  -------   --------------     --------------  --------------
+
+
+ Locations
+  seg:off   type & options     label           comments
+  -------   --------------     --------------  --------------
+
+
+ Data Items
+  seg:off   type & options     label           comments
+  -------   --------------     --------------  --------------

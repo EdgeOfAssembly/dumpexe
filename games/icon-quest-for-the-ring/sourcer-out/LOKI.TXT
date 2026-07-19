@@ -1,0 +1,18 @@
+
+********************  SOURCER Commenting Disassembler  ********************
+Copyright (c) 1988-2001 V Communications, Inc.  All Rights Reserved.  V8.01
+Commands:  sr [filename|defname] [-d|-e|-h|-j|-l|-n|-n1|-s|-v|-x|-w|-2|-?]
+  -d  SDEFAULT.DEF file load inhibited
+  -e  EMS use inhibited
+  -f  faster when -n1 option used (skips some display updates)
+  -h  hardware table path\filename
+  -j  Japanese SJIS characters allowed
+  -l  Long labels inhibited in EMS
+  -n  no direct screen writes
+  -n1 no direct screen writes, use ANSI.SYS
+  -s  set screen segment other than normal
+  -v  no EGA/VGA features for display
+  -x  no display output
+  -w  direct screen writes
+  -2  no check for uP above 80286
+

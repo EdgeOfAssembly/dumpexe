@@ -324,3 +324,14 @@ ICON.EXE → ICON0.OVL (boot/menu assets path) → BA.DAT + LA.* + MA.DAT → IC
 ```
 
 Then dump DS:005C FCB name field after hit to see `LA.MAP` / etc.
+
+
+## Sourcer 8.01 listings
+
+Multi-pass listings for `ICON.EXE` / `ICON0..2.OVL` live in `sourcer-out/`
+(regenerate: `cd SOURCER && ./run_sr.sh all`).
+
+Batch requirements: **CRLF** `.DEF` with **`Go`**, run as `sr ICON.DEF -n -x` under DOSBox.
+Help: `sr -? 2>&1 > loki.txt` → `LOKI.TXT`.
+
+ICON.LST already labels **`DS:206C`** (offscreen ptr) and **`DS:31D4`** (MAP index).

@@ -1,0 +1,11 @@
+Input filename     = ICON0.OVL
+Output filename    = ICON0.LST
+Format             = LST
+Code style         = overlay
+Passes             = 5
+uP                 = 8088
+Remark             = All
+Xref               = ON
+Header             = ICON0.OVL
+Target assembler   = MASM-5.1
+Go

@@ -1,0 +1,11 @@
+Input filename     = ICON.EXE
+Output filename    = ICON.LST
+Format             = LST
+Code style         = exe
+Passes             = 5
+uP                 = 8088
+Remark             = All
+Xref               = ON
+Header             = ICON.EXE
+Target assembler   = MASM-5.1
+Go
