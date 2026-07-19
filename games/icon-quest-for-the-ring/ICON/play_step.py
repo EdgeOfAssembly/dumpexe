@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
 """
-One-step ICON play helper: FOCUS dosbox → action → settle → SCREENSHOT → print path.
+One-step ICON play helper via control socket only — no xdotool.
 
-Rules (user):
-  - delay/settle after every move
-  - when in doubt, screenshot
-  - make sure DOSBox is focused before shot / human-visible keys
-
-Usage:
   ./play_step.py shot now
   ./play_step.py move right
-  ./play_step.py move down --hold-ms 400 --settle 1.3
+  ./play_step.py move down --hold-ms 1100 --settle 1.4
   ./play_step.py tap P
-  ./play_step.py tap esc
-  ./play_step.py seq right right down   # each with settle + shot
+  ./play_step.py seq right right down
+  ./play_step.py capture grouped
+  ./play_step.py hostpause
+  ./play_step.py hostunpause
+  ./play_step.py overlay on
 """
 
 from __future__ import annotations
@@ -21,7 +18,6 @@ from __future__ import annotations
 import argparse
 import os
 import socket
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -29,117 +25,17 @@ from pathlib import Path
 SOCK = os.environ.get("DOSBOX_CONTROL_SOCK", "/tmp/dosbox-control.sock")
 SHOT_DIR = Path(os.environ.get("ICON_SHOT_DIR", "/tmp/icon_shots"))
 SETTLE = float(os.environ.get("MOVE_SETTLE", "1.3"))
-HOLD_MS = int(os.environ.get("MOVE_HOLD_MS", "400"))
+HOLD_MS = int(os.environ.get("MOVE_HOLD_MS", "1100"))
+CAPTURE_DIR = Path(
+    os.environ.get(
+        "ICON_CAPTURE_DIR",
+        str(Path(__file__).resolve().parent / "capture"),
+    )
+)
 
 
 def log(msg: str) -> None:
     print(f"[play_step] {msg}", file=sys.stderr, flush=True)
-
-
-def find_wid() -> str:
-    for args in (
-        ["xdotool", "search", "--name", "ICON.EXE"],
-        ["xdotool", "search", "--class", "dosbox-staging"],
-        ["xdotool", "search", "--class", "dosbox"],
-    ):
-        r = subprocess.run(args, capture_output=True, text=True)
-        ids = [x for x in r.stdout.split() if x.isdigit()]
-        if ids:
-            return ids[-1]
-    # pid-based
-    try:
-        pid = Path("/tmp/dosbox-control.pid").read_text().strip()
-        r = subprocess.run(
-            ["xdotool", "search", "--pid", pid],
-            capture_output=True,
-            text=True,
-        )
-        ids = [x for x in r.stdout.split() if x.isdigit()]
-        if ids:
-            # pick largest window (geometry)
-            best, best_a = ids[0], -1
-            for w in ids:
-                g = subprocess.run(
-                    ["xdotool", "getwindowgeometry", w],
-                    capture_output=True,
-                    text=True,
-                ).stdout
-                # Geometry:  WxH
-                area = 0
-                for line in g.splitlines():
-                    if "Geometry:" in line:
-                        # Geometry: 1067x800
-                        part = line.split("Geometry:")[-1].strip().split("+")[0]
-                        if "x" in part:
-                            a, b = part.split("x")
-                            area = int(a) * int(b)
-                if area > best_a:
-                    best, best_a = w, area
-            return best
-    except Exception:
-        pass
-    return ""
-
-
-def focus() -> str:
-    wid = find_wid()
-    if not wid:
-        raise RuntimeError("DOSBox window not found")
-    subprocess.run(
-        ["xdotool", "windowmap", wid, "windowactivate", "--sync", wid],
-        check=False,
-        capture_output=True,
-    )
-    # raise + slight settle so compositor paints
-    subprocess.run(["xdotool", "windowraise", wid], check=False, capture_output=True)
-    time.sleep(0.2)
-    name = subprocess.run(
-        ["xdotool", "getwindowname", wid], capture_output=True, text=True
-    ).stdout.strip()
-    log(f"focus wid={wid} name={name!r}")
-    return wid
-
-
-def screenshot(tag: str) -> Path:
-    SHOT_DIR.mkdir(parents=True, exist_ok=True)
-    wid = focus()
-    ts = time.strftime("%H%M%S")
-    path = SHOT_DIR / f"{ts}_{tag}.png"
-    # Prefer ImageMagick 7 magick; fall back to convert / gnome
-    raw = SHOT_DIR / "_grab.xwd"
-    r = subprocess.run(
-        ["xwd", "-id", wid, "-out", str(raw)],
-        capture_output=True,
-        text=True,
-    )
-    ok = False
-    if r.returncode == 0 and raw.is_file() and raw.stat().st_size > 1000:
-        for conv in (
-            ["magick", str(raw), str(path)],
-            ["convert", str(raw), str(path)],
-        ):
-            c = subprocess.run(conv, capture_output=True, text=True)
-            if c.returncode == 0 and path.is_file() and path.stat().st_size > 5000:
-                ok = True
-                break
-    try:
-        raw.unlink(missing_ok=True)
-    except Exception:
-        pass
-
-    if not ok:
-        # gnome active window after focus
-        subprocess.run(
-            ["gnome-screenshot", "-w", "-f", str(path)],
-            capture_output=True,
-        )
-
-    sz = path.stat().st_size if path.is_file() else 0
-    log(f"SHOT {path} ({sz} bytes)")
-    if sz < 5000:
-        log("WARNING: screenshot tiny — window may be unmapped/composited wrong")
-    print(path)
-    return path
 
 
 class Sock:
@@ -158,10 +54,9 @@ class Sock:
         line, _, self._buf = self._buf.partition(b"\n")
         return line.decode("utf-8", "replace")
 
-    def cmd(self, line: str, timeout: float = 8.0) -> str:
+    def cmd(self, line: str, timeout: float = 15.0) -> str:
         self.s.settimeout(timeout)
         self.s.sendall((line + "\n").encode())
-        # simple single-line replies for keys
         data = self._buf
         self._buf = b""
         deadline = time.time() + timeout
@@ -187,38 +82,89 @@ class Sock:
         self.s.close()
 
 
-def move(key: str, hold_ms: int, settle: float) -> Path:
-    focus()
-    sk = Sock()
+def sock_cmd(line: str, timeout: float = 15.0) -> str:
+    s = Sock()
+    try:
+        r = s.cmd(line, timeout=timeout)
+        log(f"{line!r} -> {r[:120]}")
+        return r
+    finally:
+        s.close()
+
+
+def newest_capture_png(after_ts: float) -> Path | None:
+    """Return newest PNG under capture dir newer than after_ts."""
+    if not CAPTURE_DIR.is_dir():
+        return None
+    best: Path | None = None
+    best_m = after_ts
+    for p in CAPTURE_DIR.rglob("*.png"):
+        try:
+            m = p.stat().st_mtime
+        except OSError:
+            continue
+        if m > best_m:
+            best_m = m
+            best = p
+    return best
+
+
+def capture(mode: str = "grouped", wait_s: float = 0.8) -> Path | None:
+    """Staging PNG via socket CAPTURE (includes host overlay if enabled)."""
+    SHOT_DIR.mkdir(parents=True, exist_ok=True)
+    t0 = time.time()
+    sock_cmd(f"CAPTURE {mode}")
+    time.sleep(wait_s)
+    src = newest_capture_png(t0 - 0.05)
+    if not src:
+        log("WARNING: no new PNG in capture/ yet")
+        return None
+    ts = time.strftime("%H%M%S")
+    dest = SHOT_DIR / f"{ts}_{mode}_{src.name}"
+    try:
+        dest.write_bytes(src.read_bytes())
+    except OSError as e:
+        log(f"copy fail: {e}")
+        return src
+    log(f"SHOT {dest} (from {src})")
+    print(dest)
+    return dest
+
+
+def move(key: str, hold_ms: int, settle: float) -> None:
+    s = Sock()
     try:
         log(f"MOVE {key} hold={hold_ms}ms settle={settle}s")
-        sk.cmd(f"KEYDOWN {key}")
+        s.cmd(f"KEYDOWN {key}")
         time.sleep(hold_ms / 1000.0)
-        sk.cmd(f"KEYUP {key}")
+        s.cmd(f"KEYUP {key}")
     finally:
-        sk.close()
+        s.close()
     time.sleep(settle)
-    return screenshot(f"after_{key}")
+    capture("rendered")
 
 
-def tap(key: str, settle: float) -> Path:
-    focus()
-    sk = Sock()
+def tap(key: str, settle: float) -> None:
+    s = Sock()
     try:
         log(f"TAP {key} settle={settle}s")
-        sk.cmd(f"KEY {key}")
+        s.cmd(f"KEY {key}")
     finally:
-        sk.close()
+        s.close()
     time.sleep(settle)
-    return screenshot(f"after_{key}")
+    capture("rendered")
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description="ICON control-socket helper (no xdotool)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("shot")
+    p = sub.add_parser("shot", help="CAPTURE rendered PNG")
     p.add_argument("tag", nargs="?", default="now")
+    p.add_argument("--mode", default="rendered", choices=["grouped", "rendered", "raw"])
+
+    p = sub.add_parser("capture")
+    p.add_argument("mode", nargs="?", default="grouped", choices=["grouped", "rendered", "raw"])
 
     p = sub.add_parser("move")
     p.add_argument("key")
@@ -234,13 +180,22 @@ def main() -> int:
     p.add_argument("--hold-ms", type=int, default=HOLD_MS)
     p.add_argument("--settle", type=float, default=SETTLE)
 
-    p = sub.add_parser("focus")
+    p = sub.add_parser("cmd", help="raw socket command")
+    p.add_argument("line", nargs=argparse.REMAINDER)
+
+    sub.add_parser("status")
+    sub.add_parser("hostpause")
+    sub.add_parser("hostunpause")
+
+    p = sub.add_parser("overlay")
+    p.add_argument("arg", nargs="?", default="status")
 
     args = ap.parse_args()
+
     if args.cmd == "shot":
-        screenshot(args.tag)
-    elif args.cmd == "focus":
-        focus()
+        capture(args.mode)
+    elif args.cmd == "capture":
+        capture(args.mode)
     elif args.cmd == "move":
         move(args.key, args.hold_ms, args.settle)
     elif args.cmd == "tap":
@@ -248,6 +203,19 @@ def main() -> int:
     elif args.cmd == "seq":
         for k in args.keys:
             move(k, args.hold_ms, args.settle)
+    elif args.cmd == "cmd":
+        line = " ".join(args.line).strip()
+        if not line:
+            return 2
+        print(sock_cmd(line))
+    elif args.cmd == "status":
+        print(sock_cmd("STATUS"))
+    elif args.cmd == "hostpause":
+        print(sock_cmd("HOSTPAUSE"))
+    elif args.cmd == "hostunpause":
+        print(sock_cmd("HOSTUNPAUSE"))
+    elif args.cmd == "overlay":
+        print(sock_cmd(f"OVERLAY {args.arg}"))
     return 0
 
 

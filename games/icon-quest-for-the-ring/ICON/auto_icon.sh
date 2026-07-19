@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# Automate ICON.EXE under DOSBox Staging with xdotool.
+# Automate ICON.EXE under DOSBox Staging via [controlsocket] — no xdotool.
 # Usage (from anywhere):
-#   ./auto_icon.sh title-frames    # spam Ctrl+F10 on title ring -> TITLES.BIN
-#   ./auto_icon.sh ani-frames      # ESC title, spam F10 on particles -> ANIS.BIN
-#   ./auto_icon.sh intro-singles   # one F10 title, ESC, one F10 ani
+#   ./auto_icon.sh title-frames    # spam DUMPSCREEN on title ring -> TITLES.BIN
+#   ./auto_icon.sh ani-frames      # ESC title, spam dumps on particles -> ANIS.BIN
+#   ./auto_icon.sh intro-singles   # one dump title, ESC, one dump ani
 #   ./auto_icon.sh to-play         # answer startup prompts → overworld (+ dumps)
 #   ./auto_icon.sh damage-capture  # to-play + wander/attack + shots/dumps
-#   ./auto_icon.sh kill            # Ctrl+F9 shutdown any DOSBox
+#   ./auto_icon.sh kill            # stop DOSBox (socket or SIGTERM)
 #
-# Requires: dosbox, xdotool, DISPLAY
+# Requires: dosbox, python3; fork with controlsocket (no xdotool/DISPLAY needed for keys)
+# Prefer: ./live_agent.py for new work. This script is the socket port of the old path.
 # Prompt strings + Y/N defaults: STARTUP-PROMPTS.md
 #   ADVANCED=y   → answer advanced game with Y
 #   STORY_SPACES=40  → more Space for legend / "SPACE BAR to continue"
@@ -17,13 +18,14 @@
 #   WANDER=1 WANDER_STEPS=40 MOVE_GAP=0.2
 #   GET_SWORD=1 SWORD_SOUTH_STEPS=6  → Down×6 then P (level A sword; default 6)
 #   MEM_DUMP=0 SCREEN_DUMP=0
-#   PNG_SHOT=1 (default) → Ctrl+F5/Alt+F5 gameplay PNGs → capture/ + filmstrip/
-#   SHOT_HOST=1 → also import/maim window PNG if available (WM-safe backup)
+#   PNG_SHOT=1 (default) → CAPTURE grouped PNGs → capture/ + filmstrip/
 # Title + ani skip with Esc only (two Esc presses); story uses Space.
 
 set -euo pipefail
 
 ICON_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=icon_sock.sh
+source "$ICON_DIR/icon_sock.sh"
 DUMMY_DIR="$(cd "$ICON_DIR/../dummy" && pwd)"
 CONF="$ICON_DIR/dosbox-staging.conf"
 AUTO_CONF="$ICON_DIR/dosbox-auto.conf"
@@ -32,15 +34,14 @@ CAPTURE_DIR="${CAPTURE_DIR:-$ICON_DIR/capture}"
 CYCLES="${CYCLES:-100000}"
 TITLE_FRAMES="${TITLE_FRAMES:-8}"
 ANI_FRAMES="${ANI_FRAMES:-8}"
-FRAME_GAP="${FRAME_GAP:-0.25}"   # host seconds between Ctrl+F10
-BOOT_WAIT="${BOOT_WAIT:-2.0}"    # after focus settle, before first keys
+FRAME_GAP="${FRAME_GAP:-0.25}"   # host seconds between dumps
+BOOT_WAIT="${BOOT_WAIT:-2.0}"    # after socket ready, before first keys
 ANI_WAIT="${ANI_WAIT:-4.0}"      # after ESC title, wait for particle intro
-PNG_SHOT="${PNG_SHOT:-1}"        # 1 = Staging Ctrl+F5 / Alt+F5 PNGs
-SHOT_HOST="${SHOT_HOST:-0}"      # 1 = also host window grab (import/maim)
+PNG_SHOT="${PNG_SHOT:-1}"        # 1 = Staging CAPTURE PNGs
 FILMSTRIP_DIR=""                 # set by session_begin
 SHOT_N=0
 
-# Logs on stderr so `w=$(start_icon)` only gets the window id on stdout.
+# Logs on stderr so `w=$(start_icon)` only gets a token on stdout.
 log() { printf '[auto_icon] %s\n' "$*" >&2; }
 
 # New session filmstrip dir under capture/
@@ -54,58 +55,34 @@ session_begin() {
 	log "filmstrip -> $FILMSTRIP_DIR (Staging capture_dir=$CAPTURE_DIR)"
 }
 
-# Staging: Ctrl+F5 = default screenshot (formats from conf); Alt+F5 = rendered.
-# Our fork also uses Ctrl+F10 for B800 dump (not mouse capture).
+# Staging PNG via control socket CAPTURE (no xdotool / no window focus).
 shot_png() {
 	local tag="${1:-shot}"
-	[[ "${PNG_SHOT}" == "1" || "${SHOT_HOST}" == "1" ]] || return 0
-	activate || true
+	[[ "${PNG_SHOT}" == "1" ]] || return 0
 	SHOT_N=$((SHOT_N + 1))
 	local n
 	n=$(printf '%04d' "$SHOT_N")
 
-	if [[ "${PNG_SHOT}" == "1" ]]; then
-		# Prefer Ctrl+F5 (default multi-format); also Alt+F5 rendered
-		dosbox_xdo key --clearmodifiers ctrl+F5 2>/dev/null || true
-		sleep 0.15
-		dosbox_xdo key --clearmodifiers alt+F5 2>/dev/null || true
-		sleep 0.2
-		# Harvest newest PNGs from capture/ into filmstrip with tag
-		if [[ -n "$FILMSTRIP_DIR" && -d "$CAPTURE_DIR" ]]; then
-			local f newest
-			# shellcheck disable=SC2012
-			newest=$(ls -t "$CAPTURE_DIR"/*.png 2>/dev/null | head -8 || true)
-			for f in $newest; do
-				[[ -f "$f" ]] || continue
-				# only files newer than session marker
-				if [[ -f "$FILMSTRIP_DIR/.session_start" && "$f" -nt "$FILMSTRIP_DIR/.session_start" ]]; then
-					local base
-					base=$(basename "$f")
-					# avoid re-copying same name
-					if [[ ! -f "$FILMSTRIP_DIR/${n}_${tag}_${base}" ]]; then
-						cp -n "$f" "$FILMSTRIP_DIR/${n}_${tag}_${base}" 2>/dev/null || \
-							cp "$f" "$FILMSTRIP_DIR/${n}_${tag}_${base}"
-					fi
+	sock_capture grouped || true
+	sleep 0.15
+	sock_capture rendered || true
+	sleep 0.25
+	# Harvest newest PNGs from capture/ into filmstrip with tag
+	if [[ -n "$FILMSTRIP_DIR" && -d "$CAPTURE_DIR" ]]; then
+		local f newest
+		# shellcheck disable=SC2012
+		newest=$(ls -t "$CAPTURE_DIR"/*.png 2>/dev/null | head -8 || true)
+		for f in $newest; do
+			[[ -f "$f" ]] || continue
+			if [[ -f "$FILMSTRIP_DIR/.session_start" && "$f" -nt "$FILMSTRIP_DIR/.session_start" ]]; then
+				local base
+				base=$(basename "$f")
+				if [[ ! -f "$FILMSTRIP_DIR/${n}_${tag}_${base}" ]]; then
+					cp -n "$f" "$FILMSTRIP_DIR/${n}_${tag}_${base}" 2>/dev/null || \
+						cp "$f" "$FILMSTRIP_DIR/${n}_${tag}_${base}"
 				fi
-			done
-		fi
-	fi
-
-	if [[ "${SHOT_HOST}" == "1" && -n "$FILMSTRIP_DIR" ]]; then
-		local w out
-		w=$(find_wid)
-		out="$FILMSTRIP_DIR/${n}_${tag}_host.png"
-		if [[ -n "$w" ]]; then
-			if command -v import >/dev/null 2>&1; then
-				import -window "$w" "$out" 2>/dev/null || true
-			elif command -v maim >/dev/null 2>&1; then
-				maim -i "$w" "$out" 2>/dev/null || true
-			elif command -v scrot >/dev/null 2>&1; then
-				# scrot cannot always target by id; grab focused
-				scrot -u "$out" 2>/dev/null || true
 			fi
-			[[ -f "$out" ]] && log "host shot $out"
-		fi
+		done
 	fi
 	log "png shot #$SHOT_N tag=$tag"
 }
@@ -115,14 +92,11 @@ need() {
 }
 
 need dosbox
-need xdotool
-[[ -n "${DISPLAY:-}" ]] || { log "DISPLAY not set"; exit 1; }
+need python3
 
 # Title becomes "ICON.EXE - ..." so name search for DOSBox fails after start.
-# Prefer: pgrep dosbox -> xdotool search --pid $pid windowmap windowactivate --sync
+# DOSBox pids from pidfile or pgrep
 #
-# Launch race: desktop often focuses the *browser* first; DOSBox appears later
-# on top. We must wait until the DOSBox window exists AND is focused before keys.
 dosbox_pids() {
 	local p=""
 	if [[ -f /tmp/auto_icon_dosbox.pid ]]; then
@@ -132,185 +106,76 @@ dosbox_pids() {
 			return 0
 		fi
 	fi
+	if [[ -f "${ICON_SOCK_PID:-/tmp/dosbox-control.pid}" ]]; then
+		p=$(cat "${ICON_SOCK_PID:-/tmp/dosbox-control.pid}" 2>/dev/null || true)
+		if [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null; then
+			echo "$p"
+			return 0
+		fi
+	fi
 	pgrep -x dosbox 2>/dev/null || pgrep -x dosbox-staging 2>/dev/null || true
 }
 
-# Largest mapped window for a pid (skip tiny helper/GL stubs).
-wid_for_pid() {
-	local p="$1" w best="" best_a=0 a W H
-	for w in $(xdotool search --pid "$p" 2>/dev/null || true); do
-		W=$(xdotool getwindowgeometry "$w" 2>/dev/null | awk '/Geometry:/{print $2}' | cut -dx -f1)
-		H=$(xdotool getwindowgeometry "$w" 2>/dev/null | awk '/Geometry:/{print $2}' | cut -dx -f2)
-		[[ -z "$W" || -z "$H" ]] && continue
-		a=$((W * H))
-		if [[ $a -gt $best_a ]]; then
-			best_a=$a
-			best=$w
-		fi
-	done
-	echo "$best"
+# No window focus needed — keys go through the control socket.
+activate() { return 0; }
+settle_focus() { return 0; }
+find_wid() { echo "socket"; }
+
+# Map old xdotool key names → control-socket key names
+_sock_keyname() {
+	case "$1" in
+		Escape|Esc|escape) echo esc ;;
+		Return|Enter) echo enter ;;
+		space|Space|KP_Space) echo space ;;
+		Down|KP_Down|KP_2|2) echo down ;;
+		Up|KP_Up|KP_8|8) echo up ;;
+		Left|KP_Left|KP_4|4) echo left ;;
+		Right|KP_Right|KP_6|6) echo right ;;
+		*) echo "$1" ;;
+	esac
 }
 
-find_wid() {
-	local p w="" geo W H
-	for p in $(dosbox_pids); do
-		w=$(wid_for_pid "$p")
-		if [[ -n "$w" ]]; then
-			geo=$(xdotool getwindowgeometry "$w" 2>/dev/null | awk '/Geometry:/{print $2}')
-			W=${geo%x*}; H=${geo#*x}
-			if [[ -n "$W" && -n "$H" && "$W" -ge 200 && "$H" -ge 150 ]]; then
-				echo "$w"
-				return 0
-			fi
-		fi
-	done
-	w=$(xdotool search --class dosbox-staging 2>/dev/null | tail -1 || true)
-	[[ -z "$w" ]] && w=$(xdotool search --class dosbox 2>/dev/null | tail -1 || true)
-	echo "$w"
-}
-
-wait_wid() {
-	local i=0 w=""
-	while [[ $i -lt 80 ]]; do
-		w=$(find_wid)
-		if [[ -n "$w" ]]; then
-			log "window appeared id=$w name=$(xdotool getwindowname "$w" 2>/dev/null || echo '?') pid(s)=$(dosbox_pids | tr '\n' ' ')"
-			echo "$w"
-			return 0
-		fi
-		sleep 0.25
-		i=$((i + 1))
-	done
-	log "no DOSBox window (pgrep dosbox / xdotool search --pid)"
-	return 1
-}
-
-# After window exists, steal focus back from browser and keep it.
-# Returns 0 when getwindowfocus == dosbox wid for 2 consecutive checks.
-settle_focus() {
-	local w tries=0 foc name
-	w=$(find_wid)
-	[[ -z "$w" ]] && return 1
-	while [[ $tries -lt 40 ]]; do
-		xdotool windowmap "$w" windowraise "$w" windowactivate --sync "$w" 2>/dev/null || true
-		local geo X Y WIDTH HEIGHT cx cy
-		geo=$(xdotool getwindowgeometry --shell "$w" 2>/dev/null || true)
-		if [[ -n "$geo" ]]; then
-			# shellcheck disable=SC2086
-			eval "$geo"
-			cx=$((X + WIDTH / 2))
-			cy=$((Y + HEIGHT / 2))
-			xdotool mousemove --sync "$cx" "$cy" click 1 2>/dev/null || true
-			xdotool windowactivate --sync "$w" 2>/dev/null || true
-		fi
-		sleep 0.2
-		foc=$(xdotool getwindowfocus 2>/dev/null || true)
-		name=$(xdotool getwindowname "$w" 2>/dev/null || true)
-		if [[ "$foc" == "$w" ]]; then
-			# Confirm still focused after a short pause (browser may steal again)
-			sleep 0.35
-			foc=$(xdotool getwindowfocus 2>/dev/null || true)
-			if [[ "$foc" == "$w" ]]; then
-				log "focus settled wid=$w name=$name"
-				return 0
-			fi
-			log "focus stolen after settle (foc=$foc), retry"
-		else
-			log "waiting focus (want=$w have=$foc) try=$tries"
-		fi
-		# Re-resolve in case window id changed when title updated
-		w=$(find_wid)
-		[[ -z "$w" ]] && return 1
-		tries=$((tries + 1))
-	done
-	log "warn: could not hold focus on DOSBox; keys may miss"
-	return 1
-}
-
-# Like feh chain, but PID-based (title rename safe):
-#   xdotool search --pid $pid windowmap windowactivate --sync key ...
-dosbox_xdo() {
-	local p
-	p=$(dosbox_pids | head -1)
-	if [[ -n "$p" ]]; then
-		if xdotool search --pid "$p" windowmap windowactivate --sync "$@" 2>/dev/null; then
-			return 0
-		fi
-	fi
-	local w
-	w=$(find_wid)
-	if [[ -n "$w" ]]; then
-		xdotool windowmap "$w" windowactivate --sync "$w" "$@" 2>/dev/null
-		return $?
-	fi
-	log "dosbox_xdo: no window (pids: $(dosbox_pids | tr '\n' ' '))"
-	return 1
-}
-
-# Focus + click center so SDL grabs keyboard.
-activate() {
-	local w
-	w=$(find_wid)
-	[[ -z "$w" ]] && return 1
-	xdotool windowmap "$w" windowraise "$w" windowactivate --sync "$w" 2>/dev/null || true
-	local geo X Y WIDTH HEIGHT cx cy
-	geo=$(xdotool getwindowgeometry --shell "$w" 2>/dev/null || true)
-	if [[ -n "$geo" ]]; then
-		# shellcheck disable=SC2086
-		eval "$geo"
-		cx=$((X + WIDTH / 2))
-		cy=$((Y + HEIGHT / 2))
-		xdotool mousemove --sync "$cx" "$cy" click 1 2>/dev/null || true
-		xdotool windowmap "$w" windowactivate --sync "$w" 2>/dev/null || true
-	fi
-	sleep 0.08
-}
-
-# $1 wid optional — always re-resolve via pgrep/pid
+# $1 wid optional (ignored) — rest are key names
 press() {
 	shift || true
-	activate || true
-	dosbox_xdo key --clearmodifiers --delay 80 "$@"
-}
-
-# One movement step: hold key so DOSBox/SDL registers it (taps often drop).
-# Tries arrow name + keypad alias. Usage: move_step "$w" Down KP_2 2
-move_step() {
-	local w="$1"
-	shift
 	local k
-	activate || true
-	settle_focus || true
 	for k in "$@"; do
-		# keydown / short hold / keyup (more reliable than a single key event)
-		if dosbox_xdo keydown --clearmodifiers "$k" 2>/dev/null; then
-			sleep "${KEY_HOLD:-0.12}"
-			dosbox_xdo keyup --clearmodifiers "$k" 2>/dev/null || true
-			sleep 0.05
-		fi
-		dosbox_xdo key --clearmodifiers --delay 50 "$k" 2>/dev/null || true
+		sock_key "$(_sock_keyname "$k")"
 		sleep 0.05
 	done
+}
+
+# One movement step: hold via socket. Usage: move_step "$w" Down KP_2 2
+move_step() {
+	shift # ignore wid
+	local k hold_ms
+	hold_ms=$(awk -v s="${KEY_HOLD:-1.1}" 'BEGIN{printf "%d", s*1000}')
+	# Prefer first named direction
+	for k in "$@"; do
+		case "$k" in
+			Down|KP_Down|KP_2|2|Up|KP_Up|KP_8|8|Left|KP_Left|KP_4|4|Right|KP_Right|KP_6|6)
+				sock_hold "$(_sock_keyname "$k")" "$hold_ms"
+				sleep "${MOVE_GAP:-0.45}"
+				return 0
+				;;
+		esac
+	done
+	# fallback first arg
+	sock_hold "$(_sock_keyname "${1:-down}")" "$hold_ms"
 	sleep "${MOVE_GAP:-0.45}"
 }
 
 dump_f10() {
-	activate || true
-	dosbox_xdo key --clearmodifiers ctrl+F10
+	sock_dump_screen
 }
 
 dump_f11() {
-	activate || true
-	dosbox_xdo key --clearmodifiers ctrl+F11
+	sock_dump_mem
 }
 
 shutdown_f9() {
 	local pid
-	if [[ -n "$(find_wid)" ]]; then
-		log "Ctrl+F9 shutdown (windowmap+activate+key)"
-		dosbox_xdo key --clearmodifiers ctrl+F9 2>/dev/null || true
-		sleep 0.8
-	fi
+	# Prefer graceful: no guest Ctrl+F9 needed; SIGTERM DOSBox
 	if [[ -f /tmp/auto_icon_dosbox.pid ]]; then
 		pid=$(cat /tmp/auto_icon_dosbox.pid)
 		if kill -0 "$pid" 2>/dev/null; then
@@ -321,6 +186,13 @@ shutdown_f9() {
 		fi
 		rm -f /tmp/auto_icon_dosbox.pid
 	fi
+	pid=$(cat "${ICON_SOCK_PID:-/tmp/dosbox-control.pid}" 2>/dev/null || true)
+	if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+		kill "$pid" 2>/dev/null || true
+		sleep 0.3
+		kill -9 "$pid" 2>/dev/null || true
+	fi
+	rm -f "${ICON_SOCK:-/tmp/dosbox-control.sock}" "${ICON_SOCK_PID:-/tmp/dosbox-control.pid}" 2>/dev/null || true
 }
 
 start_icon() {
@@ -329,8 +201,7 @@ start_icon() {
 
 	cd "$ICON_DIR"
 	# Note: callers must run session_begin in the *parent* shell.
-	# w=$(start_icon) is a subshell — FILMSTRIP_DIR/SHOT_N would be lost if begun here.
-	log "starting dosbox cycles=fixed $CYCLES in $ICON_DIR"
+	log "starting dosbox cycles=fixed $CYCLES in $ICON_DIR (control socket)"
 	dosbox --conf "$CONF" --conf "$AUTO_CONF" . \
 		-c "cycles fixed $CYCLES" \
 		-c "ICON.EXE" \
@@ -339,16 +210,14 @@ start_icon() {
 	echo $! >/tmp/auto_icon_dosbox.pid
 	log "pid=$(cat /tmp/auto_icon_dosbox.pid) log=/tmp/auto_icon_dosbox.log"
 
-	local w
-	w=$(wait_wid)
-	# Browser often holds focus until DOSBox finishes opening — wait it out.
-	settle_focus || true
-	# Extra settle for ICON.EXE to paint title after window is up
+	if ! sock_wait; then
+		log "control socket not ready ($ICON_SOCK)"
+		return 1
+	fi
+	sock_overlay on || true
 	sleep "${BOOT_WAIT:-1.5}"
-	settle_focus || true
-	w=$(find_wid)
-	log "ready wid=$w name=$(xdotool getwindowname "$w" 2>/dev/null || echo '?')"
-	echo "$w"
+	log "ready via $ICON_SOCK status=$(sock_cmd STATUS | tr -d '\n' | head -c 80)"
+	echo "socket"
 }
 
 cmd_title_frames() {

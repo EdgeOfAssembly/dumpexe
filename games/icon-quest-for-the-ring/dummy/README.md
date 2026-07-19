@@ -30,8 +30,8 @@ ICON.EXE → mode 00/01 title → (ESC) animation → ICON0.OVL
 Script focuses DOSBox by **PID** (title becomes `ICON.EXE ...` after start):
 
 ```bash
-pid=$(pgrep -x dosbox)   # or /tmp/auto_icon_dosbox.pid
-xdotool search --pid "$pid" windowmap windowactivate --sync key ctrl+F10
+# control socket (no xdotool)
+printf 'DUMPSCREEN\nQUIT\n' | nc -U /tmp/dosbox-control.sock
 ```
 
 (Same `windowmap windowactivate --sync` chain as a working feh loop.)

@@ -108,22 +108,24 @@ Order matches typical boot (confirm against live if a step is skipped when flag 
 8. Play…  
 9. Quit path: **Esc** → **`y`** quit → **`n`** save  
 
-Automation:
+Automation (**no xdotool** — control socket only):
 
-- **xdotool path:** `ICON/auto_icon.sh to-play` (see script comments).
-- **Control-socket path (preferred):** `ICON/live_agent.py` — no window focus; talks to `[controlsocket]` at `/tmp/dosbox-control.sock`.
+- `ICON/live_agent.py` — Level-A policy over `[controlsocket]`
+- `ICON/play_step.py` — one-step move/tap/capture/pause
+- `ICON/auto_icon.sh` — legacy filmstrip paths, now socket-backed via `icon_sock.sh`
 
 ```bash
 cd games/icon-quest-for-the-ring/ICON
 ./live_agent.py                    # start DOSBox, to-play + sword, leave running
-./live_agent.py --attach           # use already-running DOSBox
-./live_agent.py --wander 20        # after sword, roam + Space attack
-./live_agent.py --to-play-only     # stop at overworld
-printf 'TEXT\nQUIT\n' | nc -U /tmp/dosbox-control.sock
+./live_agent.py --attach --wander-only --wander 20
+./play_step.py move down --hold-ms 1100
+./play_step.py capture rendered
+printf 'TEXT\nHOSTPAUSE\n' | nc -U /tmp/dosbox-control.sock
+# another shell:
+printf 'HOSTUNPAUSE\nQUIT\n' | nc -U /tmp/dosbox-control.sock
 ```
 
-**Verified 2026-07-20:** xdotool path reached level A overworld; F10/F11 dumps landed (`g0011`).  
-**Verified 2026-07-20:** `live_agent.py` over socket reached overworld TEXT terrain + sword south×6+P sequence (DOSBox left running).
+**Verified 2026-07-20:** socket path reached overworld + sword pickup with host grid overlay.
 
 ## Hex-patch policy (if used later)
 
