@@ -1,22 +1,18 @@
 #!/usr/bin/env python3
 """Decode ICON L*.MAP + BA.DAT[/BB.DAT] to a PNG (mode 01h text stamps).
 
-Confirmed from ICON1 + live B800 dumps (2026-07-17):
+Confirmed (ICON0/ICON1 Sourcer + live dumps):
 
-  Stamp bank   BA.DAT (and BB.DAT when loaded) at runtime DS:207A
+  BA.DAT       byte0 = stamp count N; then N*24 bytes char,attr → DS:207A
+  L*.MAP       RLE: literal<=7Fh; high-bit → (n-1) extra copies of prev → DS:31D4
   Stamp size   24 bytes = 2×6 text cells
-  On-disk pair attr, char  (swap to char,attr for B800)
-  MAP index    DS:31D4 + tile_x * 100 + tile_y
-  MAP byte     full value is stamp index (0..180; 96+ is in BB if concatenated)
-  Viewport     19 stamps wide at cols 1,3,...,37; strip row = n*6+2
-  Scroll       off-screen buffer; vertical steps of 6 text rows (one stamp)
-
-  Live B800 is char,attr. Engine may recolor attributes; characters match bank.
+  MAP index    DS:31D4 + tile_x * 100 + tile_y  (full byte = stamp id)
+  Viewport     19 stamps at cols 1,3,...,37; strip row = n*6+2; cam (0,0)
 
 Usage:
-  python3 decode_map.py              # LA + BA+BB → map_preview/LA_decoded.png
+  python3 decode_map.py              # LA + BA → map_preview/LA_decoded.png
   python3 decode_map.py LB
-  python3 decode_map.py LA --camera 7,75
+  python3 decode_map.py LA --camera 0,0
 """
 
 from __future__ import annotations
@@ -95,23 +91,55 @@ def cell_rgb(ch: int, attr: int) -> np.ndarray:
     return img
 
 
+def bake_stamp_file(raw: bytes, region: int = 2304) -> bytes:
+    """ICON0 bake: byte0 = stamp count N, then N*24 bytes of char,attr."""
+    if not raw:
+        return bytes(region)
+    n = raw[0]
+    payload = raw[1 : 1 + n * 24]
+    out = bytearray(payload[:region])
+    if len(out) < region:
+        out.extend(b"\x00" * (region - len(out)))
+    return bytes(out)
+
+
+def rle_decode_map(data: bytes, maxout: int = 3840) -> bytes:
+    """ICON0 MAP RLE: literal<=7Fh; high bit → (n-1) extra copies of prev."""
+    out = bytearray()
+    prev = 0
+    for b in data:
+        if len(out) >= maxout:
+            break
+        if b > 0x7F:
+            for _ in range(max((b & 0x7F) - 1, 0)):
+                if len(out) >= maxout:
+                    break
+                out.append(prev)
+        else:
+            out.append(b)
+            prev = b
+    if len(out) < maxout:
+        out.extend(b"\x00" * (maxout - len(out)))
+    return bytes(out[:maxout])
+
+
 def load_bank() -> bytes:
-    ba = (ICON / "BA.DAT").read_bytes()
+    ba = bake_stamp_file((ICON / "BA.DAT").read_bytes())
     bb_path = ICON / "BB.DAT"
     if bb_path.is_file():
-        return ba + bb_path.read_bytes()
-    return ba
+        return ba + bake_stamp_file(bb_path.read_bytes())
+    return ba + bytes(2304)
 
 
 def stamp_cells(bank: bytes, idx: int) -> list[tuple[int, int]]:
     """Return 12 (ch, attr) cells in B800 order, row-major 2×6."""
-    n = len(bank) // 24
+    n = max(len(bank) // 24, 1)
     if idx < 0 or idx >= n:
         idx = 0
     raw = bank[idx * 24 : (idx + 1) * 24]
     cells = []
     for i in range(12):
-        attr, ch = raw[i * 2], raw[i * 2 + 1]  # on-disk attr,char
+        ch, attr = raw[i * 2], raw[i * 2 + 1]  # baked char,attr
         cells.append((ch, attr))
     return cells
 
@@ -201,7 +229,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument(
         "--camera",
         default=None,
-        help="viewport camera as X,Y (map stamp coords), e.g. 7,75",
+        help="viewport camera as X,Y (map stamp coords), e.g. 0,0",
     )
     args = ap.parse_args(argv[1:])
 
@@ -213,12 +241,17 @@ def main(argv: list[str]) -> int:
         print(f"missing {map_path}", file=sys.stderr)
         return 1
 
-    mp = map_path.read_bytes()
+    raw_map = map_path.read_bytes()
+    # Expanded size: use on-disk size as cap (LA 3840 → 38×100 usable)
+    mp = rle_decode_map(raw_map, maxout=len(raw_map) if len(raw_map) >= 3800 else 3840)
     bank = load_bank()
     w, h, used = map_dims(len(mp))
     nstamp = len(bank) // 24
-    print(f"{map_path.name}: {len(mp)} B → {w}×{h} (stride {STRIDE}, used {used})")
-    print(f"stamp bank: {nstamp} × 2×6 cells ({len(bank)} B)")
+    print(
+        f"{map_path.name}: {len(raw_map)} B RLE → {len(mp)} B "
+        f"→ {w}×{h} (stride {STRIDE}, used {used})"
+    )
+    print(f"stamp bank: {nstamp} × 2×6 cells ({len(bank)} B, after count-byte bake)")
 
     full = render_full_map(mp, bank, scale=1)
     out_full = OUT / f"{level}_decoded.png"
@@ -233,8 +266,7 @@ def main(argv: list[str]) -> int:
     if args.camera:
         cx, cy = (int(x) for x in args.camera.split(","))
     else:
-        # Default: middle-ish; user can pass --camera after RE lock
-        cx, cy = max(0, w // 4), max(0, h // 4)
+        cx, cy = 0, 0
     view = render_viewport(mp, bank, cx, cy)
     out_view = OUT / f"{level}_viewport_{cx}_{cy}.png"
     Image.fromarray(view).save(out_view)

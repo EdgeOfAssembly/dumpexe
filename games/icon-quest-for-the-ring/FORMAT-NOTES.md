@@ -67,17 +67,33 @@ tile_x = (world_x - 2880) / 288    ; 0x120 = 288
 tile_y = (world_y - 2400) / 288
 ```
 
-## Tile bank `BA.DAT` / `BB.DAT` — **confirmed shape**
+## Tile bank `BA.DAT` / `BB.DAT` — **confirmed shape + bake**
 
 | Property | Value |
 |----------|--------|
-| Size | 2304 bytes (`BA` loaded at level start; `BB` not opened in first playthrough) |
-| Stamps | **96** × **24** bytes |
-| Stamp geometry | **2 cells wide × 6 cells tall** (ICON1 draw @ `2D9A`: `cx=6`, each iter `movsw; movsw`, row stride `0x50`) |
-| On-disk packing | **`attr, char`** pairs (odd bytes = CP437 `0xDE/B1/B0/0x83/…`) |
-| Runtime B800 | Live dumps prove **`char, attr`** (even=char, odd=attr) at `B800:0000` |
-| Runtime | Stamp source `DS:207A + tile_id * 24` → blit (`movsw`) into text buffer; **byte-swap vs BA on disk** when writing B800 |
-| Tile id range | Map uses lo7 **0..90** (fits 96 stamps) |
+| Size | 2304 bytes each |
+| On-disk layout | **`byte0 = stamp count N`**, then **`N × 24`** bytes of **`char, attr`** cells (already B800 order) |
+| BA example | `N = 0x5A` (90 stamps) → 2160 B payload; rest of file unused |
+| Stamp geometry | **2×6** cells (ICON1 **`sub_83` @ `2B9A`**) |
+| Runtime @ `DS:207A` | Packed stamps only (no count byte); ids **0..N−1** |
+| B800 | same **`char, attr`** words via `movsw` (no swap) |
+
+> Older notes claimed on-disk `attr,char` + swap — **wrong**. `5A DE 77 DE 77…` is count + `DE/77` floor cells.
+
+### ICON0 bake (`sub_32` / ~`0B17`…`0B94`) — **confirmed**
+
+```
+stream = open("?.DAT")           ; BA/BB via Pascal MT+ stream @ DS:2A5A
+N = getbyte(stream)              ; sub_253
+for stamp_id in 0 .. N-1:
+  for cell in 0 .. 11:           ; 12 words
+    lo = getbyte(stream)         ; char
+    hi = getbyte(stream)         ; attr
+    word = (hi << 8) | lo        ; sub_287 shl 8 + or  → memory [char,attr]
+    [DS:207A + stamp_id*24 + cell*2] = word
+```
+
+Live `STAMPS.BIN[0:2160] == BA.DAT[1:2161]` (100%). Dummy `bake_stamp_file` implements this.
 
 Preview: `map_preview/BA_stamps_2x6.png`  
 Decoder: `decode_map.py`
@@ -117,34 +133,81 @@ python3 games/icon-quest-for-the-ring/decode_screen_dump.py
 | Exact 2×2 windows on `…0006` | **288** sequential **2×2** cells in `BA.DAT` (8 B each, on-disk `attr,char`) match solid terrain |
 | Solid stamp IDs on screen | **283** = all `DE/77` floor, **197** = all `B1/02` green, **188** = all `83/04` red |
 | Char-only 2×6 windows | Also match BA as **96** stamps of 2×6 (24 B) for solid fills (ids 0/10/11/12/14…) |
-| ICON1 draw @ `2D9A` | Still **2×6** `movsw` loop from `207A + id*24` — runtime table may be built from BA |
+| ICON1 **`sub_83` @ `2B9A`** | **2×6** `movsw` from `207A + id*24` into offscreen (`DS:206C`) |
 
 Attrs on screen can differ from BA defaults (lighting / recolor); **characters** are the stable key.
 
-### MAP → stamp draw (ICON1) — **confirmed path**
+### MAP → stamp draw (ICON1) — **Sourcer-confirmed** (`ICON1.LST`)
+
+#### Hot registers / DS slots
+
+| Slot | Role | Sourcer label / site |
+|------|------|----------------------|
+| `DS:31D4` | MAP index table base | `data_123`; `mov ax,31D4h` before index |
+| `DS:207A` | Runtime stamp bank base | `mov ax,207Ah` then `id * 18h` |
+| `DS:206C` / `206E` | Offscreen text buffer far ptr | `les di` / `add di,[206C]` |
+| `DS:5DE4` / `5DE6` | Stamp far ptr into `sub_83` | set just before `call sub_83` |
+| `DS:810C` | Destination **screen row** (cells) | `row*6+2` |
+| `DS:810E` | Destination **screen col** (cells) | `(i<<1)+1` typical |
+| `DS:822C` | Camera / tile_x | map X origin |
+| `DS:8230` | Camera / tile_y | map Y origin |
+| `DS:2D82` | Cached stamp id (word) | from `es:[di]` map byte |
+
+#### Index + stamp (horizontal strip, e.g. `9437` / `94B7`)
 
 ```
-tile_x = (world_x - 2880) / 288      ; DS:822C
-tile_y = (world_y - 2400) / 288      ; DS:8230
-
-; horizontal strip, i = 0..0x12 (19 stamps):
-screen_col = (i << 1) + 1           ; 1,3,5,...,37   (c2f7 = SHL)
-screen_row = row_arg * 6 + 2        ; 2,8,14,20       (strip calls)
-
-map_byte = [DS:31D4 + (tile_x + i) * 100 + (tile_y + row_arg)]
-SI       = DS:207A + map_byte * 24  ; NO lo7 mask — full byte is stamp index
-call draw_2x6                       ; 2D9A: 6 rows × 2× movsw
+; map cell (full byte is stamp id — no lo7 mask)
+di  = 31D4 + (822C + col_i) * 100 + (8230 + row_mod)
+id  = [es:di]                      ; zero-extend → DS:2D82
+SI  = 207A + id * 24               ; mul bx,18h
+[5DE4] = SI ; [5DE6] = DS
+call sub_83                        ; 2B9A
 ```
 
-Implications:
+#### `sub_83` @ `2B9A` — full 2×6 stamp → offscreen
+
+```
+cx = 6
+si = [5DE4]                        ; stamp source
+es = ds
+dl = 50h                           ; 80 = 40 cells * 2 bytes/row
+for each of 6 rows (bx = 0,2,...,10; row = bx>>1):
+  di_row = (row + [810C]) * 50h
+  di     = di_row + ([810E] << 1) + [206C]
+  movsw ; movsw                    ; 2 cells (char,attr)(char,attr)
+```
+
+#### `sub_84` @ `2BCD` — half-height (2 rows)
+
+Same body as `sub_83` with `cx=2` (used on vertical strip edges, e.g. call @ `975D`).
+
+#### Col-39 half-width (inline, not `sub_83`)
+
+Path around `9522` / `95C0`: for each map row strip, sets `810C = row*6+2`, loads one stamp, then **6×** single-word write to offscreen at `col<<1` (one cell wide) while advancing stamp SI by 4 per row.
+
+#### Present offscreen → visible page
+
+- **`sub_81` @ `2B71`**: `rep movsw` of `cx=0FA0h` words from `[206C:206E]` → page dest (`2BF2/2BF4`). Tall buffer (2× 40×25 words), not a single page.
+- **`sub_82` @ `2B8C`**: INT10 AH=05 set active display page from `5DDC` bit0.
+
+#### Viewport geometry (unchanged, now cited)
+
+```
+tile_x / tile_y live in DS:822C / DS:8230
+(world → tile still: (world - 2880|2400) / 288)
+
+screen_col = (i << 1) + 1          ; 1,3,...,37 for i=0..18
+screen_row = row_arg * 6 + 2       ; 2,8,14,20
+map_byte   = [31D4 + (tile_x+i)*100 + (tile_y+row_arg)]
+```
 
 | Item | Value |
 |------|--------|
-| MAP stride | **100** on X (`width≈38`, `height=100` for LA 3800 used) |
-| Stamp id | **full MAP byte** (0..180 observed) |
-| Bank size | `BA.DAT` alone = 96 stamps; **BA‖BB = 192** covers max id 180 |
-| Viewport | **19×N** stamps; col phase **1**, row phase **2** |
-| Scroll | Off-screen text buffer; ±6 rows (`0x1E0` bytes) memmoves |
+| MAP stride | **100** (`mul bx,64h`) on X |
+| Stamp id | **full MAP byte** |
+| Bank | BA 96 + BB 96 = **192** × 24 B @ `207A` |
+| Viewport | **19** full stamps + col-39 half; row phase **2**, col phase **1** |
+| Draw target | Offscreen @ `206C`, then page blit |
 
 Stamp examples (chars only; attrs recolored live):
 
@@ -155,20 +218,42 @@ Stamp examples (chars only; attrs recolored live):
 | 11 | all `83` | red brick |
 | 130+ | mixed DE/B1/B0 | edge / transition (BB range) |
 
-### MAP ↔ live dump `0006` — *partial*
+#### Not terrain: `2F65` / `sub_90`
 
-Direct blit of `map_byte → BA‖BB stamp` at fixed phase peaks ~**44%** char match over the viewport (best ~`(7,75)`). Majority-vote **learned** MAP→stamp tables at other origins reach ~**82–87%** but look overfitted (MAP `0` not stably “floor”).
+`mov al,data_123[di]` @ `2F65` walks MAP with stride 100 for **collision / walkability** (`cmp al,0` / `cmp al,9`), not drawing.
 
-Likely remaining gaps:
+#### ICON0 MAP load → `31D4` — **RLE confirmed** (`ICON0.LST` ~`1209`…`1305`)
 
-1. Runtime stamp table at `207A` may not be a raw `BA‖BB` concat (remap / bake step).
-2. Visible B800 is a **scrolled window** into a taller buffer — dump may not be stamp-grid aligned the way a cold camera is.
-3. Sprites (player column) and HUD overwrite terrain cells.
+On-disk `L*.MAP` is **run-length compressed** (file often padded to a fixed size; only the leading stream is consumed).
 
-Decoder: `decode_map.py` (full map + `--camera X,Y` viewport).
+```
+prev = 0
+while dest_count < map_size:          ; LA → 3840 = 38×100
+  b = getbyte(stream)                 ; sub_253
+  if b <= 7Fh:
+    emit b; prev = b                  ; literal
+  else:
+    n = b & 7Fh
+    emit (n - 1) extra copies of prev ; total run length = n
+```
+
+Verified: RLE(`LA.MAP`) **==** live `MAPRT.BIN` (3840/3840).  
+Sourcer loop uses `F4--` then `for F2=2..n` writes of previous = same `(n−1)` extras after the literal already stored.
+
+Raw `LA.MAP` vs runtime was only ~15% — that was the missing RLE, not a “bake table.”
+
+### File-mode parity — **100%** (2026-07-20)
+
+```
+bake(BA.DAT) + RLE(LA.MAP) + blit @ cam(0,0)
+  == STAMPS.BIN + MAPRT.BIN blit
+  == dummy/expected_b800_parity.bin
+```
+
+Sprites/HUD still overwrite terrain on live B800; terrain cells match.
 
 ```bash
-python3 games/icon-quest-for-the-ring/decode_map.py LA --camera 7,75
+python3 games/icon-quest-for-the-ring/decode_map.py LA --camera 0,0
 ```
 
 ### Live DS dumps (DOSBox `mem_dump`)
@@ -185,15 +270,14 @@ Outputs go under `mem_dumps/`. **Priority:** feed `STAMPS.BIN` / `MAPRT.BIN` int
 
 ### Working order (agreed)
 
-1. **Dummy draw path in ASM** (map index → stamp → B800) until terrain is byte-identical or sprite-only deltas.
-2. **Authentic load staging** in the same COM (see `dummy/` v4): mirror ICON.EXE order in `.asm`.
-3. **Then** host PNG / disk tools that reuse the same blit rules.
-4. Load-time bake (`LA.MAP`→`31D4`, `BA.DAT`→`207A`) when file-mode fidelity needs it.
+1. **Dummy draw path in ASM** — done (terrain parity).
+2. **Authentic load staging** — done (v5 multi-frame intro).
+3. **File bake + MAP RLE** — done (v6; no STAMPS/MAPRT required).
+4. **Then** host PNG / disk tools that reuse the same blit rules; sprites next.
 
-**Parity result (mem dump g0013 + B800 `…0008`):** 19 full stamps + col-39 half-stamp; **100% terrain** bytes; remaining diffs = player sprite (bottom, cols 7–9).  
-**BA.DAT note:** leading `5Ah` then char,attr stream matches runtime stamps **0..90** when the header byte is dropped.
+**Parity result (mem dump g0013 + B800):** 19 full stamps + col-39 half-stamp; **100% terrain** bytes; remaining diffs = player sprite (bottom, cols 7–9).
 
-### Dummy loader stages (v4) vs ICON.EXE
+### Dummy loader stages (v6) vs ICON.EXE
 
 User-visible intro order:
 
@@ -204,54 +288,43 @@ User-visible intro order:
 | Stage | ASM label | Authentic bit |
 |-------|-----------|----------------|
 | TITLE | `stage_title` | mode 00→01; blit `TITLE.BIN` (2000 B B800 page); wait ESC |
-| video | `icon_mode_01` | INT10 00/01 + AX=1102 fonts + CRTC 09=81h (ICON.EXE) |
+| video | `icon_mode_01` | INT10 00/01 + AX=1102 fonts only (CRTC 09=81h alone crushes playfield in DOSBox — omitted) |
 | ANI | `stage_ani` | mode 00→01; blit `ANI.BIN`; wait ESC |
 | OVL0 | `stage_ovl0` | FCB `ICON0.OVL`, 243×128 sequential read (discard) |
-| ASSETS | `stage_assets` | BA/BB/LA.MAP/LA.DAT/MA.DAT **or** STAMPS+MAPRT |
+| ASSETS | `stage_assets` | BA/BB **count+payload bake** + LA.MAP **RLE** (+ LA/MA.DAT) **or** STAMPS+MAPRT |
 | OVL1 | `stage_ovl1` | FCB `ICON1.OVL`, 399×128 read (discard) |
 | PLAY | `stage_play` | terrain blit (ICON1 rules) |
 
 Capture `TITLE.BIN` / `ANI.BIN` with **Ctrl+F10** while each screen is fully painted (mode-set auto-dumps are often mid-frame).
 
-## Level MAP (`L*.MAP`) — **strong** (index formula confirmed)
+## Level MAP (`L*.MAP`) — **RLE + index confirmed**
 
-| File | Size | Notes |
-|------|------|--------|
-| LA | 3840 | live FCB: 30×128 exact, no compression |
-| LB | 4224 | |
-| LC | 3712 | |
-| LD | 4224 | |
-| LE | 4096 | |
-| LF | 4736 | |
-| LG | 3840 | |
+| File | On-disk size | Format |
+|------|--------------|--------|
+| LA…LG | 3712–4736 | **RLE stream** (often padded); expand to stamp-id grid |
+
+On-disk bytes frequently have high bit set (~RLE markers). Expanded LA: values **0..90**, stride **100**, width **38** (`38×100=3800`, buffer **3840**).
+
+### RLE (ICON0 → `DS:31D4`)
+
+See above (“ICON0 MAP load”). File size ≠ expanded size; decoder stops at target map size (or EOF).
 
 ### Index formula (ICON1, many call sites)
 
 ```
 addr = DS:31D4 + tile_x * 100 + tile_y
-tile_id = mem[addr]          ; then stamp at 207A + (tile_id * 24)
-; graphics index uses low 7 bits in practice (max lo7 = 90)
-; bit 7 = flag; collision probes treat id <= 9 as special / walkable-ish
+tile_id = mem[addr]          ; full byte → stamp @ 207A + tile_id*24
+; collision probes treat id <= 9 specially (sub_90 @ 2F65)
 ```
 
-For **LA.MAP** (3840 B): **38 × 100** stamps with stride 100 (`38*100=3800`), short tail often `0x1A`-ish padding.
-
-Viewport draw loops **0..0x12** (19 stamp columns) × 2 cells = 38 cells ≈ full 40-col width with margins. Vertical stamp step = 6 text rows.
-
-### Not a B800 dump
-
-~20% zeros; ~33% high bit; values 0–180 only; **no** `0xDE/B0/B1` in MAP bytes.
+Viewport: **19** stamp columns + col-39 half; vertical step **6** text rows; camera **(0,0)** after correct RLE (old `(7,75)` was a raw-MAP workaround).
 
 ### Decode tool
 
 ```bash
-python3 games/icon-quest-for-the-ring/decode_map.py LA BA
-# → map_preview/LA_decoded.png  (38×100 stamps, 608×4800 px at 8×8 cells)
-# → map_preview/LA_viewport.png (19×5 dense crop)
-# → map_preview/BA_stamps_2x6.png
+python3 games/icon-quest-for-the-ring/decode_map.py LA --camera 0,0
+# → map_preview/LA_decoded.png, LA_viewport.png, BA_stamps_2x6.png
 ```
-
-**Still open:** exact on-screen camera origin matching `/tmp/ICON.png` pixel-for-pixel (scroll offset + which BA vs BB bank); whether raw ids > 127 select a second bank or only set the flag.
 
 ## Monster ADV (`M*.ADV`)
 
@@ -270,8 +343,115 @@ Scores like `8000` / `6500` match combat tables.
 
 ## Sprites `DR.DAT` / `SP.DAT`
 
-Length-prefixed ASCII labels interleaved with binary frames (`health bar`, `man front`, `magic sword`, …).  
-SP is a superset/variant of DR (more creatures/FX).
+Length-prefixed ASCII labels interleaved with binary frames.  
+SP is a superset/variant of DR (more creatures/FX; snakes, dwarves, ghosts, …).
+
+### On-disk frame shape (*strong*)
+
+```
+len:u8, name[len]          ; ASCII label
+w:u8, h:u8                 ; width × height in text cells
+mask[w*h]                  ; per-cell color / material index
+                           ;   0x10 = transparent (skip blit)
+                           ;   other = palette slot (fed through DS:2906)
+rest…                      ; optional char plane (often starts 01h)
+                           ;   packed CP437 chars for non-transparent cells
+```
+
+Examples: `man front` / `skeleton` = **6×12**; `health bar` = **6×21** (mask-only colors `01/07/09`, rest = `00`); `Bat 0` = **6×4**.
+
+Hero pose set in DR: `man front`, `man * weapon`, `man * swing`, plus **`skeleton`** (death pose, same 6×12 footprint).
+
+### CP437 hero glyphs (from DR char plane)
+
+Man / skeleton streams include block art and a **triangle** cell:
+
+| Byte | CP437 (IBM) | Role |
+|------|-------------|------|
+| `0x1E` | ▲ up triangle | present in banks; possible flash/UI |
+| `0x1F` | ▼ down triangle | **in man + skeleton char streams** (e.g. after `12 de`) |
+| `0x2A` | `*` | torso-ish accents |
+| `0xDE` / `0x7C` | ▐ / `\|` | fill / limbs |
+| `0x02`… | face / detail | with attrs from mask remap |
+
+Live play notes: wound flash is a **triangle glyph** that recolors (**yellow** when hurt, **red** when critical). Direction (up vs down) is easy to misread in CGA text — treat as “triangle,” check `1E`/`1F` at runtime. Death: hero swaps to **`skeleton`** (yellowish bone colors in mask: `0x0E` yellow-ish slots dominate vs man’s multicolor mask) **before** the death banner.
+
+### Damage / death UX (player report + ICON1 strings)
+
+| State | Visual | Notes |
+|-------|--------|--------|
+| Hurt | Triangle → **yellow** | attr recolor via sprite pipeline, not terrain |
+| Critical | Triangle → **red** | same glyph, hotter palette |
+| Dead | Body → **yellow-ish skeleton** frame | label `skeleton` in DR/SP |
+| Then | Centered death text | see below |
+
+### Live capture (to-play → level A, 2026-07-20)
+
+Automation reached overworld (`STARTUP-PROMPTS.md` + Esc×2).  
+Dump `ICON_g0011_m01_…0005.bin` vs terrain parity: **1988/2000** match; **7 cells** = hero:
+
+| Pos (col,row) | char | attr | Notes |
+|---------------|------|------|--------|
+| (8,20) | `02` | `70` | body |
+| (8,21) | `2A` | `F1` | `*` |
+| (8,22) | `09` | `F4` | |
+| (8,23) | `12` | `7F` | |
+| (7,24) | `DE` | `75` | floor tint |
+| **(8,24)** | **`1F`** | **`85`** | **▼ triangle (healthy)** |
+| (9,24) | `DE` | `57` | floor tint |
+
+Confirmed: wound flash glyph is **CP437 `1Fh`** (down triangle), not `1Eh`.
+
+| State | Triangle attr | Notes |
+|-------|---------------|--------|
+| Healthy | **`85h`** | blink + fg (spawn dump g0011) |
+| **Hurt (bat hit)** | **`8Eh`** | **blink + yellow fg** — player: yellow triangle after bat; also seen mid-wander |
+| Critical | `8Ch`? | *hypothesis* blink + light red (same high bit as 85/8E) |
+
+Automation often **misses** the hurt frame if F10 is not fired during the flash (flash is brief).
+
+### Level A sword (player + data)
+
+| Fact | Detail |
+|------|--------|
+| Spawn | `LA.DAT` / `LA.ADV` **`3 3`** (map tiles) |
+| Sword | **6 steps south** of hero (walk **Down** ×6) |
+| Pick up | **`P`** (F1: “P · Pick up object”); joystick btn #2 |
+| Art | DR **`sword`** 6×3 sprite (`0x60` cells), not MAP stamp |
+| Drop | **`D`** |
+
+`LA.DAT` object pairs after count `4` still *hypothesis* (type/params); ground path is south-of-spawn + **P**.
+
+### Level A ground objects (live 2026-07-20 + DR)
+
+| Visual | DR label | Notes |
+|--------|----------|--------|
+| Sword on ground → equip | `sword` | ~6 south of spawn; **P** on tile; then cyan blade in hand |
+| Yellow/brown coin pile | **`gold`** | At least **two** piles on level A open floor (lower + upper-right) |
+| Red/blue `+` | Bat frames (MA `Bat`) | Mobile; not a pickup |
+
+Live RE notebook: `ICON/LIVE-RE-SESSION.md`. Pickup only succeeds **on tile** (else arm-reach, no state change; map/offscr dumps can stay byte-identical).
+
+Death / fail strings in **ICON1.OVL** (dispatch on `DS:2C16` cause id):
+
+| Cause id (*partial*) | Message |
+|----------------------|---------|
+| … | `"… Killed You!"` (killer name prefix) |
+| 4 | `You Were Hit By Lightning!` |
+| 5 | `You Weren't Ready For The Icon!` |
+| 6 | `You Materialized In A Wall!` |
+| 7 | `The Black Knight killed you` + `when your Magic Sword broke!` |
+| default | `You Died!` |
+| other | `You Drowned!`, `You Have Been Burnt To A Cinder!`, … |
+
+Pattern: show sprite state → `sub_103` / `sub_269` paint message → `sub_298(-1,-1)` wait/ack.
+
+### Runtime color remap (ICON1)
+
+- **`DS:2906`**: table of **4 bytes × slot** (written at init ~`A00B` and by setter ~`2088`).  
+- **`sub_89` @ `2D8B`**: sprite cell blit — mask indices → `2906[idx*4 + (5DDC&3)]`; **`0x10` = transparent**; blends with underlying offscreen char at `2BF2/2BF4`.  
+- Wound yellow/red is almost certainly **remapping mask slots** (or swapping the 4-entry row for the hero), not redrawing BA terrain.  
+- Death pose = **frame select** `skeleton` rather than only recoloring `man front`.
 
 ## I/O map (live DOSBox FCB log — 2026-07-17 run)
 
@@ -334,4 +514,18 @@ Multi-pass listings for `ICON.EXE` / `ICON0..2.OVL` live in `sourcer-out/`
 Batch requirements: **CRLF** `.DEF` with **`Go`**, run as `sr ICON.DEF -n -x` under DOSBox.
 Help: `sr -? 2>&1 > loki.txt` → `LOKI.TXT`.
 
-ICON.LST already labels **`DS:206C`** (offscreen ptr) and **`DS:31D4`** (MAP index).
+### Sourcer landmarks (quick index)
+
+| Module | Offset | Symbol / meaning |
+|--------|--------|------------------|
+| ICON1 | `2B9A` | **`sub_83`** — 2×6 stamp → offscreen |
+| ICON1 | `2BCD` | **`sub_84`** — 2-row half-height stamp |
+| ICON1 | `2B71` | **`sub_81`** — offscreen → page (`rep movsw` 0FA0h) |
+| ICON1 | `2B8C` | **`sub_82`** — set display page |
+| ICON1 | `9437`… | Horizontal strip: map index → `207A+id*24` → `sub_83` |
+| ICON1 | `9522`… | Edge / half-width column fill |
+| ICON1 | `2F65` | MAP walk probe (not draw) |
+| ICON0 | `0B54`… | Stamp bank bake into `207A` |
+| ICON / ICON1 | `206C`, `31D4` | Offscreen ptr; MAP base |
+
+ICON.LST / ICON1.LST labels: **`DS:206C`**, **`DS:31D4`** (`data_123` / `data_179`).

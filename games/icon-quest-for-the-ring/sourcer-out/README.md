@@ -16,11 +16,23 @@ Regenerate:
 cd ../../SOURCER && ./run_sr.sh all
 ```
 
-### Already confirmed in ICON.LST / ICON1.LST
+### Confirmed landmarks (ICON / ICON0 / ICON1)
 
-- `DS:[206C]` — far/near ptr used with `les di` / scroll (`rep movsw`)
-- `DS:31D4` — map table (`data_179`)
-- FCB random block-read remarks
-- `rep movsw` blit paths
+| Address | Meaning | Where |
+|---------|---------|--------|
+| `DS:206C` / `206E` | Offscreen text buffer far ptr | ICON.LST, ICON1 `les di` / `sub_81` |
+| `DS:31D4` | MAP index table (`data_123` / `data_179`) | ICON1 `mov al,data_123[di]` @ `2F65`; draw strips `mov ax,31D4h` |
+| `DS:207A` | Runtime stamp bank (192×24) | ICON1 `mov ax,207Ah` + `mul bx,18h`; ICON0 bake @ `0B54` |
+| `DS:5DE4` | Stamp SI into blit | set before `call sub_83` |
+| `DS:810C` / `810E` | Screen row / col for stamp dest | strip callers ~`9475` / `9483` |
+| `DS:822C` / `8230` | Camera tile_x / tile_y | strip index math |
+| **`sub_83` @ `2B9A`** | **2×6 terrain stamp** (`cx=6`, 2×`movsw`, stride `50h`) | ICON1.LST |
+| **`sub_84` @ `2BCD`** | 2-row (half-height) stamp | ICON1.LST |
+| **`sub_81` @ `2B71`** | Offscreen → display page (`cx=0FA0h` `rep movsw`) | ICON1.LST |
+| `2D9A` | **Not** terrain draw — inside `sub_89` (entity remap) | corrected |
+| ICON0 `sub_32` ~`0B17` | BA/BB bake: count byte + `N×24` char,attr → `207A` | confirmed |
+| ICON0 ~`1209` | MAP RLE expand → `31D4` (`n-1` extras on high-bit runs) | confirmed |
 
-Cross-check with live `mem_dumps/` and `dummy/icon_dummy.asm`.
+Full write-up: `../FORMAT-NOTES.md` § “MAP → stamp draw” / BA bake / MAP RLE.
+
+Cross-check with live `mem_dumps/` and `dummy/icon_dummy.asm` (`blit_viewport`).

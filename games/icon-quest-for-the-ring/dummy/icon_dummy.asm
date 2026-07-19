@@ -39,17 +39,22 @@ start:
         jmp     main
 
 ; ---------------------------------------------------------------------------
-; Constants (ICON1 terrain)
+; Constants (ICON1 terrain) — Sourcer ICON1.LST landmarks:
+;   MAP @ DS:31D4 (data_123), stamps @ DS:207A, offscreen @ DS:206C
+;   sub_83 @ 2B9A = 2x6 movsw (cx=6, stride 50h) via 5DE4 / 810C / 810E
+;   sub_84 @ 2BCD = 2-row half-height; sub_81 @ 2B71 = offscreen->page
+;   Dummy draws straight to B800 (parity with live dumps; skip offscreen).
 ; ---------------------------------------------------------------------------
-MAP_STRIDE      equ     100
-STAMP_BYTES     equ     24
-STAMP_COUNT     equ     192
-VIEW_W          equ     19
-VIEW_H          equ     4
-COL0            equ     1
-ROW0            equ     2
-CAM_X0_FILE     equ     7
-CAM_Y0_FILE     equ     75
+MAP_STRIDE      equ     100             ; mul bx,64h in strip index
+STAMP_BYTES     equ     24              ; mul bx,18h
+STAMP_COUNT     equ     192             ; BA||BB bank at 207A
+VIEW_W          equ     19              ; full stamps (cols 1..37)
+VIEW_H          equ     4               ; stamp rows (screen rows 2,8,14,20)
+COL0            equ     1               ; 810E phase: (i<<1)+1
+ROW0            equ     2               ; 810C phase: row*6+2
+; File-mode after bake+RLE matches runtime tables → same cam origin.
+CAM_X0_FILE     equ     0
+CAM_Y0_FILE     equ     0
 CAM_X0_RT       equ     0
 CAM_Y0_RT       equ     0
 
@@ -69,16 +74,17 @@ OVL1_RECS       equ     399
 ; ---------------------------------------------------------------------------
 ; Messages (shown in mode 03 between stages or on error/exit)
 ; ---------------------------------------------------------------------------
-msg_banner      db      'ICON dummy loader v5 - stages + multi-frame intro',0Dh,0Ah
-                db      'TITLE loop -> ANI loop -> OVL0 -> assets -> OVL1 -> PLAY',0Dh,0Ah
-                db      'ESC skips loops; arrows in PLAY; ESC quits PLAY.',0Dh,0Ah,'$'
+msg_banner      db      'ICON dummy loader v7 - terrain + hero states',0Dh,0Ah
+                db      'TITLE/ANI Esc; PLAY: arrows, 1-4 hero, R reset cam, Esc quit',0Dh,0Ah
+                db      '1=ok(85) 2=hurt bat 8Eh yel 3=crit 8Ch 4=dead skeleton',0Dh,0Ah,'$'
 msg_stage_t     db      '[stage] TITLE (TITLES.BIN multi-frame loop)',0Dh,0Ah,'$'
 msg_stage_a     db      '[stage] ANI (ANIS.BIN multi-frame loop)',0Dh,0Ah,'$'
 msg_stage_0     db      '[stage] ICON0.OVL FCB block-read',0Dh,0Ah,'$'
-msg_stage_as    db      '[stage] BA/BB + LA.MAP + LA.DAT + MA.DAT',0Dh,0Ah,'$'
+msg_stage_as    db      '[stage] BA/BB bake + LA.MAP RLE + LA/MA.DAT',0Dh,0Ah,'$'
 msg_stage_rt    db      '[stage] assets: STAMPS.BIN + MAPRT.BIN (parity)',0Dh,0Ah,'$'
 msg_stage_1     db      '[stage] ICON1.OVL FCB block-read',0Dh,0Ah,'$'
-msg_stage_p     db      '[stage] PLAY (terrain)',0Dh,0Ah,'$'
+msg_stage_p     db      '[stage] PLAY (terrain + hero; keys 1-4)',0Dh,0Ah,'$'
+msg_dead        db      '  You Died!  (4=skeleton; 1=stand)  $'
 msg_no_title    db      '(no TITLES.BIN/TITLE.BIN - blank title)',0Dh,0Ah,'$'
 msg_no_ani      db      '(no ANIS.BIN/ANI.BIN - blank ani)',0Dh,0Ah,'$'
 msg_no_ovl0     db      'FCB open ICON0.OVL failed (continuing).',0Dh,0Ah,'$'
@@ -87,7 +93,7 @@ msg_no_ba       db      'FCB open BA.DAT failed.',0Dh,0Ah,'$'
 msg_no_map      db      'FCB open LA.MAP failed.',0Dh,0Ah,'$'
 msg_bye         db      0Dh,0Ah,'ICON dummy exit. last stage play; mode was: $'
 msg_bye_rt      db      'parity tables',0Dh,0Ah,'$'
-msg_bye_file    db      'file BA+LA.MAP',0Dh,0Ah,'$'
+msg_bye_file    db      'file BA bake + MAP RLE',0Dh,0Ah,'$'
 
 ; ASCIZ paths for handle I/O (multi-frame files)
 path_titles     db      'TITLES.BIN',0
@@ -126,6 +132,18 @@ mode_rt db      0                       ; 1 = parity STAMPS+MAPRT
 nframes_t db    0                       ; title frame count
 nframes_a db    0                       ; ani frame count
 frame_i   db    0                       ; playback index
+; hero_state: 0=ok 1=hurt 2=critical 3=dead (live ICON g0011 capture)
+hero_state db   0
+; Live overworld hero (B800 diffs vs terrain parity @ cam 0,0):
+;   col8 rows20-24: 02/70 2A/F1 09/F4 12/7F 1F/85  + feet DE recolor
+; Triangle = CP437 1Fh (▼) attr 85h healthy; wound recolors that cell.
+HERO_COL        equ     8
+HERO_ROW0       equ     20
+TRI_CH          equ     1Fh             ; confirmed live dump g0011
+ATTR_OK         equ     85h             ; healthy triangle (blink + magenta-ish)
+ATTR_HURT       equ     8Eh             ; bat hit: blink + yellow fg (player report + 8Eh dumps)
+ATTR_CRIT       equ     8Ch             ; blink + light red (guess, same blink bit)
+ATTR_DEAD       equ     0Eh             ; skeleton yellow-ish (no blink)
 
 ; ---------------------------------------------------------------------------
 main:
@@ -282,7 +300,11 @@ assets_files:
         mov     bx, offset bank_buf
         mov     cx, BA_SIZE / 128
         call    fcb_read_all
-        call    bake_ba
+        ; ICON0 sub_32: count=getbyte, then count stamps of 12 words
+        mov     si, offset bank_buf
+        mov     di, offset bank_buf
+        mov     bx, BA_SIZE
+        call    bake_stamp_file
 
         mov     dx, offset fcb_bb
         call    fcb_open
@@ -291,12 +313,10 @@ assets_files:
         mov     bx, offset bank_buf + BA_SIZE
         mov     cx, BB_SIZE / 128
         call    fcb_read_all
-        ; bake BB (drop leading 5Ah)
-        mov     si, offset bank_buf + BA_SIZE + 1
+        mov     si, offset bank_buf + BA_SIZE
         mov     di, offset bank_buf + BA_SIZE
-        mov     cx, BB_SIZE - 1
-        rep     movsb
-        mov     byte ptr [di], 0
+        mov     bx, BB_SIZE
+        call    bake_stamp_file
         jmp     load_map
 bb_zero:
         mov     di, offset bank_buf + BA_SIZE
@@ -307,10 +327,12 @@ load_map:
         mov     dx, offset fcb_map
         call    fcb_open
         jc      err_map
+        ; RLE stream into map_raw, expand to map_buf (ICON0 ~1209)
         mov     dx, offset fcb_map
-        mov     bx, offset map_buf
+        mov     bx, offset map_raw
         mov     cx, MAP_SIZE / 128
         call    fcb_read_all
+        call    decode_map_rle
         mov     word ptr cam_x, CAM_X0_FILE
         mov     word ptr cam_y, CAM_Y0_FILE
 
@@ -377,6 +399,7 @@ stage_play:
 main_loop:
         call    clear_b800
         call    blit_viewport
+        call    blit_hero
 
         xor     ah, ah
         int     16h
@@ -394,6 +417,14 @@ main_loop:
         je      key_rst
         cmp     al, 'R'
         je      key_rst
+        cmp     al, '1'
+        je      key_h0
+        cmp     al, '2'
+        je      key_h1
+        cmp     al, '3'
+        je      key_h2
+        cmp     al, '4'
+        je      key_h3
         jmp     main_loop
 
 key_up:
@@ -425,6 +456,19 @@ key_rst:
 rst_file:
         mov     word ptr cam_x, CAM_X0_FILE
         mov     word ptr cam_y, CAM_Y0_FILE
+        jmp     main_loop
+
+key_h0:
+        mov     byte ptr hero_state, 0
+        jmp     main_loop
+key_h1:
+        mov     byte ptr hero_state, 1
+        jmp     main_loop
+key_h2:
+        mov     byte ptr hero_state, 2
+        jmp     main_loop
+key_h3:
+        mov     byte ptr hero_state, 3
         jmp     main_loop
 
 do_exit:
@@ -490,20 +534,113 @@ im01_done:
         ret
 
 ; ---------------------------------------------------------------------------
-; bake_ba: disk BA = 5Ah + char,attr stream -> bank_buf char,attr
+; bake_stamp_file (ICON0 sub_32 @ 0ADA / loop 0B33)
+;   SI = DI = raw file buffer (BA.DAT or BB.DAT)
+;   BX = region size (2304)
+;   File: byte0 = stamp count N, then N*24 bytes already char,attr
+;   Packs into DI..DI+BX-1; zero-fills remainder.
 ; ---------------------------------------------------------------------------
-bake_ba:
+bake_stamp_file:
+        push    ax
+        push    bx
+        push    cx
+        push    dx
         push    si
         push    di
-        push    cx
-        mov     si, offset bank_buf + 1
-        mov     di, offset bank_buf
-        mov     cx, BA_SIZE - 1
+
+        mov     al, [si]
+        xor     ah, ah                  ; N
+        mov     cx, STAMP_BYTES
+        mul     cx                      ; AX = N*24 (DX may be clobbered)
+        mov     cx, ax
+        mov     dx, bx                  ; region size
+        cmp     cx, dx
+        jbe     bsf_len_ok
+        mov     cx, dx
+bsf_len_ok:
+        mov     ax, dx
+        dec     ax                      ; max payload after count byte
+        cmp     cx, ax
+        jbe     bsf_do
+        mov     cx, ax
+bsf_do:
+        push    cx                      ; payload bytes
+        inc     si
         rep     movsb
-        mov     byte ptr [di], 0
-        pop     cx
+        pop     ax                      ; payload
+        mov     cx, dx
+        sub     cx, ax                  ; remaining to zero
+        jz      bsf_done
+        xor     al, al
+        rep     stosb
+bsf_done:
         pop     di
         pop     si
+        pop     dx
+        pop     cx
+        pop     bx
+        pop     ax
+        ret
+
+; ---------------------------------------------------------------------------
+; decode_map_rle (ICON0 MAP load ~1223..1305)
+;   map_raw = on-disk L*.MAP (RLE, often padded to MAP_SIZE)
+;   map_buf = expanded stamp ids (MAP_SIZE bytes)
+;   b <= 7Fh: literal, prev=b
+;   b >  7Fh: emit (b&7Fh - 1) extra copies of prev  (total run length = n)
+; ---------------------------------------------------------------------------
+decode_map_rle:
+        push    ax
+        push    bx
+        push    cx
+        push    dx
+        push    si
+        push    di
+
+        mov     si, offset map_raw
+        mov     di, offset map_buf
+        mov     cx, MAP_SIZE            ; dest remaining
+        mov     dx, MAP_SIZE            ; src remaining
+        xor     bl, bl                  ; prev
+
+dmr_loop:
+        jcxz    dmr_done
+        or      dx, dx
+        jz      dmr_pad
+        lodsb
+        dec     dx
+        cmp     al, 80h
+        jae     dmr_run
+        stosb
+        mov     bl, al
+        dec     cx
+        jmp     dmr_loop
+
+dmr_run:
+        and     al, 7Fh                 ; n
+        jz      dmr_loop                ; n=0 → no extra
+        dec     al                      ; emit n-1 copies
+        jz      dmr_loop
+        mov     bh, al                  ; count
+dmr_rep:
+        jcxz    dmr_done
+        mov     al, bl
+        stosb
+        dec     cx
+        dec     bh
+        jnz     dmr_rep
+        jmp     dmr_loop
+
+dmr_pad:
+        xor     al, al
+        rep     stosb
+dmr_done:
+        pop     di
+        pop     si
+        pop     dx
+        pop     cx
+        pop     bx
+        pop     ax
         ret
 
 ; ---------------------------------------------------------------------------
@@ -734,7 +871,11 @@ clear_b800:
         ret
 
 ; ---------------------------------------------------------------------------
-; blit_viewport - ICON1: 19 full stamps + col-39 half (char,attr bank)
+; blit_viewport - ICON1 strip path (sub_83-equivalent, direct to B800)
+;   map_byte = map[(cam_x+i)*100 + (cam_y+sr)]
+;   si = bank + map_byte*24
+;   6 rows x 2 words  (same as sub_83 @ 2B9A)
+;   col 39 = half-width (one cell / row) like strip edge path ~9522
 ; ---------------------------------------------------------------------------
 blit_viewport:
         push    es
@@ -866,6 +1007,133 @@ blit_done:
         ret
 
 ; ---------------------------------------------------------------------------
+; blit_hero - live-captured pose @ (HERO_COL, HERO_ROW0..+4)
+;   state 0: healthy attrs from dump
+;   state 1: triangle attr -> yellow (hurt)
+;   state 2: triangle attr -> red (critical)
+;   state 3: skeleton-ish (yellow bones) + optional death banner row 0
+; Triangle glyph TRI_CH=1Fh confirmed ICON_g0011 dump col8 row24.
+; ---------------------------------------------------------------------------
+blit_hero:
+        push    es
+        push    si
+        push    di
+        push    bx
+        push    cx
+        push    ax
+        mov     ax, 0B800h
+        mov     es, ax
+
+        mov     al, hero_state
+        cmp     al, 3
+        je      hero_dead
+
+        ; healthy body column (chars fixed; attrs from live except triangle)
+        mov     si, offset hero_pose_ok
+        call    hero_draw_pose
+
+        ; recolor triangle cell for hurt/crit
+        mov     al, hero_state
+        or      al, al
+        jz      hero_done
+        mov     bx, (HERO_ROW0 + 4) * 80 + HERO_COL * 2
+        mov     byte ptr es:[bx], TRI_CH
+        cmp     byte ptr hero_state, 1
+        jne     hero_crit_attr
+        mov     byte ptr es:[bx+1], ATTR_HURT
+        jmp     hero_done
+hero_crit_attr:
+        mov     byte ptr es:[bx+1], ATTR_CRIT
+        jmp     hero_done
+
+hero_dead:
+        mov     si, offset hero_pose_dead
+        call    hero_draw_pose
+        ; short banner top row (mode 01 40-col)
+        mov     si, offset msg_dead
+        xor     di, di
+        mov     ah, 0Eh                 ; yellow on black
+hero_ban:
+        lodsb
+        cmp     al, '$'
+        je      hero_done
+        cmp     al, 0Dh
+        je      hero_ban
+        cmp     al, 0Ah
+        je      hero_ban
+        mov     es:[di], al
+        mov     es:[di+1], ah
+        add     di, 2
+        cmp     di, 80
+        jb      hero_ban
+
+hero_done:
+        pop     ax
+        pop     cx
+        pop     bx
+        pop     di
+        pop     si
+        pop     es
+        ret
+
+; SI -> table: count, then count x (row_delta, col, ch, attr)  row_delta from HERO_ROW0
+; Actually simpler fixed tables: list of (y, x, ch, attr) ended by 0FFh
+hero_draw_pose:
+        push    ax
+        push    bx
+        push    dx
+hdp_loop:
+        mov     al, [si]
+        cmp     al, 0FFh
+        je      hdp_done
+        mov     dl, al                  ; row
+        mov     dh, [si+1]              ; col
+        mov     cl, [si+2]              ; ch
+        mov     ch, [si+3]              ; attr
+        add     si, 4
+        ; offset = row*80 + col*2  (mul clobbers DX — save col)
+        push    dx
+        mov     al, dl
+        xor     ah, ah
+        mov     bx, 80
+        mul     bx                      ; ax = row*80
+        pop     dx
+        mov     bl, dh
+        xor     bh, bh
+        shl     bx, 1
+        add     bx, ax
+        mov     es:[bx], cl
+        mov     es:[bx+1], ch
+        jmp     hdp_loop
+hdp_done:
+        pop     dx
+        pop     bx
+        pop     ax
+        ret
+
+; y, x, ch, attr  — live g0011 healthy; ends 0FFh
+hero_pose_ok:
+        db      20, 8, 02h, 70h
+        db      21, 8, 2Ah, 0F1h
+        db      22, 8, 09h, 0F4h
+        db      23, 8, 12h, 7Fh
+        db      24, 7, 0DEh, 75h        ; feet floor tint L
+        db      24, 8, TRI_CH, ATTR_OK  ; triangle
+        db      24, 9, 0DEh, 57h        ; feet floor tint R
+        db      0FFh
+
+; dead: same glyphs, yellow-ish attrs (skeleton stand-in)
+hero_pose_dead:
+        db      20, 8, 02h, ATTR_DEAD
+        db      21, 8, 2Ah, ATTR_DEAD
+        db      22, 8, 09h, ATTR_DEAD
+        db      23, 8, 12h, ATTR_DEAD
+        db      24, 7, 0DEh, 06h
+        db      24, 8, TRI_CH, ATTR_DEAD
+        db      24, 9, 0DEh, 06h
+        db      0FFh
+
+; ---------------------------------------------------------------------------
 ; Buffers (after code)
 ; ---------------------------------------------------------------------------
 dta_scratch:
@@ -881,7 +1149,9 @@ madat_buf:
         db      MADAT_MAX dup (0)
 bank_buf:
         db      BANK_SIZE dup (0)
+map_raw:
+        db      MAP_SIZE dup (0)        ; on-disk RLE L*.MAP
 map_buf:
-        db      MAP_SIZE dup (0)
+        db      MAP_SIZE dup (0)        ; expanded stamp indices
 
 end     start

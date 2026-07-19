@@ -1,8 +1,12 @@
 # ICON: Quest for the Ring — reverse-engineering notes
 
 **Target:** `ICON/` (≈198 KB payload, 43 files; directory mtimes show 1980-01-01 FAT epoch)  
-**Tooling:** `dumpexe` from repo root  
-**Status:** reconnaissance complete; not yet reassemblable  
+**Tooling:** `dumpexe` + DOSBox Staging (`mem_dump` / `screen_dump`) + **Sourcer 8.01** (`sourcer-out/*.LST`)  
+**Status:** terrain draw path proven (parity dummy); load bake + sprites open; not reassemblable  
+
+**Terrain (ICON1, Sourcer):** `sub_83` @ `2B9A` blits 2×6 stamps from `DS:207A+id*24` into offscreen `DS:206C`; MAP index `DS:31D4` stride 100. See `FORMAT-NOTES.md`.
+
+**Hero damage UX:** triangle glyph (CP437 `1E`/`1F`) recolors yellow→red when hurt; death swaps to DR label `skeleton` (yellowish) then ICON1 messages (`Killed You!`, `You Died!`, …). Color path: mask plane + `DS:2906` remap (`sub_89`).  
 
 ---
 

@@ -1,8 +1,11 @@
-# ICON dummy loader (v4)
+# ICON dummy loader (v7)
 
 DOS COM that mirrors **ICON.EXE load staging** in assembly, then runs the
 proven terrain play loop. Not a full Pascal MT+ reimplementation — same
 **order of modes, FCB names, and ESC-skippable intros**, then PLAY.
+
+**v6:** file-mode `BA.DAT` bake + `LA.MAP` RLE = runtime terrain parity.  
+**v7:** hero pose from live overworld dump; keys **1–4** = ok / hurt / crit / dead.
 
 ## Visual order (matches real ICON.EXE)
 
@@ -42,8 +45,12 @@ cd games/icon-quest-for-the-ring/ICON
 # Particles: ESC title, spam Ctrl+F10, pack ANIS.BIN
 ./auto_icon.sh ani-frames
 
-# Skip menus to overworld + optional F10/F11 dumps (see ICON_gameplay.txt)
+# Skip menus to overworld + optional F10/F11 dumps
+# (answers: STARTUP-PROMPTS.md — some defaults are Y, not N)
 ./auto_icon.sh to-play
+# QUIT=0 STORY_SPACES=40 ./auto_icon.sh to-play
+# PNG filmstrip (real pixels): capture/filmstrip_*/  via Ctrl+F5/Alt+F5
+# PNG_SHOT=1 SHOT_HOST=1 GET_SWORD=1 ./auto_icon.sh damage-capture
 
 ./auto_icon.sh kill    # Ctrl+F9 + SIGTERM
 ```
@@ -84,6 +91,8 @@ icon_dummy.com
 
 - **ESC** — skip TITLE, then ANI; in PLAY, quit  
 - **←↑↓→** — camera in PLAY  
+- **1 / 2 / 3 / 4** — hero ok / hurt (yellow ▼) / critical (red ▼) / dead  
+ 
 - **R** — reset camera  
 
 Mode-03 banners list each stage so you can see the chain even when mode 01 wipes the screen.
