@@ -497,12 +497,13 @@ rst_file:
         mov     word ptr cam_y, CAM_Y0_FILE
         jmp     main_loop
 
-; P: pick sword if "near" (steps_south >= 6 ≈ spawn y+6..7 → tile y=10)
-; Matches STARTUP-PROMPTS / LA.DAT slot 91 (3,10). AABB not fully simmed.
+; P: pick sword if "near" (steps_south >= 7 ≈ spawn y+7 → tile y=10)
+; Live 2026-07-20: long Down×10–12 clears ground sword; 6 was often short.
+; Matches LA.DAT slot 91 (3,10). Full AABB not simmed.
 key_pickup:
         cmp     byte ptr sword_alive, 0
         je      main_loop
-        cmp     byte ptr steps_south, 6
+        cmp     byte ptr steps_south, 7
         jb      main_loop               ; arm-reach only if not far enough south
         mov     byte ptr sword_alive, 0
         mov     byte ptr sword_equipped, 1
