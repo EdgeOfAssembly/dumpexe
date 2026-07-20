@@ -140,26 +140,27 @@ ICON/game_trace.log              # g0019 run
 
 ---
 
-## 6. Next RE steps (ordered)
+## 6. Agent RE toolkit (fork)
 
-1. **On-tile gold pickup (visual closed loop)**  
-   One step at a time until hero **overlaps** gold in screenshot → **one P** → shot → dump → pause.  
-   Do **not** spam P from a distance.
+After rebuild with agent_re:
 
-2. **Expand mem dumps** after a *confirmed* pickup  
-   - Score / vitality UI area in B800 (if any) or offscreen HUD.  
-   - Search DS for object-active flags vs `LA.DAT` pair list.  
-   - Diff `sub_135` side effects (instruction log around pick if `trace_instructions` briefly on).
+```text
+BP pick  ????  → BPINT pick INT 21 AH=??
+WATCH attr ds:????+1 pause
+SNAPSHOT before_p
+… KEY P …
+SNAPSHOT after_p
+DIFF before_p after_p
+TRACEBACK 128
+INTRING 32 json
+```
 
-3. **Map `LA.DAT` pairs → world tiles**  
-   Spawn `3 3` known; measure gold positions in stamp coords from screen + camera; match pairs.
+## 7. Next RE steps (ordered)
 
-4. **Distinguish gold vs score**  
-   Does gold go to **inventory** (D drop list) or only **score**? Open inventory UI after successful pick (not accidental D).
-
-5. **Bats**  
-   Same method: approach, Space, dump hurt attr `8Eh` on triangle (known).
-
+1. **On-tile gold pickup** + `SNAPSHOT`/`DIFF`/`TRACEBACK` around **P**
+2. **WATCH** candidate object/score DS ranges after Sourcer hit on `sub_135`
+3. **Map `LA.DAT` pairs → tiles** using grid overlay step counts
+4. **Update `icon_dummy.com`** with confirmed gold/object rules once diffs prove them
 ---
 
 ## 7. Process rules (agent + human)
