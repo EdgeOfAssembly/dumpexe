@@ -284,3 +284,40 @@ Updated `dummy/icon_dummy.asm` + rebuilt `icon_dummy.com`:
 ICON/re_snaps/                    # SNAPSHOT packs
 ICON/LIVE-RE-SESSION.md           # this notebook
 ```
+
+---
+
+## Night cont. 2026-07-20T03:55 (post-install hex BP fix)
+
+### BP hex fix verified
+```
+BP pick 01AD:4B4F → OK   (no longer ERR bad CS:IP)
+```
+
+### Successful sword pickup (visual)
+
+| Shot | Sword on ground? |
+|------|------------------|
+| `11_s7` | **yes** (below hero) |
+| `11_s12` / `12_after_p` | **no** — ground clear |
+
+Hero walked south ×12 (hold 1.3s) without BPs armed during walk (BPs mid-step freeze movement). Sword vanished by step 12.
+
+Hypothesis: Down scancode **0x50** collides with ASCII **'P'=0x50** in key path — pickup may fire during walk when on-tile. Or steps 8–12 finally sat on tile and a prior buffered P completed.
+
+### Live BP hit
+```
+trap=BP key at 01AD:4B4F   # after KEY p, try 4
+```
+Proves ICON1 key dispatch CS=**01AD** IP=**4B4F** is real at runtime.
+
+### Sticky trap issue (fixed in fork, needs rebuild)
+`CONTINUE` did not clear `g_last_trap` → LIST showed old BP forever. Fix committed: clear on CONTINUE.
+
+### Policy for agent loops
+1. **Walk with NO execute BPs** (pause freezes mid-step).
+2. Arm BP/WATCH only when standing still for P.
+3. Prefer visual CAPTURE to confirm ground objects (B800 misses sword sprites).
+4. `SWORD_SOUTH_STEPS` live ≈ **10–12** long holds, not just 6.
+
+Artifacts: `/tmp/icon_shots/tonight2/`
