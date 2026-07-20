@@ -350,3 +350,14 @@ Expanded `mem_dump_regions` (11 regions). Pre/post DUMPMEM while walking south +
 /tmp/icon_mem_pre/   /tmp/icon_mem_post/
 ICON/dosbox-staging.conf  mem_dump_regions=…equip,gold,ents,side…
 ```
+
+---
+
+## Tomorrow / next session
+
+1. Gold pickup: walk onto pile → DUMPMEM → expect `DS:2BEC++` (type `0017h`).
+2. Optional: socket `MEMREAD ds:OFF+SZ` to avoid full DUMPMEM.
+3. Re-map live CS for `cmp ax,50h` (LST `4B4F` ≠ live `01AD:4B4F` bytes).
+4. Agent loop: no BP while walking; DUMPMEM pre/post; cyan or equip `FFFF→0019` as success.
+
+Proven tonight: sword slot 91 (3,10), equip `0019`, soft side `FFFE`, ents type clear.
