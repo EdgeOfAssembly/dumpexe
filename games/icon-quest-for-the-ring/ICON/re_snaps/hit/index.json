@@ -1,0 +1,7 @@
+{
+  "tag": "hit",
+  "dir": "re_snaps/hit",
+  "trap": "BPINT i16ext INT 16 AH=10 CS:IP=F000:2084",
+  "regs": "AX=1007 BX=3B05 CX=0E25 DX=C3FB SI=C266 DI=39F6 BP=08D0 SP=08AB DS=01AD ES=01AD SS=16D5 CS=01AD IP=3859 FLAGS=7082",
+  "files": ["now_regs.txt","traceback.txt","int_ring.txt","int_ring.json","b800.hex","trap.txt"]
+}

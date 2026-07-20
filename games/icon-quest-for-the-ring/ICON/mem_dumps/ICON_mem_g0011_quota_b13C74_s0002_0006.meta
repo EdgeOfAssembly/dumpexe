@@ -1,0 +1,10 @@
+game=ICON
+reason=hotkey
+generation=11
+seq=6
+name=quota
+base=0x13C74
+size=0x0002
+ds=0x0E25
+resolve=ds:0E25:5A24
+t_ms=28742

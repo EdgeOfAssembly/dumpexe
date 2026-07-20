@@ -1,0 +1,7 @@
+{
+  "tag": "post2",
+  "dir": "re_snaps/post2",
+  "trap": "(none)",
+  "regs": "AX=10AE BX=3B05 CX=0E25 DX=C3FB SI=C266 DI=39F6 BP=08D0 SP=08A1 DS=01AD ES=01AD SS=16D5 CS=F000 IP=E993 FLAGS=7087",
+  "files": ["now_regs.txt","traceback.txt","int_ring.txt","int_ring.json","b800.hex","trap.txt"]
+}

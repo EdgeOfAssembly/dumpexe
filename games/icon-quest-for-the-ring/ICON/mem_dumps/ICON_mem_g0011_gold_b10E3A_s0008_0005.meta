@@ -1,0 +1,10 @@
+game=ICON
+reason=hotkey
+generation=11
+seq=5
+name=gold
+base=0x10E3A
+size=0x0008
+ds=0x0E25
+resolve=ds:0E25:2BEA
+t_ms=28742

@@ -1,0 +1,6 @@
+Input filename     = t.exe
+Output filename    = t.lst
+Format             = LST
+Passes             = 3
+uP                 = 8088
+Go

@@ -1,0 +1,10 @@
+game=ICON
+reason=hotkey
+generation=19
+seq=2
+name=map
+base=0x11424
+size=0x0F00
+ds=0x0E25
+resolve=ds:0E25:31D4
+t_ms=504112

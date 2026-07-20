@@ -1,0 +1,10 @@
+game=ICON
+reason=hotkey
+generation=11
+seq=29
+name=hero_idx
+base=0x1140E
+size=0x0002
+ds=0x0E25
+resolve=ds:0E25:31BE
+t_ms=141605

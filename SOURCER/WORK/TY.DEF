@@ -1,0 +1,6 @@
+Input filename     = testyn.exe
+Output filename    = WORK\TESTYN.LST
+Format             = LST
+Passes             = 3
+uP                 = 8088
+Go

@@ -1,0 +1,7 @@
+{
+  "tag": "pre_sword_p",
+  "dir": "re_snaps/pre_sword_p",
+  "trap": "(none)",
+  "regs": "AX=0003 BX=0000 CX=001D DX=0000 SI=5CF4 DI=5AB4 BP=08D8 SP=08B4 DS=0E25 ES=0E25 SS=16D5 CS=01AD IP=016F FLAGS=7293",
+  "files": ["now_regs.txt","traceback.txt","int_ring.txt","int_ring.json","b800.hex","trap.txt"]
+}

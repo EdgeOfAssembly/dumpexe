@@ -1,0 +1,12 @@
+game=ICON
+reason=hotkey
+generation=19
+seq=11
+mode=0x01
+base=0xB8000
+size=0x07D0
+cols=40
+rows=25
+kind=text
+t_ms=566091
+layout=char_attr_le

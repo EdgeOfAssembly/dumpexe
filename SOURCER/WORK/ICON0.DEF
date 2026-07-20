@@ -1,0 +1,43 @@
+
+                  SOURCER DEFINITION - ICON0.OVL (batch / Go)
+
+ Section 1: CONTROL INFORMATION
+
+Input filename     = WORK\ICON0.OVL
+Output filename    = WORK\ICON0.LST
+Format             = LST
+Code style         = overlay
+Passes             = 5
+uP                 = 8088
+Remark             = All
+Xref               = ON
+Header             = ICON0.OVL
+Target assembler   = MASM-5.1
+Go
+
+
+ Section 2: RANGE DEFINITION
+
+ Segments
+
+  begin      end      default      seg   seg
+ seg:off     off     ds     es     type  size
+ -------     ----    ----   ----   ----- -----
+none
+
+
+ Section 3: REFERENCE DEFINITIONS
+
+ Subroutines
+  seg:off   type & options     label           comments
+  -------   --------------     --------------  --------------
+
+
+ Locations
+  seg:off   type & options     label           comments
+  -------   --------------     --------------  --------------
+
+
+ Data Items
+  seg:off   type & options     label           comments
+  -------   --------------     --------------  --------------

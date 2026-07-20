@@ -1,0 +1,10 @@
+game=ICON
+reason=hotkey
+generation=11
+seq=41
+name=score
+base=0x11420
+size=0x0004
+ds=0x0E25
+resolve=ds:0E25:31D0
+t_ms=142937
