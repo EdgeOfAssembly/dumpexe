@@ -321,3 +321,32 @@ Proves ICON1 key dispatch CS=**01AD** IP=**4B4F** is real at runtime.
 4. `SWORD_SOUTH_STEPS` live ≈ **10–12** long holds, not just 6.
 
 Artifacts: `/tmp/icon_shots/tonight2/`
+
+---
+
+## Live mem dump proof — sword equip (2026-07-20T04:08)
+
+Expanded `mem_dump_regions` (11 regions). Pre/post DUMPMEM while walking south + P:
+
+### Proven live values (DS, ICON1 play)
+
+| Slot | Pre | Post | Meaning |
+|------|-----|------|---------|
+| **`DS:8228` equip** | `FFFF` | **`0019`** | Weapon type id (sword) |
+| **`DS:2C1A` rec20** (= entity **91**) | x=12 y=60 type=`0019` | **x=`FFFE`** y=60 type=`0019` | Soft-remove ground sword |
+| **`DS:5A9C` idx 91** | type=`0019` @ (14,62) | type=**`FFFF`** | Entity type cleared |
+| **`DS:2BEA` gold type** | `0017` | same | Gold type id |
+| **`DS:2BEC` gold count** | `0000` | same | Not picked |
+| **`DS:5A24` quota** | `0004` | same | LA.DAT line 5 |
+| **`DS:31BE` hero_idx** | `0005` | same | Hero entity index |
+| **`DS:31D0/31D2` score** | 25/25 | same | |
+
+### Geometry cross-check
+- Side x=12 = tile_x×4 = **3×4**; y=60 = tile_y×6 = **10×6** → **LA.DAT slot 91 (3,10)** confirmed live.
+- Soft path `FFFE` matches Sourcer `sub_17` weapon branch (then `sub_135` equip).
+
+### Artifacts
+```
+/tmp/icon_mem_pre/   /tmp/icon_mem_post/
+ICON/dosbox-staging.conf  mem_dump_regions=…equip,gold,ents,side…
+```
