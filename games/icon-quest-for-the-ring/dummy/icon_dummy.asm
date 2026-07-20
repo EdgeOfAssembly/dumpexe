@@ -160,11 +160,16 @@ SWORD_TILE_Y    equ     10
 SPAWN_TILE_X    equ     3
 SPAWN_TILE_Y    equ     3
 GOLD_QUOTA_LA   equ     4               ; LA.DAT line 5 (basic); ADV=8
+; Live mem dumps 2026-07-20 after sword pick:
+;   DS:8228 equip FFFF -> 0019h; side ent91 x=0C y=3C type=19 -> x=FFFE
+;   ents idx91 type 19 -> FFFF; gold type DS:2BEA=0017h; hero_idx=5
+SWORD_TYPE_ID   equ     19h
+GOLD_TYPE_ID    equ     17h
 sword_alive     db      1               ; 1 = still on ground
-sword_equipped  db      0               ; 1 = after successful P
+sword_equipped  db      0               ; 1 = after successful P (equip type 19h)
 gold_alive0     db      1               ; decorative pile (visual)
 gold_alive1     db      1
-gold_count      db      0               ; mirrors DS:2BEC idea
+gold_count      db      0               ; mirrors DS:2BEC
 gold_quota      db      GOLD_QUOTA_LA
 steps_south     db      0               ; cam downs since reset (proxy for tile y)
 
