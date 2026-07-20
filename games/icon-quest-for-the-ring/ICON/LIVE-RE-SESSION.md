@@ -217,3 +217,70 @@ paused title='[PAUSED] ICON.EXE - 100000 cycles/ms - to capture the mouse press 
 SHOT /tmp/icon_shots/re_grid/024022_paused_after_sword.png (67870B)
 SHOT /tmp/icon_shots/re_grid/024023_final.png (67861B)
 done sword pathfind sequence
+
+---
+
+## Night session 2026-07-20T03:38–03:50 (agent RE toolkit live)
+
+### Tooling proven
+
+| Feature | Result |
+|---------|--------|
+| `controlsocket` KEY/KEYDOWN | Works; no xdotool |
+| `OVERLAY on` 40×25 | Works (OpenGL path) |
+| `SNAPSHOT` / `DIFF` | Works; packs under `ICON/re_snaps/<tag>/` |
+| `TRACEBACK` / `INTRING` | Works; INT 15h AH=4Fh scancodes live |
+| `WATCH ds:OFF+SZ` | Arms; phys ranges resolve from live DS=0E25 |
+| `BP CS:IP` | **Broken for bare `01AD:4B4F`** — lowercased → octal parse fail. Use `0x1AD:0x4B4F` (fixed in fork `parse_hex_u16`) |
+| `CLEAR` | Did **not** clear sticky `g_last_trap` (fixed in fork) |
+| `BPINT 16` | Parsed as **decimal** → INT 10h. Use `0x16` |
+| CAPTURE rendered | Filmstrip under `capture/` + `/tmp/icon_shots/tonight/` |
+
+### Sourcer (subagent) — pickup + LA.DAT (high confidence)
+
+**Pickup chain (ICON1 CS offsets):**
+```
+4AF0  key |= fold: if >= 'a' then AND 5Fh   ; p→P
+4B1A  cmp 20h → Space attack (sub_122)
+4B4F  cmp 50h → P
+4B57  call sub_17  → body @1549  (AABB scan, real pickup)
+4B5A  call sub_135 → body @503E  (equip bookkeeping if 2C1A+96h == FFFE)
+```
+
+**LA.DAT (basic game):**
+| Field | Value | Meaning |
+|-------|-------|---------|
+| spawn | `3 3` | tile |
+| origin | `2880 2400` | world |
+| line 5 | **`4`** | **gold quota** (`DS:5A24`), NOT object count |
+| slot 91 | **`3 10`** | **sword** (type `DS:810A`) |
+| slots 93–96 | coords | red wand / blue wand / armor / shield |
+| slot 101 | `86 67` | Icon marker coords |
+
+Gold piles are **ICON1 mass-init** (type `DS:2BEA`, counter `DS:2BEC`), not DAT pairs.
+
+### Live play
+
+- to-play + overlay + south path: sword remains on ground in **rendered** shots.
+- B800 / SNAPSHOT B800: **hero only** among sprites; sword/gold/rats **absent** from page-0 dumps (INT 10h AH=05 page flips observed).
+- INT 15h `AL=19h` (P make) / `2Ah` (shift) delivered; pickup still not confirmed in DS/B800 (not on-tile AABB and/or wrong dump page).
+- Hero always B800 col8 rows20–24 even when visual is mid-screen → camera/page vs dump mismatch.
+
+### Dummy v8
+
+Updated `dummy/icon_dummy.asm` + rebuilt `icon_dummy.com`:
+- Ground sword/gold (visual approx), **P** pick when steps_south≥6, **G** gold demo, HUD `G:n/4` + `S` if equipped.
+- Comments document Sourcer DS tables / LA.DAT facts.
+
+### Fork fixes landed (need rebuild+install for agent_re)
+
+1. `parse_csip` → always-hex (`01AD:4B4F` works after lower)
+2. `AgentRe_ClearAll` clears `g_last_trap`
+
+### Artifacts
+
+```
+/tmp/icon_shots/tonight/          # rendered filmstrip
+ICON/re_snaps/                    # SNAPSHOT packs
+ICON/LIVE-RE-SESSION.md           # this notebook
+```

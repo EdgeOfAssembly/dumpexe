@@ -74,17 +74,19 @@ OVL1_RECS       equ     399
 ; ---------------------------------------------------------------------------
 ; Messages (shown in mode 03 between stages or on error/exit)
 ; ---------------------------------------------------------------------------
-msg_banner      db      'ICON dummy loader v7 - terrain + hero states',0Dh,0Ah
-                db      'TITLE/ANI Esc; PLAY: arrows, 1-4 hero, R reset cam, Esc quit',0Dh,0Ah
-                db      '1=ok(85) 2=hurt bat 8Eh yel 3=crit 8Ch 4=dead skeleton',0Dh,0Ah,'$'
+msg_banner      db      'ICON dummy loader v8 - terrain + hero + objects (RE 2026-07-20)',0Dh,0Ah
+                db      'TITLE/ANI Esc; PLAY: arrows cam, 1-4 hero, P pick, R reset, Esc quit',0Dh,0Ah
+                db      '1=ok 2=hurt(8Eh) 3=crit 4=dead; P=sword (LA.DAT tile 3,10); gold HUD',0Dh,0Ah,'$'
 msg_stage_t     db      '[stage] TITLE (TITLES.BIN multi-frame loop)',0Dh,0Ah,'$'
 msg_stage_a     db      '[stage] ANI (ANIS.BIN multi-frame loop)',0Dh,0Ah,'$'
 msg_stage_0     db      '[stage] ICON0.OVL FCB block-read',0Dh,0Ah,'$'
 msg_stage_as    db      '[stage] BA/BB bake + LA.MAP RLE + LA/MA.DAT',0Dh,0Ah,'$'
 msg_stage_rt    db      '[stage] assets: STAMPS.BIN + MAPRT.BIN (parity)',0Dh,0Ah,'$'
 msg_stage_1     db      '[stage] ICON1.OVL FCB block-read',0Dh,0Ah,'$'
-msg_stage_p     db      '[stage] PLAY (terrain + hero; keys 1-4)',0Dh,0Ah,'$'
+msg_stage_p     db      '[stage] PLAY (terrain + objects + hero; P/1-4)',0Dh,0Ah,'$'
 msg_dead        db      '  You Died!  (4=skeleton; 1=stand)  $'
+msg_got_sword   db      'Got sword! $'
+msg_got_gold    db      'Gold+1 $'
 msg_no_title    db      '(no TITLES.BIN/TITLE.BIN - blank title)',0Dh,0Ah,'$'
 msg_no_ani      db      '(no ANIS.BIN/ANI.BIN - blank ani)',0Dh,0Ah,'$'
 msg_no_ovl0     db      'FCB open ICON0.OVL failed (continuing).',0Dh,0Ah,'$'
@@ -144,6 +146,27 @@ ATTR_OK         equ     85h             ; healthy triangle (blink + magenta-ish)
 ATTR_HURT       equ     8Eh             ; bat hit: blink + yellow fg (player report + 8Eh dumps)
 ATTR_CRIT       equ     8Ch             ; blink + light red (guess, same blink bit)
 ATTR_DEAD       equ     0Eh             ; skeleton yellow-ish (no blink)
+;
+; --- Level A object RE (Sourcer ICON0/ICON1 + LA.DAT, 2026-07-20) ---
+; LA.DAT header: spawn 3 3; origin 2880 2400; line5 gold_quota=4 (not object count)
+; 11 fixed-type slots (indices 91..101); slot 91 = sword at tile (3,10)
+; Gold piles: ICON1 mass-init type DS:2BEA; counter DS:2BEC; quota DS:5A24
+; Pickup: key P (AX=50h after AND 5Fh fold) -> sub_17 @1549 (AABB) -> sub_135
+; Entity rec DS:5A9C stride 6 (x,y,type); side DS:2C1A stride 6
+; B800 dumps miss sword/gold sprites (page flip / sprite layer) — ground art
+; below is VISUAL_APPROX from live rendered shots, not B800 cell proof.
+SWORD_TILE_X    equ     3
+SWORD_TILE_Y    equ     10
+SPAWN_TILE_X    equ     3
+SPAWN_TILE_Y    equ     3
+GOLD_QUOTA_LA   equ     4               ; LA.DAT line 5 (basic); ADV=8
+sword_alive     db      1               ; 1 = still on ground
+sword_equipped  db      0               ; 1 = after successful P
+gold_alive0     db      1               ; decorative pile (visual)
+gold_alive1     db      1
+gold_count      db      0               ; mirrors DS:2BEC idea
+gold_quota      db      GOLD_QUOTA_LA
+steps_south     db      0               ; cam downs since reset (proxy for tile y)
 
 ; ---------------------------------------------------------------------------
 main:
@@ -399,7 +422,10 @@ stage_play:
 main_loop:
         call    clear_b800
         call    blit_viewport
+        call    blit_objects            ; ground sword/gold before hero
         call    blit_hero
+        call    blit_equip              ; hand blade after hero body
+        call    blit_hud                ; gold count strip
 
         xor     ah, ah
         int     16h
@@ -407,6 +433,7 @@ main_loop:
         je      do_exit
         cmp     ah, 48h
         je      key_up
+        ; scancode 50h = Down arrow — must check before ASCII 'P' path
         cmp     ah, 50h
         je      key_dn
         cmp     ah, 4Bh
@@ -425,17 +452,28 @@ main_loop:
         je      key_h2
         cmp     al, '4'
         je      key_h3
+        ; ICON1: key &= 5Fh then cmp 50h → P/p both pick
+        mov     bl, al
+        and     bl, 5Fh
+        cmp     bl, 'P'
+        je      key_pickup
+        cmp     bl, 'G'
+        je      key_gold_demo
         jmp     main_loop
 
 key_up:
         cmp     word ptr cam_y, 0
         je      main_loop
         dec     word ptr cam_y
+        cmp     byte ptr steps_south, 0
+        je      main_loop
+        dec     byte ptr steps_south
         jmp     main_loop
 key_dn:
         cmp     word ptr cam_y, 96
         jae     main_loop
         inc     word ptr cam_y
+        inc     byte ptr steps_south
         jmp     main_loop
 key_lf:
         cmp     word ptr cam_x, 0
@@ -448,6 +486,7 @@ key_rt:
         inc     word ptr cam_x
         jmp     main_loop
 key_rst:
+        mov     byte ptr steps_south, 0
         cmp     byte ptr mode_rt, 0
         je      rst_file
         mov     word ptr cam_x, CAM_X0_RT
@@ -456,6 +495,34 @@ key_rst:
 rst_file:
         mov     word ptr cam_x, CAM_X0_FILE
         mov     word ptr cam_y, CAM_Y0_FILE
+        jmp     main_loop
+
+; P: pick sword if "near" (steps_south >= 6 ≈ spawn y+6..7 → tile y=10)
+; Matches STARTUP-PROMPTS / LA.DAT slot 91 (3,10). AABB not fully simmed.
+key_pickup:
+        cmp     byte ptr sword_alive, 0
+        je      main_loop
+        cmp     byte ptr steps_south, 6
+        jb      main_loop               ; arm-reach only if not far enough south
+        mov     byte ptr sword_alive, 0
+        mov     byte ptr sword_equipped, 1
+        jmp     main_loop
+
+; G: demo gold pickup (real gold needs on-tile AABB vs type 2BEA)
+key_gold_demo:
+        mov     al, gold_count
+        cmp     al, gold_quota
+        jae     main_loop
+        cmp     byte ptr gold_alive0, 0
+        je      gold_try1
+        mov     byte ptr gold_alive0, 0
+        inc     byte ptr gold_count
+        jmp     main_loop
+gold_try1:
+        cmp     byte ptr gold_alive1, 0
+        je      main_loop
+        mov     byte ptr gold_alive1, 0
+        inc     byte ptr gold_count
         jmp     main_loop
 
 key_h0:
@@ -1132,6 +1199,124 @@ hero_pose_dead:
         db      24, 8, TRI_CH, ATTR_DEAD
         db      24, 9, 0DEh, 06h
         db      0FFh
+
+; Equipped: cyan blade in hand (VISUAL_APPROX from live shots after sword path)
+hero_pose_equip_extra:
+        db      22, 9, 0C4h, 0Bh        ; cyan bar at hand
+        db      22, 10, 10h, 0Bh        ; tip
+        db      0FFh
+
+; ---------------------------------------------------------------------------
+; blit_objects — ground items (VISUAL_APPROX; not in default B800 dumps)
+; Sword: LA.DAT slot 91 tile (3,10) = ~6-7 south of spawn; screen-fixed approx
+; Gold: ICON1 type 2BEA piles (positions from live shots, not DAT pairs)
+; ---------------------------------------------------------------------------
+blit_objects:
+        push    es
+        push    si
+        push    ax
+        mov     ax, 0B800h
+        mov     es, ax
+
+        cmp     byte ptr sword_alive, 0
+        je      obj_gold
+        mov     si, offset sword_ground_pose
+        call    hero_draw_pose          ; same (y,x,ch,attr) format
+
+obj_gold:
+        cmp     byte ptr gold_alive0, 0
+        je      obj_gold1
+        mov     si, offset gold_pose0
+        call    hero_draw_pose
+obj_gold1:
+        cmp     byte ptr gold_alive1, 0
+        je      obj_done
+        mov     si, offset gold_pose1
+        call    hero_draw_pose
+obj_done:
+        pop     ax
+        pop     si
+        pop     es
+        ret
+
+; equip after hero so blade stays visible
+blit_equip:
+        push    es
+        push    si
+        push    ax
+        cmp     byte ptr sword_equipped, 0
+        je      beq_ret
+        cmp     byte ptr hero_state, 3
+        je      beq_ret
+        mov     ax, 0B800h
+        mov     es, ax
+        mov     si, offset hero_pose_equip_extra
+        call    hero_draw_pose
+beq_ret:
+        pop     ax
+        pop     si
+        pop     es
+        ret
+
+; VISUAL_APPROX: horizontal blade south of hero col (live filmstrip)
+sword_ground_pose:
+        db      16, 7, 0C4h, 08h        ; hilt dark
+        db      16, 8, 0C4h, 0Bh        ; cyan blade
+        db      16, 9, 0C4h, 0Bh
+        db      16, 10, 10h, 0Bh        ; tip
+        db      0FFh
+
+; VISUAL_APPROX: coin piles (yellow/brown) — live shots lower + mid
+gold_pose0:
+        db      14, 12, 07h, 0Eh        ; · yellow
+        db      14, 13, 04h, 06h        ; ♦ brown
+        db      15, 12, 04h, 0Eh
+        db      15, 13, 07h, 06h
+        db      0FFh
+gold_pose1:
+        db      11, 18, 07h, 0Eh
+        db      11, 19, 04h, 06h
+        db      12, 18, 04h, 0Eh
+        db      0FFh
+
+; ---------------------------------------------------------------------------
+; blit_hud — "G:n/q" gold counter (DS:2BEC / DS:5A24 concept)
+; ---------------------------------------------------------------------------
+blit_hud:
+        push    es
+        push    ax
+        push    bx
+        push    di
+        mov     ax, 0B800h
+        mov     es, ax
+        xor     di, di                  ; row 0 col 0
+        mov     ah, 0Eh                 ; yellow
+        mov     al, 'G'
+        mov     es:[di], ax
+        mov     al, ':'
+        mov     es:[di+2], ax
+        mov     al, gold_count
+        add     al, '0'
+        mov     es:[di+4], ax
+        mov     al, '/'
+        mov     es:[di+6], ax
+        mov     al, gold_quota
+        add     al, '0'
+        mov     es:[di+8], ax
+        ; S if sword equipped
+        cmp     byte ptr sword_equipped, 0
+        je      hud_done
+        mov     al, ' '
+        mov     es:[di+10], ax
+        mov     al, 'S'
+        mov     ah, 0Bh                 ; cyan
+        mov     es:[di+12], ax
+hud_done:
+        pop     di
+        pop     bx
+        pop     ax
+        pop     es
+        ret
 
 ; ---------------------------------------------------------------------------
 ; Buffers (after code)

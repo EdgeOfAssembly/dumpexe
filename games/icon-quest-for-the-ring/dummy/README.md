@@ -1,11 +1,35 @@
-# ICON dummy loader (v7)
+# ICON dummy loader (v8)
 
 DOS COM that mirrors **ICON.EXE load staging** in assembly, then runs the
 proven terrain play loop. Not a full Pascal MT+ reimplementation — same
 **order of modes, FCB names, and ESC-skippable intros**, then PLAY.
 
 **v6:** file-mode `BA.DAT` bake + `LA.MAP` RLE = runtime terrain parity.  
-**v7:** hero pose from live overworld dump; keys **1–4** = ok / hurt / crit / dead.
+**v7:** hero pose from live overworld dump; keys **1–4** = ok / hurt / crit / dead.  
+**v8 (2026-07-20 RE night):** ground **sword** / **gold** (visual approx), **P** pickup, gold HUD; Sourcer-backed `LA.DAT` facts.
+
+### PLAY keys (v8)
+
+| Key | Action |
+|-----|--------|
+| Arrows | Camera |
+| **P** / **p** | Pick sword if `steps_south ≥ 6` (spawn→tile y≈10) |
+| **G** | Demo gold pick (+1 toward quota 4) |
+| **1–4** | Hero ok / hurt / crit / dead |
+| **R** | Reset cam + step counter |
+| Esc | Quit |
+
+### Proven RE wired in (not invented)
+
+| Fact | Source |
+|------|--------|
+| Sword tile **(3,10)** | `LA.DAT` slot 91 type `DS:810A` (Sourcer ICON0) |
+| Gold quota **4** | `LA.DAT` line 5 → `DS:5A24` (not object count) |
+| Pickup **P** (`ax=50h`, lower folded `AND 5Fh`) | ICON1 `4B4F` → `sub_17` @`1549` → `sub_135` |
+| Gold type/counter | `DS:2BEA` / `DS:2BEC` (ICON1 gold init) |
+| Hero B800 cells | live dump g0011 |
+
+Ground sword/gold glyphs are **VISUAL_APPROX** from rendered shots — default B800 dumps still omit those sprites (display-page / sprite layer).
 
 ## Visual order (matches real ICON.EXE)
 

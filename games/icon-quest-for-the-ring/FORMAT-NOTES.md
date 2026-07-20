@@ -420,7 +420,9 @@ Automation often **misses** the hurt frame if F10 is not fired during the flash 
 | Art | DR **`sword`** 6×3 sprite (`0x60` cells), not MAP stamp |
 | Drop | **`D`** |
 
-`LA.DAT` object pairs after count `4` still *hypothesis* (type/params); ground path is south-of-spawn + **P**.
+`LA.DAT` line **`4` is gold quota** (`DS:5A24`), not object count (RE 2026-07-20 Sourcer).  
+Fixed **11 slots** (entity 91–101): slot **91 sword @ tile (3,10)**; gold piles from ICON1 init (`DS:2BEA`/`2BEC`), not DAT pairs.  
+Pickup: `cmp ax,50h` @ ICON1 `4B4F` → **`sub_17` @1549** (real) then `sub_135` @503E.
 
 ### Level A ground objects (live 2026-07-20 + DR)
 
