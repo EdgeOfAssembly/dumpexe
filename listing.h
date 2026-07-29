@@ -399,20 +399,25 @@ static inline void listing_deliver(const Options& opts,
             std::cout << "\n";
     }
 
-    // Default-on .asm file (cli-design: only --no-asm-file disables)
-    if (opts.writeAsmFile)
+    // File product: default <stem>.asm when writeAsmFile; always honor explicit -o
+    // (--no-asm-file only suppresses the *default* path, not an explicit -o).
+    const bool want_file =
+        !opts.outputPath.empty() || opts.writeAsmFile;
+    if (want_file)
     {
         std::string path = opts.outputPath.empty()
                                ? listing_default_asm_path(input_path)
                                : opts.outputPath;
         if (path == "-")
         {
-            // explicit stdout only already done
             std::cerr << std::format(
                 "listing: {} procs, {} insns (stdout only, -o -)\n", n_procs,
                 n_insns);
             return;
         }
+        // --no-asm-file with no -o: skip
+        if (opts.outputPath.empty() && !opts.writeAsmFile)
+            return;
         std::ofstream f(path);
         if (!f)
         {
