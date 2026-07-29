@@ -7,7 +7,7 @@
 
 /// Print version information to stdout
 static inline void print_version() {
-    std::cout << "dumpexe 1.3 — 16-bit MS-DOS Binary Analyzer & Multi-Pass Listing\n"
+    std::cout << "dumpexe 1.4 — 16-bit MS-DOS Binary Analyzer & Multi-Pass Listing\n"
                  "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n"
                  "License: GPLv2 | Commercial (contact author)\n"
                  "Built with Capstone disassembly support: yes\n";
@@ -41,6 +41,19 @@ static inline bool read_entire_file(const std::string& filename,
     return true;
 }
 
+/// Load-image IP of the MZ entry (handles com2exe CS=FFF0 IP=0100 → IP 0).
+static inline uint16_t mz_entry_image_ip(const MZHeader& header)
+{
+    const int32_t delta =
+        static_cast<int32_t>(static_cast<int16_t>(header.cs)) * 16 +
+        static_cast<int32_t>(header.ip);
+    if (delta <= 0)
+        return 0;
+    if (delta > 0xFFFF)
+        return 0xFFFF;
+    return static_cast<uint16_t>(delta);
+}
+
 /// Shared MZ image window for CFG (CS-relative).
 static inline void mz_cfg_window(const MZHeader& header,
                                  const ExeSizes& sizes,
@@ -53,13 +66,11 @@ static inline void mz_cfg_window(const MZHeader& header,
     const size_t img_len = (sizes.loadImageSize > 0)
         ? static_cast<size_t>(sizes.loadImageSize)
         : 0;
-    cs_seg = static_cast<uint16_t>(
-        opts.loadBase + static_cast<uint16_t>(header.cs));
-    size_t cs_base_in_image = 0;
-    if (header.cs > 0)
-        cs_base_in_image = static_cast<size_t>(static_cast<uint16_t>(header.cs)) * 16u;
-    cfg_file_off = img_off + cs_base_in_image;
-    cfg_len = (img_len > cs_base_in_image) ? img_len - cs_base_in_image : 0;
+    // Prefer loadBase as CS for image[0]=IP0 (works for CS=0 and com2exe).
+    cs_seg = opts.loadBase;
+    (void)header;
+    cfg_file_off = img_off;
+    cfg_len = img_len;
 }
 
 int main(int argc, char* argv[]) {
@@ -123,6 +134,16 @@ int main(int argc, char* argv[]) {
                 pascal_mt_print_report(mt_rep);
         }
 
+        // COM-in-EXE / CuteMouse / assembler toolchain (default ON)
+        ToolchainReport tc_rep{};
+        if (opts.toolchainDetect)
+        {
+            tc_rep = toolchain_analyze(fileData, header,
+                                       static_cast<size_t>(sizes.headerSizeBytes));
+            if (human)
+                toolchain_print_report(tc_rep);
+        }
+
         std::vector<RelocEntry> relocs;
         if (human)
         {
@@ -163,8 +184,8 @@ int main(int argc, char* argv[]) {
             size_t cfg_file_off = 0, cfg_len = 0;
             uint16_t cs_seg = 0;
             mz_cfg_window(header, sizes, cfg_file_off, cfg_len, cs_seg, opts);
-            listing_run(fileData, cfg_file_off, cfg_len, header.ip, cs_seg, opts,
-                        opts.filename);
+            listing_run(fileData, cfg_file_off, cfg_len,
+                        mz_entry_image_ip(header), cs_seg, opts, opts.filename);
         }
 
         // CFG: human --cfg, Graphviz --cfg-dot, or always under --json (scripting)
@@ -179,7 +200,7 @@ int main(int argc, char* argv[]) {
             if (opts.jsonOut && !opts.showCfg)
                 cfg_opts.showCfg = false; // DOT/JSON only — no human CFG dump
             cfg_g = cfg_analyze_image(fileData, cfg_file_off, cfg_len,
-                                      header.ip, cs_seg, cfg_opts);
+                                      mz_entry_image_ip(header), cs_seg, cfg_opts);
             cfg_ran = true;
         }
 

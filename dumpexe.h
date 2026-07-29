@@ -41,6 +41,8 @@
 #include "com_analysis.h"
 #include "strings.h"
 #include "pascal_mt.h"
+#include "toolchain.h"
+#include "symbols.h"
 #include "json_report.h"
 
 #endif // DUMPEXE_H

@@ -33,6 +33,7 @@
 #include "cfg.h"
 #include "int_annotate.h"
 #include "options.h"
+#include "symbols.h"
 
 //=============================================================================
 // Paths
@@ -70,7 +71,8 @@ static inline std::string listing_symbol_name(uint16_t ip)
 static inline void listing_collect_symbols(const CfgGraph& g,
                                            uint16_t entry_ip,
                                            std::map<uint16_t, std::string>& sym,
-                                           std::set<uint16_t>& proc_starts)
+                                           std::set<uint16_t>& proc_starts,
+                                           const SymbolMap* external = nullptr)
 {
     auto add = [&](uint16_t ip, std::string_view why)
     {
@@ -84,8 +86,19 @@ static inline void listing_collect_symbols(const CfgGraph& g,
             sym[ip] = listing_symbol_name(ip);
     };
 
+    // External ground-truth names first (CuteMouse .sym, TLINK maps, …)
+    if (external)
+    {
+        for (const auto& kv : external->by_ip)
+        {
+            sym[kv.first] = kv.second;
+            proc_starts.insert(kv.first);
+        }
+    }
+
     add(entry_ip, "entry");
-    sym[entry_ip] = listing_symbol_name(entry_ip); // ensure
+    if (!sym.count(entry_ip))
+        sym[entry_ip] = listing_symbol_name(entry_ip);
 
     for (const auto& kv : g.blocks)
     {
@@ -198,22 +211,26 @@ static inline std::string listing_emit_text(const CfgGraph& g,
                                             const Options& opts,
                                             const std::string& source_name,
                                             size_t& n_procs,
-                                            size_t& n_insns)
+                                            size_t& n_insns,
+                                            const SymbolMap* external = nullptr)
 {
     std::map<uint16_t, std::string> sym;
     std::set<uint16_t> proc_starts;
-    listing_collect_symbols(g, entry_ip, sym, proc_starts);
+    listing_collect_symbols(g, entry_ip, sym, proc_starts, external);
     n_procs = proc_starts.size();
     n_insns = 0;
 
     std::ostringstream out;
     out << "; dumpexe multi-pass listing (not single-stream Capstone only)\n";
     out << std::format("; source: {}\n", source_name);
-    out << std::format("; CS={:04X}h  entry=func_{:04X}  blocks={}  symbols={}\n",
+    out << std::format("; CS={:04X}h  entry={:04X}h  blocks={}  symbols={}\n",
                        g.cs_seg, entry_ip, g.blocks.size(), sym.size());
-    out << "; labels: func_<IP> at entry, call/table targets, Pascal frames\n";
+    out << "; labels: func_<IP> (+ names from --map / <stem>.sym when present)\n";
     out << "; call/jmp/jcc near targets rewritten to labels when known\n";
     out << "; blank line after procedure regions ending in ret/retf/iret\n";
+    if (external && !external->source_path.empty())
+        out << std::format("; symbol map: {} ({} names)\n", external->source_path,
+                           external->count);
     out << ";\n\n";
 
     std::vector<const CfgBlock*> order;
@@ -376,7 +393,10 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
         return true;
     }
 
-    out_text = listing_emit_text(g, entry_ip, opts, source_name, n_procs, n_insns);
+    SymbolMap sm = symbols_load_for_input(opts, source_name);
+    const SymbolMap* ext = sm.count ? &sm : nullptr;
+    out_text =
+        listing_emit_text(g, entry_ip, opts, source_name, n_procs, n_insns, ext);
     return true;
 }
 

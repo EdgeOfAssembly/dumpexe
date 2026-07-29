@@ -98,6 +98,19 @@ else
   echo "SKIP icon tests (no ICON.EXE)"
 fi
 
+# CuteMouse fixture (JWASM/TASM + com2exe ground truth)
+CTM="$ROOT/games/cutemouse/bin/ctmouse.exe"
+if [[ -f "$CTM" ]]; then
+  check ctm_toolchain bash -c "$BIN '$CTM' 2>&1 | grep -q 'COM-in-EXE'"
+  check ctm_cutemouse bash -c "$BIN '$CTM' 2>&1 | grep -q 'CuteMouse'"
+  check ctm_no_pascal bash -c "! $BIN '$CTM' 2>&1 | grep -q '=== Pascal MT+'"
+  check ctm_sym_start bash -c "$BIN -d --no-asm-file '$CTM' 2>/dev/null | grep -qE '^start:'"
+  check help_no_toolchain bash -c "$BIN -h 2>&1 | grep -q -- '--no-toolchain'"
+  check help_map bash -c "$BIN -h 2>&1 | grep -q -- '--map='"
+else
+  echo "SKIP cutemouse tests"
+fi
+
 echo "---"
 echo "passed=$pass failed=$fail"
 [[ "$fail" -eq 0 ]]

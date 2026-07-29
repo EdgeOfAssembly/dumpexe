@@ -1,0 +1,5 @@
+# dumpexe symbol map — load-image IP (0 = start of MZ load image)
+# CuteMouse 2.1b4 ground truth (JWASM/TASM + com2exe)
+# Addresses are image IPs as used by dumpexe listing/CFG, not COM file offsets.
+0000 start
+# COM-style org 100h view: image IP 0 == traditional COM 0100h entry
