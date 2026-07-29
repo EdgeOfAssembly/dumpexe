@@ -80,6 +80,9 @@ struct Options {
     std::string cfgDotPath;         ///< --cfg-dot=FILE  Graphviz DOT export (opt-in)
     bool writeAsmFile = true;       ///< write <stem>.asm on -d/-a (default ON)
     std::string outputPath;         ///< -o/--output single path for .asm (optional)
+    bool toolchainDetect = true;    ///< COM-in-EXE / CuteMouse / etc. (default ON)
+    bool autoMap = true;            ///< auto-load <stem>.sym/.map (default ON)
+    std::string mapPath;            ///< --map=FILE explicit symbol map
 
     // --- Simulation controls ---
     /// Max instructions to execute (0 = default: 1_000_000, or 64 if --trace
@@ -358,6 +361,16 @@ struct Options {
             } else if (arg == "--no-asm-file") {
                 // Default ON when disassembling: only provide disable switch
                 writeAsmFile = false;
+            } else if (arg == "--no-toolchain") {
+                toolchainDetect = false;
+            } else if (arg == "--no-map") {
+                autoMap = false;
+            } else if (arg.starts_with("--map=")) {
+                mapPath = std::string(arg.substr(6));
+                if (mapPath.empty()) {
+                    std::cerr << "Error: --map= requires a path\n";
+                    return false;
+                }
             } else if (arg == "-o" || arg == "--output") {
                 if (i + 1 >= argc) {
                     std::cerr << "Error: " << arg << " requires a path\n";
@@ -563,6 +576,9 @@ static inline void show_usage(const char* progname) {
         "  -a, --all           Show all sections (reloc + hex + disasm + strings)\n"
         "  --strings           Extract Pascal length-prefixed + CALL-inline + ASCIIZ strings\n"
         "  --no-pascal-mt      Disable Pascal MT+ 3.1.1 detect/annotate (default: on)\n"
+        "  --no-toolchain      Disable COM-in-EXE / CuteMouse / assembler detect (default: on)\n"
+        "  --map=FILE          Load symbol map for listing (IP name); disables need for auto\n"
+        "  --no-map            Do not auto-load <stem>.sym / <stem>.map (default: auto on)\n"
         "  --json              Machine-readable JSON report on stdout (default: off)\n"
         "  --cfg-dot=FILE      Write Graphviz DOT of CFG to FILE (default: off)\n"
         "  -n, --no-int-annotations  Suppress INT annotation comments in disassembly\n"
