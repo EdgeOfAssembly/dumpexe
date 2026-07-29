@@ -1,49 +1,32 @@
 # ICON RE campaign status
 
-**Started:** 2026-07-29  
-**Checkpoint:** `checkpoint/20260729T205337Z-icon-re-campaign` @ dumpexe `d9aee76`
+**Updated:** 2026-07-30T00:40Z
+**Checkpoint:** `checkpoint/20260729T212940Z-icon-full-re` @ e410c23 (+ pending FEATURE commits)
 
 ## Goals
 1. Full RE → UASM rebuild of ICON
 2. Professionalize dumpexe (CLI RE)
 
-## Done this session
-- [x] pmem orient
-- [x] File inventory + SHA256 (`analysis/INVENTORY.md`)
-- [x] GOAL.md
-- [x] dumpexe `-a --callgraph --subroutines` on ICON.EXE + ICON0/1/2.OVL
-- [x] Git checkpoint before campaign
+## Checklist (plan)
+- [x] Checkpoint git; inventory; pmem seed
+- [x] Fingerprint DB (`analysis/fingerprint/mt_fingerprint_db.json`, 60 matches)
+- [x] Static suite complete (dumpexe headers/strings, r2 static, Ghidra project all 4 MZ)
+- [x] Dynamic play path (title → legend → CGA overworld under DOSBox+Xmux)
+- [x] Jump-table + function map (`function_map.json` 83 procs; Ghidra labels applied)
+- [x] UASM rebuild + make test + push (icon_dummy → DUMMY.COM runs play terrain)
 
-## dumpexe subroutine counts
-| Binary | Subs extracted |
-|--------|----------------|
-| ICON.EXE | 139 |
-| ICON0.OVL | 94 |
-| ICON1.OVL | 58 |
-| ICON2.OVL | 101 |
+## Evidence paths
+| Gate | Path |
+|------|------|
+| Fingerprint | `analysis/fingerprint/mt_fingerprint_db.json` |
+| Function map | `analysis/function_map.json`, `FUNCTION-MAP.md` |
+| Ghidra labels | `analysis/ghidra/LABELS-APPLIED.md` |
+| Play path | `analysis/dynamic/playpath/` |
+| Dummy run | `analysis/dynamic/dummy-run/dummy2-t*.png` |
+| dumpexe tests | `make test` → 8/8 |
+| Spice86 | `analysis/dynamic/spice86/` |
 
-## Confirmed (static)
-- All four MZ: header 200h, CS:IP 0:0, 0 relocs, Pascal MT+ string
-- Entry: `E8 xx xx` CALL runtime then segment table words at CS+3
-- ICON.EXE strings: `ICON 1.1`, `icon0.ovl`, `Pascal MT+ Error`
-
-## Next
-- [ ] r2 deep dive + xrefs on chain loader
-- [ ] Ghidra 12 project for all 4 images
-- [ ] DOSBox+Xmux smoke (use existing auto scripts carefully)
-- [ ] dumpexe FEATURE backlog from gap analysis
-- [ ] Extend dummy/ UASM toward real entry/runtime
-
-## Outputs
-- `analysis/dumpexe/{ICON,ICON0,ICON1,ICON2}/full.txt` + `subs/`
-- `analysis/INVENTORY.md`
-- `analysis/DUMPEXE-GAP-ANALYSIS.md` (explore agent)
-
-## 2026-07-30 continue
-- [x] FEATURE v1: `--strings` (Pascal CALL-inline + length-prefixed + ASCIIZ)
-- [x] `make test` CLI contracts (8/8)
-- [x] Pushed `de94e6e` to origin/main
-- [x] String dumps for all 4 MZ images
-- [ ] Jump table @ 0090h map
-- [ ] Ghidra project
-- [ ] DOSBox live smoke
+## SPECTATOR
+```
+SPECTATOR: xmux attach icon-re --no-reconnect
+```

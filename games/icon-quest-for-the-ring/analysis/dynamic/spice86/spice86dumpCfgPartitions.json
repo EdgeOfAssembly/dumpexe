@@ -1,0 +1,345 @@
+{
+  "partitions": [
+    {
+      "id": 1,
+      "kind": "observed",
+      "name": "entry",
+      "blocks": [
+        58
+      ],
+      "entries": [
+        {
+          "block": 58,
+          "address": "017D:0000",
+          "kind": "executionContextEntry"
+        },
+        {
+          "block": 58,
+          "address": "017D:0000",
+          "kind": "functionEntry"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "kind": "observed",
+      "name": "unknown",
+      "blocks": [
+        59,
+        69,
+        67,
+        98
+      ],
+      "entries": [
+        {
+          "block": 59,
+          "address": "017D:652B",
+          "kind": "functionEntry"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "kind": "observed",
+      "name": "unknown",
+      "blocks": [
+        74
+      ],
+      "entries": [
+        {
+          "block": 74,
+          "address": "017D:655B",
+          "kind": "functionEntry"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "kind": "observed",
+      "name": "provided_interrupt_handler_8",
+      "blocks": [
+        2,
+        3,
+        5,
+        7
+      ],
+      "entries": [
+        {
+          "block": 2,
+          "address": "F000:0006",
+          "kind": "executionContextEntry"
+        },
+        {
+          "block": 2,
+          "address": "F000:0006",
+          "kind": "functionEntry"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "kind": "observed",
+      "name": "provided_interrupt_handler_9",
+      "blocks": [
+        10,
+        11
+      ],
+      "entries": [
+        {
+          "block": 10,
+          "address": "F000:0011",
+          "kind": "executionContextEntry"
+        },
+        {
+          "block": 10,
+          "address": "F000:0011",
+          "kind": "functionEntry"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "kind": "observed",
+      "name": "provided_interrupt_handler_70",
+      "blocks": [
+        14,
+        15
+      ],
+      "entries": [
+        {
+          "block": 14,
+          "address": "F000:0057",
+          "kind": "executionContextEntry"
+        },
+        {
+          "block": 14,
+          "address": "F000:0057",
+          "kind": "functionEntry"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "kind": "observed",
+      "name": "provided_interrupt_handler_74",
+      "blocks": [
+        18,
+        21,
+        25
+      ],
+      "entries": [
+        {
+          "block": 18,
+          "address": "F000:005D",
+          "kind": "executionContextEntry"
+        },
+        {
+          "block": 18,
+          "address": "F000:005D",
+          "kind": "functionEntry"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "kind": "observed",
+      "name": "provided_interrupt_handler_B",
+      "blocks": [
+        34,
+        35
+      ],
+      "entries": [
+        {
+          "block": 34,
+          "address": "F000:0067",
+          "kind": "executionContextEntry"
+        },
+        {
+          "block": 34,
+          "address": "F000:0067",
+          "kind": "functionEntry"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "kind": "observed",
+      "name": "provided_interrupt_handler_C",
+      "blocks": [
+        38,
+        39
+      ],
+      "entries": [
+        {
+          "block": 38,
+          "address": "F000:006C",
+          "kind": "executionContextEntry"
+        },
+        {
+          "block": 38,
+          "address": "F000:006C",
+          "kind": "functionEntry"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "kind": "observed",
+      "name": "provided_interrupt_handler_D",
+      "blocks": [
+        42,
+        43
+      ],
+      "entries": [
+        {
+          "block": 42,
+          "address": "F000:0071",
+          "kind": "executionContextEntry"
+        },
+        {
+          "block": 42,
+          "address": "F000:0071",
+          "kind": "functionEntry"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "kind": "observed",
+      "name": "provided_interrupt_handler_F",
+      "blocks": [
+        46,
+        47
+      ],
+      "entries": [
+        {
+          "block": 46,
+          "address": "F000:0076",
+          "kind": "executionContextEntry"
+        },
+        {
+          "block": 46,
+          "address": "F000:0076",
+          "kind": "functionEntry"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "kind": "observed",
+      "name": "provided_interrupt_handler_72",
+      "blocks": [
+        50,
+        51
+      ],
+      "entries": [
+        {
+          "block": 50,
+          "address": "F000:007B",
+          "kind": "executionContextEntry"
+        },
+        {
+          "block": 50,
+          "address": "F000:007B",
+          "kind": "functionEntry"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "kind": "observed",
+      "name": "provided_interrupt_handler_73",
+      "blocks": [
+        54,
+        55
+      ],
+      "entries": [
+        {
+          "block": 54,
+          "address": "F000:0080",
+          "kind": "executionContextEntry"
+        },
+        {
+          "block": 54,
+          "address": "F000:0080",
+          "kind": "functionEntry"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "kind": "observed",
+      "name": "unknown",
+      "blocks": [
+        27
+      ],
+      "entries": [
+        {
+          "block": 27,
+          "address": "F000:00E2",
+          "kind": "functionEntry"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "kind": "observed",
+      "name": "provided_mouse_driver",
+      "blocks": [
+        19,
+        23,
+        29,
+        31
+      ],
+      "entries": [
+        {
+          "block": 19,
+          "address": "F000:00E3",
+          "kind": "functionEntry"
+        }
+      ]
+    }
+  ],
+  "transfers": [
+    {
+      "kind": "callOut",
+      "fromPartition": 1,
+      "toPartition": 2,
+      "fromBlock": 58,
+      "toBlock": 59,
+      "from": "017D:0000",
+      "target": "017D:652B"
+    },
+    {
+      "kind": "callOut",
+      "fromPartition": 2,
+      "toPartition": 3,
+      "fromBlock": 69,
+      "toBlock": 74,
+      "from": "017D:6548",
+      "target": "017D:655B"
+    },
+    {
+      "kind": "callOut",
+      "fromPartition": 7,
+      "toPartition": 15,
+      "fromBlock": 18,
+      "toBlock": 19,
+      "from": "F000:005D",
+      "target": "F000:00E3",
+      "callContinuationBlock": 21,
+      "callContinuationAddress": "F000:0062"
+    },
+    {
+      "kind": "callOut",
+      "fromPartition": 15,
+      "toPartition": 14,
+      "fromBlock": 23,
+      "toBlock": 27,
+      "from": "F000:00E7",
+      "target": "F000:00E2",
+      "callContinuationBlock": 29,
+      "callContinuationAddress": "F000:00EC"
+    }
+  ]
+}

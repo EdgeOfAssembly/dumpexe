@@ -1,0 +1,942 @@
+{
+  "version": "1.0",
+  "compiler": "Pascal MT+86 for MS-DOS 3.1.1 (Digital Research, 12-03-84)",
+  "images": {
+    "ICON.EXE": {
+      "path": "/tmp/dumpexe/games/icon-quest-for-the-ring/ICON/ICON.EXE",
+      "sha256": "0b2e33559b9b1aa3005c51b0695ae08b40c60f601c645c50e80c8e4304894bd4",
+      "size": 35328,
+      "header_bytes": 512,
+      "load_image_size": 34816,
+      "entry_bytes": "e82865800cb008900000000000000000",
+      "segment_table": {
+        "code_paras": "0xc80",
+        "data_paras": "0x8b0",
+        "stack_paras": "0x90",
+        "extra_paras": "0x0",
+        "stack_bytes": 2304,
+        "entry_call_rel16": 25896,
+        "entry_call_target_ip": 25899
+      }
+    },
+    "ICON0.OVL": {
+      "path": "/tmp/dumpexe/games/icon-quest-for-the-ring/ICON/ICON0.OVL",
+      "sha256": "07b8f4967dc4d2e108b7e6fdc43cdf8876d53bb3502aa2322d37e8b84b14bb1e",
+      "size": 31744,
+      "header_bytes": 512,
+      "load_image_size": 31232,
+      "entry_bytes": "e86a4c800cb008900000000000000000",
+      "segment_table": {
+        "code_paras": "0xc80",
+        "data_paras": "0x8b0",
+        "stack_paras": "0x90",
+        "extra_paras": "0x0",
+        "stack_bytes": 2304,
+        "entry_call_rel16": 19562,
+        "entry_call_target_ip": 19565
+      }
+    },
+    "ICON1.OVL": {
+      "path": "/tmp/dumpexe/games/icon-quest-for-the-ring/ICON/ICON1.OVL",
+      "sha256": "fe67ce8b176cc7beaba5ad5cafaa1f151f5b21693ac9b0de577e2f57e7fc33f5",
+      "size": 51712,
+      "header_bytes": 512,
+      "load_image_size": 51200,
+      "entry_bytes": "e882a0800cb008900000000000000000",
+      "segment_table": {
+        "code_paras": "0xc80",
+        "data_paras": "0x8b0",
+        "stack_paras": "0x90",
+        "extra_paras": "0x0",
+        "stack_bytes": 2304,
+        "entry_call_rel16": -24446,
+        "entry_call_target_ip": 41093
+      }
+    },
+    "ICON2.OVL": {
+      "path": "/tmp/dumpexe/games/icon-quest-for-the-ring/ICON/ICON2.OVL",
+      "sha256": "9823d59ccfff5c2b64606c3e7dcbc194a87162a05e91345d108a7e34345519f3",
+      "size": 24064,
+      "header_bytes": 512,
+      "load_image_size": 23552,
+      "entry_bytes": "e8b836800cb008900000000000000000",
+      "segment_table": {
+        "code_paras": "0xc80",
+        "data_paras": "0x8b0",
+        "stack_paras": "0x90",
+        "extra_paras": "0x0",
+        "stack_bytes": 2304,
+        "entry_call_rel16": 14008,
+        "entry_call_target_ip": 14011
+      }
+    }
+  },
+  "matches": [
+    {
+      "image": "ICON.EXE",
+      "file_offset": 515,
+      "image_offset": 3,
+      "role": "pascal_mt_segment_table",
+      "pattern_id": "entry_segtable",
+      "evidence": "words 0C80,08B0,0090,0000 after CALL",
+      "confidence": 0.99,
+      "source_mt": "INIPC.I86 segment sizes at CS+3..+9"
+    },
+    {
+      "image": "ICON.EXE",
+      "file_offset": 512,
+      "image_offset": 0,
+      "role": "pascal_mt_startup_call",
+      "pattern_id": "entry_e8",
+      "evidence": "E8 rel16 \u2192 IP 652Bh",
+      "confidence": 0.99,
+      "source_mt": "INIPC/PASLIB startup"
+    },
+    {
+      "image": "ICON.EXE",
+      "file_offset": 26543,
+      "image_offset": 26031,
+      "role": "startup_read_data_size_paras",
+      "pattern_id": "inipc_cs_word_5",
+      "evidence": "2ea10500",
+      "confidence": 0.95,
+      "source_mt": "INIPC.I86 CS:WORD PTR [5]"
+    },
+    {
+      "image": "ICON.EXE",
+      "file_offset": 26554,
+      "image_offset": 26042,
+      "role": "startup_read_extra_size_paras",
+      "pattern_id": "inipc_cs_word_9",
+      "evidence": "2ea10900",
+      "confidence": 0.95,
+      "source_mt": "INIPC.I86 CS:WORD PTR [9]"
+    },
+    {
+      "image": "ICON.EXE",
+      "file_offset": 26413,
+      "image_offset": 25901,
+      "role": "startup_add_code_size",
+      "pattern_id": "inipc_add_cs_3",
+      "evidence": "2e03060300",
+      "confidence": 0.9,
+      "source_mt": "INIPC.I86 ADD AX,CS:WORD PTR [3]"
+    },
+    {
+      "image": "ICON.EXE",
+      "file_offset": 26474,
+      "image_offset": 25962,
+      "role": "startup_add_code_size",
+      "pattern_id": "inipc_add_cs_3",
+      "evidence": "2e03060300",
+      "confidence": 0.9,
+      "source_mt": "INIPC.I86 ADD AX,CS:WORD PTR [3]"
+    },
+    {
+      "image": "ICON.EXE",
+      "file_offset": 26418,
+      "image_offset": 25906,
+      "role": "startup_add_data_size",
+      "pattern_id": "inipc_add_cs_5",
+      "evidence": "2e03060500",
+      "confidence": 0.9,
+      "source_mt": "INIPC.I86 ADD AX,CS:WORD PTR [5]"
+    },
+    {
+      "image": "ICON.EXE",
+      "file_offset": 26503,
+      "image_offset": 25991,
+      "role": "startup_add_data_size",
+      "pattern_id": "inipc_add_cs_5",
+      "evidence": "2e03060500",
+      "confidence": 0.9,
+      "source_mt": "INIPC.I86 ADD AX,CS:WORD PTR [5]"
+    },
+    {
+      "image": "ICON.EXE",
+      "file_offset": 26423,
+      "image_offset": 25911,
+      "role": "startup_add_stack_size",
+      "pattern_id": "inipc_add_cs_7",
+      "evidence": "2e03060700",
+      "confidence": 0.9,
+      "source_mt": "INIPC.I86 ADD AX,CS:WORD PTR [7]"
+    },
+    {
+      "image": "ICON.EXE",
+      "file_offset": 26464,
+      "image_offset": 25952,
+      "role": "dos_print_string",
+      "pattern_id": "int21_ah09",
+      "evidence": "b409cd21",
+      "confidence": 0.7,
+      "source_mt": "INIPC OUTOFMEM / DOS print $"
+    },
+    {
+      "image": "ICON.EXE",
+      "file_offset": 750,
+      "image_offset": 238,
+      "role": "rtl_error_string",
+      "pattern_id": "str_pascal_mt_error",
+      "evidence": "Pascal MT+ Error",
+      "confidence": 0.99,
+      "source_mt": "PASLIB/runtime"
+    },
+    {
+      "image": "ICON.EXE",
+      "file_offset": 6100,
+      "image_offset": 5588,
+      "role": "game_version_string",
+      "pattern_id": "str_icon_11",
+      "evidence": "ICON 1.1",
+      "confidence": 0.99,
+      "source_mt": "game"
+    },
+    {
+      "image": "ICON.EXE",
+      "file_offset": 7888,
+      "image_offset": 7376,
+      "role": "overlay_chain_name",
+      "pattern_id": "str_icon0",
+      "evidence": "icon0.ovl",
+      "confidence": 0.99,
+      "source_mt": "game/overlay"
+    },
+    {
+      "image": "ICON.EXE",
+      "file_offset": 7917,
+      "image_offset": 7405,
+      "role": "overlay_chain_name",
+      "pattern_id": "str_icon0",
+      "evidence": "icon0.ovl",
+      "confidence": 0.99,
+      "source_mt": "game/overlay"
+    },
+    {
+      "image": "ICON.EXE",
+      "file_offset": 6860,
+      "image_offset": 6348,
+      "role": "cga_requirement",
+      "pattern_id": "str_cga",
+      "evidence": "Color Graphics",
+      "confidence": 0.95,
+      "source_mt": "game"
+    },
+    {
+      "image": "ICON.EXE",
+      "file_offset": 26443,
+      "image_offset": 25931,
+      "role": "rtl_oom",
+      "pattern_id": "str_out_of_memory",
+      "evidence": "OUT OF MEMORY",
+      "confidence": 0.9,
+      "source_mt": "INIPC.I86"
+    },
+    {
+      "image": "ICON0.OVL",
+      "file_offset": 515,
+      "image_offset": 3,
+      "role": "pascal_mt_segment_table",
+      "pattern_id": "entry_segtable",
+      "evidence": "words 0C80,08B0,0090,0000 after CALL",
+      "confidence": 0.99,
+      "source_mt": "INIPC.I86 segment sizes at CS+3..+9"
+    },
+    {
+      "image": "ICON0.OVL",
+      "file_offset": 512,
+      "image_offset": 0,
+      "role": "pascal_mt_startup_call",
+      "pattern_id": "entry_e8",
+      "evidence": "E8 rel16 \u2192 IP 4C6Dh",
+      "confidence": 0.99,
+      "source_mt": "INIPC/PASLIB startup"
+    },
+    {
+      "image": "ICON0.OVL",
+      "file_offset": 20209,
+      "image_offset": 19697,
+      "role": "startup_read_data_size_paras",
+      "pattern_id": "inipc_cs_word_5",
+      "evidence": "2ea10500",
+      "confidence": 0.95,
+      "source_mt": "INIPC.I86 CS:WORD PTR [5]"
+    },
+    {
+      "image": "ICON0.OVL",
+      "file_offset": 20220,
+      "image_offset": 19708,
+      "role": "startup_read_extra_size_paras",
+      "pattern_id": "inipc_cs_word_9",
+      "evidence": "2ea10900",
+      "confidence": 0.95,
+      "source_mt": "INIPC.I86 CS:WORD PTR [9]"
+    },
+    {
+      "image": "ICON0.OVL",
+      "file_offset": 20079,
+      "image_offset": 19567,
+      "role": "startup_add_code_size",
+      "pattern_id": "inipc_add_cs_3",
+      "evidence": "2e03060300",
+      "confidence": 0.9,
+      "source_mt": "INIPC.I86 ADD AX,CS:WORD PTR [3]"
+    },
+    {
+      "image": "ICON0.OVL",
+      "file_offset": 20140,
+      "image_offset": 19628,
+      "role": "startup_add_code_size",
+      "pattern_id": "inipc_add_cs_3",
+      "evidence": "2e03060300",
+      "confidence": 0.9,
+      "source_mt": "INIPC.I86 ADD AX,CS:WORD PTR [3]"
+    },
+    {
+      "image": "ICON0.OVL",
+      "file_offset": 20084,
+      "image_offset": 19572,
+      "role": "startup_add_data_size",
+      "pattern_id": "inipc_add_cs_5",
+      "evidence": "2e03060500",
+      "confidence": 0.9,
+      "source_mt": "INIPC.I86 ADD AX,CS:WORD PTR [5]"
+    },
+    {
+      "image": "ICON0.OVL",
+      "file_offset": 20169,
+      "image_offset": 19657,
+      "role": "startup_add_data_size",
+      "pattern_id": "inipc_add_cs_5",
+      "evidence": "2e03060500",
+      "confidence": 0.9,
+      "source_mt": "INIPC.I86 ADD AX,CS:WORD PTR [5]"
+    },
+    {
+      "image": "ICON0.OVL",
+      "file_offset": 20089,
+      "image_offset": 19577,
+      "role": "startup_add_stack_size",
+      "pattern_id": "inipc_add_cs_7",
+      "evidence": "2e03060700",
+      "confidence": 0.9,
+      "source_mt": "INIPC.I86 ADD AX,CS:WORD PTR [7]"
+    },
+    {
+      "image": "ICON0.OVL",
+      "file_offset": 20130,
+      "image_offset": 19618,
+      "role": "dos_print_string",
+      "pattern_id": "int21_ah09",
+      "evidence": "b409cd21",
+      "confidence": 0.7,
+      "source_mt": "INIPC OUTOFMEM / DOS print $"
+    },
+    {
+      "image": "ICON0.OVL",
+      "file_offset": 756,
+      "image_offset": 244,
+      "role": "rtl_error_string",
+      "pattern_id": "str_pascal_mt_error",
+      "evidence": "Pascal MT+ Error",
+      "confidence": 0.99,
+      "source_mt": "PASLIB/runtime"
+    },
+    {
+      "image": "ICON0.OVL",
+      "file_offset": 8422,
+      "image_offset": 7910,
+      "role": "overlay_chain_name",
+      "pattern_id": "str_icon1",
+      "evidence": "icon1.ovl",
+      "confidence": 0.99,
+      "source_mt": "game/overlay"
+    },
+    {
+      "image": "ICON0.OVL",
+      "file_offset": 8451,
+      "image_offset": 7939,
+      "role": "overlay_chain_name",
+      "pattern_id": "str_icon1",
+      "evidence": "icon1.ovl",
+      "confidence": 0.99,
+      "source_mt": "game/overlay"
+    },
+    {
+      "image": "ICON0.OVL",
+      "file_offset": 20109,
+      "image_offset": 19597,
+      "role": "rtl_oom",
+      "pattern_id": "str_out_of_memory",
+      "evidence": "OUT OF MEMORY",
+      "confidence": 0.9,
+      "source_mt": "INIPC.I86"
+    },
+    {
+      "image": "ICON1.OVL",
+      "file_offset": 515,
+      "image_offset": 3,
+      "role": "pascal_mt_segment_table",
+      "pattern_id": "entry_segtable",
+      "evidence": "words 0C80,08B0,0090,0000 after CALL",
+      "confidence": 0.99,
+      "source_mt": "INIPC.I86 segment sizes at CS+3..+9"
+    },
+    {
+      "image": "ICON1.OVL",
+      "file_offset": 512,
+      "image_offset": 0,
+      "role": "pascal_mt_startup_call",
+      "pattern_id": "entry_e8",
+      "evidence": "E8 rel16 \u2192 IP A085h",
+      "confidence": 0.99,
+      "source_mt": "INIPC/PASLIB startup"
+    },
+    {
+      "image": "ICON1.OVL",
+      "file_offset": 41737,
+      "image_offset": 41225,
+      "role": "startup_read_data_size_paras",
+      "pattern_id": "inipc_cs_word_5",
+      "evidence": "2ea10500",
+      "confidence": 0.95,
+      "source_mt": "INIPC.I86 CS:WORD PTR [5]"
+    },
+    {
+      "image": "ICON1.OVL",
+      "file_offset": 41748,
+      "image_offset": 41236,
+      "role": "startup_read_extra_size_paras",
+      "pattern_id": "inipc_cs_word_9",
+      "evidence": "2ea10900",
+      "confidence": 0.95,
+      "source_mt": "INIPC.I86 CS:WORD PTR [9]"
+    },
+    {
+      "image": "ICON1.OVL",
+      "file_offset": 41607,
+      "image_offset": 41095,
+      "role": "startup_add_code_size",
+      "pattern_id": "inipc_add_cs_3",
+      "evidence": "2e03060300",
+      "confidence": 0.9,
+      "source_mt": "INIPC.I86 ADD AX,CS:WORD PTR [3]"
+    },
+    {
+      "image": "ICON1.OVL",
+      "file_offset": 41668,
+      "image_offset": 41156,
+      "role": "startup_add_code_size",
+      "pattern_id": "inipc_add_cs_3",
+      "evidence": "2e03060300",
+      "confidence": 0.9,
+      "source_mt": "INIPC.I86 ADD AX,CS:WORD PTR [3]"
+    },
+    {
+      "image": "ICON1.OVL",
+      "file_offset": 41612,
+      "image_offset": 41100,
+      "role": "startup_add_data_size",
+      "pattern_id": "inipc_add_cs_5",
+      "evidence": "2e03060500",
+      "confidence": 0.9,
+      "source_mt": "INIPC.I86 ADD AX,CS:WORD PTR [5]"
+    },
+    {
+      "image": "ICON1.OVL",
+      "file_offset": 41697,
+      "image_offset": 41185,
+      "role": "startup_add_data_size",
+      "pattern_id": "inipc_add_cs_5",
+      "evidence": "2e03060500",
+      "confidence": 0.9,
+      "source_mt": "INIPC.I86 ADD AX,CS:WORD PTR [5]"
+    },
+    {
+      "image": "ICON1.OVL",
+      "file_offset": 41617,
+      "image_offset": 41105,
+      "role": "startup_add_stack_size",
+      "pattern_id": "inipc_add_cs_7",
+      "evidence": "2e03060700",
+      "confidence": 0.9,
+      "source_mt": "INIPC.I86 ADD AX,CS:WORD PTR [7]"
+    },
+    {
+      "image": "ICON1.OVL",
+      "file_offset": 41658,
+      "image_offset": 41146,
+      "role": "dos_print_string",
+      "pattern_id": "int21_ah09",
+      "evidence": "b409cd21",
+      "confidence": 0.7,
+      "source_mt": "INIPC OUTOFMEM / DOS print $"
+    },
+    {
+      "image": "ICON1.OVL",
+      "file_offset": 774,
+      "image_offset": 262,
+      "role": "rtl_error_string",
+      "pattern_id": "str_pascal_mt_error",
+      "evidence": "Pascal MT+ Error",
+      "confidence": 0.99,
+      "source_mt": "PASLIB/runtime"
+    },
+    {
+      "image": "ICON1.OVL",
+      "file_offset": 10287,
+      "image_offset": 9775,
+      "role": "overlay_chain_name",
+      "pattern_id": "str_icon0",
+      "evidence": "icon0.ovl",
+      "confidence": 0.99,
+      "source_mt": "game/overlay"
+    },
+    {
+      "image": "ICON1.OVL",
+      "file_offset": 10258,
+      "image_offset": 9746,
+      "role": "overlay_chain_name",
+      "pattern_id": "str_icon2",
+      "evidence": "icon2.ovl",
+      "confidence": 0.99,
+      "source_mt": "game/overlay"
+    },
+    {
+      "image": "ICON1.OVL",
+      "file_offset": 10316,
+      "image_offset": 9804,
+      "role": "overlay_chain_name",
+      "pattern_id": "str_icon2",
+      "evidence": "icon2.ovl",
+      "confidence": 0.99,
+      "source_mt": "game/overlay"
+    },
+    {
+      "image": "ICON1.OVL",
+      "file_offset": 10556,
+      "image_offset": 10044,
+      "role": "overlay_chain_name",
+      "pattern_id": "str_icon2",
+      "evidence": "icon2.ovl",
+      "confidence": 0.99,
+      "source_mt": "game/overlay"
+    },
+    {
+      "image": "ICON1.OVL",
+      "file_offset": 10585,
+      "image_offset": 10073,
+      "role": "overlay_chain_name",
+      "pattern_id": "str_icon2",
+      "evidence": "icon2.ovl",
+      "confidence": 0.99,
+      "source_mt": "game/overlay"
+    },
+    {
+      "image": "ICON1.OVL",
+      "file_offset": 41637,
+      "image_offset": 41125,
+      "role": "rtl_oom",
+      "pattern_id": "str_out_of_memory",
+      "evidence": "OUT OF MEMORY",
+      "confidence": 0.9,
+      "source_mt": "INIPC.I86"
+    },
+    {
+      "image": "ICON2.OVL",
+      "file_offset": 515,
+      "image_offset": 3,
+      "role": "pascal_mt_segment_table",
+      "pattern_id": "entry_segtable",
+      "evidence": "words 0C80,08B0,0090,0000 after CALL",
+      "confidence": 0.99,
+      "source_mt": "INIPC.I86 segment sizes at CS+3..+9"
+    },
+    {
+      "image": "ICON2.OVL",
+      "file_offset": 512,
+      "image_offset": 0,
+      "role": "pascal_mt_startup_call",
+      "pattern_id": "entry_e8",
+      "evidence": "E8 rel16 \u2192 IP 36BBh",
+      "confidence": 0.99,
+      "source_mt": "INIPC/PASLIB startup"
+    },
+    {
+      "image": "ICON2.OVL",
+      "file_offset": 14655,
+      "image_offset": 14143,
+      "role": "startup_read_data_size_paras",
+      "pattern_id": "inipc_cs_word_5",
+      "evidence": "2ea10500",
+      "confidence": 0.95,
+      "source_mt": "INIPC.I86 CS:WORD PTR [5]"
+    },
+    {
+      "image": "ICON2.OVL",
+      "file_offset": 14666,
+      "image_offset": 14154,
+      "role": "startup_read_extra_size_paras",
+      "pattern_id": "inipc_cs_word_9",
+      "evidence": "2ea10900",
+      "confidence": 0.95,
+      "source_mt": "INIPC.I86 CS:WORD PTR [9]"
+    },
+    {
+      "image": "ICON2.OVL",
+      "file_offset": 14525,
+      "image_offset": 14013,
+      "role": "startup_add_code_size",
+      "pattern_id": "inipc_add_cs_3",
+      "evidence": "2e03060300",
+      "confidence": 0.9,
+      "source_mt": "INIPC.I86 ADD AX,CS:WORD PTR [3]"
+    },
+    {
+      "image": "ICON2.OVL",
+      "file_offset": 14586,
+      "image_offset": 14074,
+      "role": "startup_add_code_size",
+      "pattern_id": "inipc_add_cs_3",
+      "evidence": "2e03060300",
+      "confidence": 0.9,
+      "source_mt": "INIPC.I86 ADD AX,CS:WORD PTR [3]"
+    },
+    {
+      "image": "ICON2.OVL",
+      "file_offset": 14530,
+      "image_offset": 14018,
+      "role": "startup_add_data_size",
+      "pattern_id": "inipc_add_cs_5",
+      "evidence": "2e03060500",
+      "confidence": 0.9,
+      "source_mt": "INIPC.I86 ADD AX,CS:WORD PTR [5]"
+    },
+    {
+      "image": "ICON2.OVL",
+      "file_offset": 14615,
+      "image_offset": 14103,
+      "role": "startup_add_data_size",
+      "pattern_id": "inipc_add_cs_5",
+      "evidence": "2e03060500",
+      "confidence": 0.9,
+      "source_mt": "INIPC.I86 ADD AX,CS:WORD PTR [5]"
+    },
+    {
+      "image": "ICON2.OVL",
+      "file_offset": 14535,
+      "image_offset": 14023,
+      "role": "startup_add_stack_size",
+      "pattern_id": "inipc_add_cs_7",
+      "evidence": "2e03060700",
+      "confidence": 0.9,
+      "source_mt": "INIPC.I86 ADD AX,CS:WORD PTR [7]"
+    },
+    {
+      "image": "ICON2.OVL",
+      "file_offset": 14576,
+      "image_offset": 14064,
+      "role": "dos_print_string",
+      "pattern_id": "int21_ah09",
+      "evidence": "b409cd21",
+      "confidence": 0.7,
+      "source_mt": "INIPC OUTOFMEM / DOS print $"
+    },
+    {
+      "image": "ICON2.OVL",
+      "file_offset": 732,
+      "image_offset": 220,
+      "role": "rtl_error_string",
+      "pattern_id": "str_pascal_mt_error",
+      "evidence": "Pascal MT+ Error",
+      "confidence": 0.99,
+      "source_mt": "PASLIB/runtime"
+    },
+    {
+      "image": "ICON2.OVL",
+      "file_offset": 2758,
+      "image_offset": 2246,
+      "role": "game_version_string",
+      "pattern_id": "str_icon_11",
+      "evidence": "ICON 1.1",
+      "confidence": 0.99,
+      "source_mt": "game"
+    },
+    {
+      "image": "ICON2.OVL",
+      "file_offset": 14555,
+      "image_offset": 14043,
+      "role": "rtl_oom",
+      "pattern_id": "str_out_of_memory",
+      "evidence": "OUT OF MEMORY",
+      "confidence": 0.9,
+      "source_mt": "INIPC.I86"
+    }
+  ],
+  "jump_table": {
+    "image": "ICON.EXE",
+    "base_ip": "0090",
+    "count": 23,
+    "slots": [
+      {
+        "slot": 0,
+        "table_ip": "0090",
+        "file_offset": 656,
+        "jmp_rel16": 6130,
+        "target_ip": "1885",
+        "target_file_offset": 6789,
+        "role": "pascal_proc_vector",
+        "named": "calls_further",
+        "prologue": "e8374b"
+      },
+      {
+        "slot": 1,
+        "table_ip": "0093",
+        "file_offset": 659,
+        "jmp_rel16": 63,
+        "target_ip": "00D5",
+        "target_file_offset": 725,
+        "role": "pascal_proc_vector",
+        "named": "pascal_near_proc_frame",
+        "prologue": "558bec5581ec"
+      },
+      {
+        "slot": 2,
+        "table_ip": "0096",
+        "file_offset": 662,
+        "jmp_rel16": 129,
+        "target_ip": "011A",
+        "target_file_offset": 794,
+        "role": "pascal_proc_vector",
+        "named": "pascal_near_proc_frame",
+        "prologue": "558bec5581ec"
+      },
+      {
+        "slot": 3,
+        "table_ip": "0099",
+        "file_offset": 665,
+        "jmp_rel16": 173,
+        "target_ip": "0149",
+        "target_file_offset": 841,
+        "role": "pascal_proc_vector",
+        "named": "pascal_near_proc_frame",
+        "prologue": "558bec5581ec"
+      },
+      {
+        "slot": 4,
+        "table_ip": "009C",
+        "file_offset": 668,
+        "jmp_rel16": 208,
+        "target_ip": "016F",
+        "target_file_offset": 879,
+        "role": "pascal_proc_vector",
+        "named": "pascal_near_proc_frame",
+        "prologue": "558bec5581ec"
+      },
+      {
+        "slot": 5,
+        "table_ip": "009F",
+        "file_offset": 671,
+        "jmp_rel16": 267,
+        "target_ip": "01AD",
+        "target_file_offset": 941,
+        "role": "pascal_proc_vector",
+        "named": "pascal_near_proc_frame",
+        "prologue": "558bec5581ec"
+      },
+      {
+        "slot": 6,
+        "table_ip": "00A2",
+        "file_offset": 674,
+        "jmp_rel16": 301,
+        "target_ip": "01D2",
+        "target_file_offset": 978,
+        "role": "pascal_proc_vector",
+        "named": "pascal_near_proc_frame",
+        "prologue": "558bec5581ec"
+      },
+      {
+        "slot": 7,
+        "table_ip": "00A5",
+        "file_offset": 677,
+        "jmp_rel16": 528,
+        "target_ip": "02B8",
+        "target_file_offset": 1208,
+        "role": "pascal_proc_vector",
+        "named": "pascal_near_proc_frame",
+        "prologue": "558bec5581ec"
+      },
+      {
+        "slot": 8,
+        "table_ip": "00A8",
+        "file_offset": 680,
+        "jmp_rel16": 2023,
+        "target_ip": "0892",
+        "target_file_offset": 2706,
+        "role": "pascal_proc_vector",
+        "named": "pascal_near_proc_frame",
+        "prologue": "558bec5581ec"
+      },
+      {
+        "slot": 9,
+        "table_ip": "00AB",
+        "file_offset": 683,
+        "jmp_rel16": 644,
+        "target_ip": "0332",
+        "target_file_offset": 1330,
+        "role": "pascal_proc_vector",
+        "named": null,
+        "prologue": "558bc4ff76fe"
+      },
+      {
+        "slot": 10,
+        "table_ip": "00AE",
+        "file_offset": 686,
+        "jmp_rel16": 1034,
+        "target_ip": "04BB",
+        "target_file_offset": 1723,
+        "role": "pascal_proc_vector",
+        "named": null,
+        "prologue": "558bc4ff76fe"
+      },
+      {
+        "slot": 11,
+        "table_ip": "00B1",
+        "file_offset": 689,
+        "jmp_rel16": 2688,
+        "target_ip": "0B34",
+        "target_file_offset": 3380,
+        "role": "pascal_proc_vector",
+        "named": "pascal_near_proc_frame",
+        "prologue": "558bec5581ec"
+      },
+      {
+        "slot": 12,
+        "table_ip": "00B4",
+        "file_offset": 692,
+        "jmp_rel16": 2808,
+        "target_ip": "0BAF",
+        "target_file_offset": 3503,
+        "role": "pascal_proc_vector",
+        "named": "pascal_near_proc_frame",
+        "prologue": "558bec5581ec"
+      },
+      {
+        "slot": 13,
+        "table_ip": "00B7",
+        "file_offset": 695,
+        "jmp_rel16": 2891,
+        "target_ip": "0C05",
+        "target_file_offset": 3589,
+        "role": "pascal_proc_vector",
+        "named": "pascal_near_proc_frame",
+        "prologue": "558bec5581ec"
+      },
+      {
+        "slot": 14,
+        "table_ip": "00BA",
+        "file_offset": 698,
+        "jmp_rel16": 3788,
+        "target_ip": "0F89",
+        "target_file_offset": 4489,
+        "role": "pascal_proc_vector",
+        "named": "pascal_near_proc_frame",
+        "prologue": "558bec5581ec"
+      },
+      {
+        "slot": 15,
+        "table_ip": "00BD",
+        "file_offset": 701,
+        "jmp_rel16": 4004,
+        "target_ip": "1064",
+        "target_file_offset": 4708,
+        "role": "pascal_proc_vector",
+        "named": "pascal_near_proc_frame",
+        "prologue": "558bec5581ec"
+      },
+      {
+        "slot": 16,
+        "table_ip": "00C0",
+        "file_offset": 704,
+        "jmp_rel16": 4504,
+        "target_ip": "125B",
+        "target_file_offset": 5211,
+        "role": "pascal_proc_vector",
+        "named": "pascal_near_proc_frame",
+        "prologue": "558bec5581ec"
+      },
+      {
+        "slot": 17,
+        "table_ip": "00C3",
+        "file_offset": 707,
+        "jmp_rel16": 4935,
+        "target_ip": "140D",
+        "target_file_offset": 5645,
+        "role": "pascal_proc_vector",
+        "named": "pascal_near_proc_frame",
+        "prologue": "558bec5581ec"
+      },
+      {
+        "slot": 18,
+        "table_ip": "00C6",
+        "file_offset": 710,
+        "jmp_rel16": 5022,
+        "target_ip": "1467",
+        "target_file_offset": 5735,
+        "role": "pascal_proc_vector",
+        "named": "pascal_near_proc_frame",
+        "prologue": "558bec5581ec"
+      },
+      {
+        "slot": 19,
+        "table_ip": "00C9",
+        "file_offset": 713,
+        "jmp_rel16": 5520,
+        "target_ip": "165C",
+        "target_file_offset": 6236,
+        "role": "pascal_proc_vector",
+        "named": "pascal_near_proc_frame",
+        "prologue": "558bec5581ec"
+      },
+      {
+        "slot": 20,
+        "table_ip": "00CC",
+        "file_offset": 716,
+        "jmp_rel16": 5643,
+        "target_ip": "16DA",
+        "target_file_offset": 6362,
+        "role": "pascal_proc_vector",
+        "named": "pascal_near_proc_frame",
+        "prologue": "558bec5581ec"
+      },
+      {
+        "slot": 21,
+        "table_ip": "00CF",
+        "file_offset": 719,
+        "jmp_rel16": 5672,
+        "target_ip": "16FA",
+        "target_file_offset": 6394,
+        "role": "pascal_proc_vector",
+        "named": "pascal_near_proc_frame",
+        "prologue": "558bec5581ec"
+      },
+      {
+        "slot": 22,
+        "table_ip": "00D2",
+        "file_offset": 722,
+        "jmp_rel16": 5855,
+        "target_ip": "17B4",
+        "target_file_offset": 6580,
+        "role": "pascal_proc_vector",
+        "named": "pascal_near_proc_frame",
+        "prologue": "558bec5581ec"
+      }
+    ],
+    "note": "Near JMP E9 stubs \u2014 Pascal MT+ procedure entry vectors after RTL init"
+  },
+  "notes": [
+    "Segment tables identical across all 4 MZ images \u2014 shared Pascal MT+ memory model.",
+    "Fingerprint patterns derived from MT+86 3.1.1 INIPC.I86 / IOMOD.SRC / OVLMGRPC.I86 and live ICON dumps.",
+    "Total matches: 60; jump table slots: 23"
+  ]
+}

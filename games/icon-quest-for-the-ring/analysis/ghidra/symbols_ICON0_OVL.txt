@@ -1,0 +1,14 @@
+pascal_mt_segment_table__0203 00000203
+pascal_mt_startup_call__0200 00000200
+startup_read_data_size_paras__4EF1 00004EF1
+startup_read_extra_size_paras__4EFC 00004EFC
+startup_add_code_size__4E6F 00004E6F
+startup_add_code_size__4EAC 00004EAC
+startup_add_data_size__4E74 00004E74
+startup_add_data_size__4EC9 00004EC9
+startup_add_stack_size__4E79 00004E79
+dos_print_string__4EA2 00004EA2
+rtl_error_string__02F4 000002F4
+overlay_chain_name__20E6 000020E6
+overlay_chain_name__2103 00002103
+rtl_oom__4E8D 00004E8D

@@ -1,0 +1,1911 @@
+{
+  "version": "1.0",
+  "generated_utc": "2026-07-29T21:36:58Z",
+  "compiler": "Pascal MT+86 for MS-DOS 3.1.1 (Digital Research, 12-03-84)",
+  "source_fingerprint": "analysis/fingerprint/mt_fingerprint_db.json",
+  "jump_table": {
+    "image": "ICON.EXE",
+    "base_ip": "0090",
+    "count": 23,
+    "note": "Near JMP E9 stubs \u2014 Pascal MT+ procedure entry vectors after RTL init",
+    "slots": [
+      {
+        "slot": 0,
+        "table_ip": "0090",
+        "target_ip": "1885",
+        "target_file_offset": 6789,
+        "ghidra_name": "jt_00_calls_further",
+        "tier": "B",
+        "role": "calls_further",
+        "prologue_hex": "e8374b"
+      },
+      {
+        "slot": 1,
+        "table_ip": "0093",
+        "target_ip": "00D5",
+        "target_file_offset": 725,
+        "ghidra_name": "jt_01_pascal_near",
+        "tier": "B",
+        "role": "pascal_near_proc_frame",
+        "prologue_hex": "558bec5581ec"
+      },
+      {
+        "slot": 2,
+        "table_ip": "0096",
+        "target_ip": "011A",
+        "target_file_offset": 794,
+        "ghidra_name": "jt_02_pascal_near",
+        "tier": "B",
+        "role": "pascal_near_proc_frame",
+        "prologue_hex": "558bec5581ec"
+      },
+      {
+        "slot": 3,
+        "table_ip": "0099",
+        "target_ip": "0149",
+        "target_file_offset": 841,
+        "ghidra_name": "jt_03_pascal_near",
+        "tier": "B",
+        "role": "pascal_near_proc_frame",
+        "prologue_hex": "558bec5581ec"
+      },
+      {
+        "slot": 4,
+        "table_ip": "009C",
+        "target_ip": "016F",
+        "target_file_offset": 879,
+        "ghidra_name": "jt_04_pascal_near",
+        "tier": "B",
+        "role": "pascal_near_proc_frame",
+        "prologue_hex": "558bec5581ec"
+      },
+      {
+        "slot": 5,
+        "table_ip": "009F",
+        "target_ip": "01AD",
+        "target_file_offset": 941,
+        "ghidra_name": "jt_05_pascal_near",
+        "tier": "B",
+        "role": "pascal_near_proc_frame",
+        "prologue_hex": "558bec5581ec"
+      },
+      {
+        "slot": 6,
+        "table_ip": "00A2",
+        "target_ip": "01D2",
+        "target_file_offset": 978,
+        "ghidra_name": "jt_06_pascal_near",
+        "tier": "B",
+        "role": "pascal_near_proc_frame",
+        "prologue_hex": "558bec5581ec"
+      },
+      {
+        "slot": 7,
+        "table_ip": "00A5",
+        "target_ip": "02B8",
+        "target_file_offset": 1208,
+        "ghidra_name": "jt_07_pascal_near",
+        "tier": "B",
+        "role": "pascal_near_proc_frame",
+        "prologue_hex": "558bec5581ec"
+      },
+      {
+        "slot": 8,
+        "table_ip": "00A8",
+        "target_ip": "0892",
+        "target_file_offset": 2706,
+        "ghidra_name": "jt_08_pascal_near",
+        "tier": "B",
+        "role": "pascal_near_proc_frame",
+        "prologue_hex": "558bec5581ec"
+      },
+      {
+        "slot": 9,
+        "table_ip": "00AB",
+        "target_ip": "0332",
+        "target_file_offset": 1330,
+        "ghidra_name": "jt_09_game_or_rtl",
+        "tier": "C",
+        "role": "game_or_rtl_proc",
+        "prologue_hex": "558bc4ff76fe"
+      },
+      {
+        "slot": 10,
+        "table_ip": "00AE",
+        "target_ip": "04BB",
+        "target_file_offset": 1723,
+        "ghidra_name": "jt_10_game_or_rtl",
+        "tier": "C",
+        "role": "game_or_rtl_proc",
+        "prologue_hex": "558bc4ff76fe"
+      },
+      {
+        "slot": 11,
+        "table_ip": "00B1",
+        "target_ip": "0B34",
+        "target_file_offset": 3380,
+        "ghidra_name": "jt_11_pascal_near",
+        "tier": "B",
+        "role": "pascal_near_proc_frame",
+        "prologue_hex": "558bec5581ec"
+      },
+      {
+        "slot": 12,
+        "table_ip": "00B4",
+        "target_ip": "0BAF",
+        "target_file_offset": 3503,
+        "ghidra_name": "jt_12_pascal_near",
+        "tier": "B",
+        "role": "pascal_near_proc_frame",
+        "prologue_hex": "558bec5581ec"
+      },
+      {
+        "slot": 13,
+        "table_ip": "00B7",
+        "target_ip": "0C05",
+        "target_file_offset": 3589,
+        "ghidra_name": "jt_13_pascal_near",
+        "tier": "B",
+        "role": "pascal_near_proc_frame",
+        "prologue_hex": "558bec5581ec"
+      },
+      {
+        "slot": 14,
+        "table_ip": "00BA",
+        "target_ip": "0F89",
+        "target_file_offset": 4489,
+        "ghidra_name": "jt_14_pascal_near",
+        "tier": "B",
+        "role": "pascal_near_proc_frame",
+        "prologue_hex": "558bec5581ec"
+      },
+      {
+        "slot": 15,
+        "table_ip": "00BD",
+        "target_ip": "1064",
+        "target_file_offset": 4708,
+        "ghidra_name": "jt_15_pascal_near",
+        "tier": "B",
+        "role": "pascal_near_proc_frame",
+        "prologue_hex": "558bec5581ec"
+      },
+      {
+        "slot": 16,
+        "table_ip": "00C0",
+        "target_ip": "125B",
+        "target_file_offset": 5211,
+        "ghidra_name": "jt_16_pascal_near",
+        "tier": "B",
+        "role": "pascal_near_proc_frame",
+        "prologue_hex": "558bec5581ec"
+      },
+      {
+        "slot": 17,
+        "table_ip": "00C3",
+        "target_ip": "140D",
+        "target_file_offset": 5645,
+        "ghidra_name": "jt_17_pascal_near",
+        "tier": "B",
+        "role": "pascal_near_proc_frame",
+        "prologue_hex": "558bec5581ec"
+      },
+      {
+        "slot": 18,
+        "table_ip": "00C6",
+        "target_ip": "1467",
+        "target_file_offset": 5735,
+        "ghidra_name": "jt_18_pascal_near",
+        "tier": "B",
+        "role": "pascal_near_proc_frame",
+        "prologue_hex": "558bec5581ec"
+      },
+      {
+        "slot": 19,
+        "table_ip": "00C9",
+        "target_ip": "165C",
+        "target_file_offset": 6236,
+        "ghidra_name": "jt_19_pascal_near",
+        "tier": "B",
+        "role": "pascal_near_proc_frame",
+        "prologue_hex": "558bec5581ec"
+      },
+      {
+        "slot": 20,
+        "table_ip": "00CC",
+        "target_ip": "16DA",
+        "target_file_offset": 6362,
+        "ghidra_name": "jt_20_pascal_near",
+        "tier": "B",
+        "role": "pascal_near_proc_frame",
+        "prologue_hex": "558bec5581ec"
+      },
+      {
+        "slot": 21,
+        "table_ip": "00CF",
+        "target_ip": "16FA",
+        "target_file_offset": 6394,
+        "ghidra_name": "jt_21_pascal_near",
+        "tier": "B",
+        "role": "pascal_near_proc_frame",
+        "prologue_hex": "558bec5581ec"
+      },
+      {
+        "slot": 22,
+        "table_ip": "00D2",
+        "target_ip": "17B4",
+        "target_file_offset": 6580,
+        "ghidra_name": "jt_22_pascal_near",
+        "tier": "B",
+        "role": "pascal_near_proc_frame",
+        "prologue_hex": "558bec5581ec"
+      }
+    ]
+  },
+  "summary": {
+    "procedure_count": 83,
+    "jump_table_slots": 23,
+    "fingerprint_matches": 60,
+    "by_image": {
+      "ICON.EXE": 39,
+      "ICON0.OVL": 14,
+      "ICON1.OVL": 17,
+      "ICON2.OVL": 13
+    },
+    "by_tier": {
+      "B": 21,
+      "C": 2,
+      "A": 60
+    }
+  },
+  "procedures": [
+    {
+      "id": "ICON.EXE:jt0",
+      "image": "ICON.EXE",
+      "label": "jt_00_calls_further",
+      "kind": "jump_table_target",
+      "tier": "B",
+      "table_ip": "0090",
+      "target_ip": "1885",
+      "file_offset": 6789,
+      "table_file_offset": 656,
+      "prologue_hex": "e8374b",
+      "role": "calls_further",
+      "evidence": [
+        "jump_table@IP0090h slot 0 E9 \u2192 IP 1885",
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+      ],
+      "ghidra_name": "jt_00_calls_further",
+      "rtl_vs_game": "mixed"
+    },
+    {
+      "id": "ICON.EXE:jt1",
+      "image": "ICON.EXE",
+      "label": "jt_01_pascal_near",
+      "kind": "jump_table_target",
+      "tier": "B",
+      "table_ip": "0093",
+      "target_ip": "00D5",
+      "file_offset": 725,
+      "table_file_offset": 659,
+      "prologue_hex": "558bec5581ec",
+      "role": "pascal_near_proc_frame",
+      "evidence": [
+        "jump_table@IP0090h slot 1 E9 \u2192 IP 00D5",
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+      ],
+      "ghidra_name": "jt_01_pascal_near",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:jt2",
+      "image": "ICON.EXE",
+      "label": "jt_02_pascal_near",
+      "kind": "jump_table_target",
+      "tier": "B",
+      "table_ip": "0096",
+      "target_ip": "011A",
+      "file_offset": 794,
+      "table_file_offset": 662,
+      "prologue_hex": "558bec5581ec",
+      "role": "pascal_near_proc_frame",
+      "evidence": [
+        "jump_table@IP0090h slot 2 E9 \u2192 IP 011A",
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+      ],
+      "ghidra_name": "jt_02_pascal_near",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:jt3",
+      "image": "ICON.EXE",
+      "label": "jt_03_pascal_near",
+      "kind": "jump_table_target",
+      "tier": "B",
+      "table_ip": "0099",
+      "target_ip": "0149",
+      "file_offset": 841,
+      "table_file_offset": 665,
+      "prologue_hex": "558bec5581ec",
+      "role": "pascal_near_proc_frame",
+      "evidence": [
+        "jump_table@IP0090h slot 3 E9 \u2192 IP 0149",
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+      ],
+      "ghidra_name": "jt_03_pascal_near",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:jt4",
+      "image": "ICON.EXE",
+      "label": "jt_04_pascal_near",
+      "kind": "jump_table_target",
+      "tier": "B",
+      "table_ip": "009C",
+      "target_ip": "016F",
+      "file_offset": 879,
+      "table_file_offset": 668,
+      "prologue_hex": "558bec5581ec",
+      "role": "pascal_near_proc_frame",
+      "evidence": [
+        "jump_table@IP0090h slot 4 E9 \u2192 IP 016F",
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+      ],
+      "ghidra_name": "jt_04_pascal_near",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:jt5",
+      "image": "ICON.EXE",
+      "label": "jt_05_pascal_near",
+      "kind": "jump_table_target",
+      "tier": "B",
+      "table_ip": "009F",
+      "target_ip": "01AD",
+      "file_offset": 941,
+      "table_file_offset": 671,
+      "prologue_hex": "558bec5581ec",
+      "role": "pascal_near_proc_frame",
+      "evidence": [
+        "jump_table@IP0090h slot 5 E9 \u2192 IP 01AD",
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+      ],
+      "ghidra_name": "jt_05_pascal_near",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:jt6",
+      "image": "ICON.EXE",
+      "label": "jt_06_pascal_near",
+      "kind": "jump_table_target",
+      "tier": "B",
+      "table_ip": "00A2",
+      "target_ip": "01D2",
+      "file_offset": 978,
+      "table_file_offset": 674,
+      "prologue_hex": "558bec5581ec",
+      "role": "pascal_near_proc_frame",
+      "evidence": [
+        "jump_table@IP0090h slot 6 E9 \u2192 IP 01D2",
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+      ],
+      "ghidra_name": "jt_06_pascal_near",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:jt7",
+      "image": "ICON.EXE",
+      "label": "jt_07_pascal_near",
+      "kind": "jump_table_target",
+      "tier": "B",
+      "table_ip": "00A5",
+      "target_ip": "02B8",
+      "file_offset": 1208,
+      "table_file_offset": 677,
+      "prologue_hex": "558bec5581ec",
+      "role": "pascal_near_proc_frame",
+      "evidence": [
+        "jump_table@IP0090h slot 7 E9 \u2192 IP 02B8",
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+      ],
+      "ghidra_name": "jt_07_pascal_near",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:jt8",
+      "image": "ICON.EXE",
+      "label": "jt_08_pascal_near",
+      "kind": "jump_table_target",
+      "tier": "B",
+      "table_ip": "00A8",
+      "target_ip": "0892",
+      "file_offset": 2706,
+      "table_file_offset": 680,
+      "prologue_hex": "558bec5581ec",
+      "role": "pascal_near_proc_frame",
+      "evidence": [
+        "jump_table@IP0090h slot 8 E9 \u2192 IP 0892",
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+      ],
+      "ghidra_name": "jt_08_pascal_near",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:jt9",
+      "image": "ICON.EXE",
+      "label": "jt_09_game_or_rtl",
+      "kind": "jump_table_target",
+      "tier": "C",
+      "table_ip": "00AB",
+      "target_ip": "0332",
+      "file_offset": 1330,
+      "table_file_offset": 683,
+      "prologue_hex": "558bc4ff76fe",
+      "role": "game_or_rtl_proc",
+      "evidence": [
+        "jump_table@IP0090h slot 9 E9 \u2192 IP 0332",
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+      ],
+      "ghidra_name": "jt_09_game_or_rtl",
+      "rtl_vs_game": "game_or_unknown"
+    },
+    {
+      "id": "ICON.EXE:jt10",
+      "image": "ICON.EXE",
+      "label": "jt_10_game_or_rtl",
+      "kind": "jump_table_target",
+      "tier": "C",
+      "table_ip": "00AE",
+      "target_ip": "04BB",
+      "file_offset": 1723,
+      "table_file_offset": 686,
+      "prologue_hex": "558bc4ff76fe",
+      "role": "game_or_rtl_proc",
+      "evidence": [
+        "jump_table@IP0090h slot 10 E9 \u2192 IP 04BB",
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+      ],
+      "ghidra_name": "jt_10_game_or_rtl",
+      "rtl_vs_game": "game_or_unknown"
+    },
+    {
+      "id": "ICON.EXE:jt11",
+      "image": "ICON.EXE",
+      "label": "jt_11_pascal_near",
+      "kind": "jump_table_target",
+      "tier": "B",
+      "table_ip": "00B1",
+      "target_ip": "0B34",
+      "file_offset": 3380,
+      "table_file_offset": 689,
+      "prologue_hex": "558bec5581ec",
+      "role": "pascal_near_proc_frame",
+      "evidence": [
+        "jump_table@IP0090h slot 11 E9 \u2192 IP 0B34",
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+      ],
+      "ghidra_name": "jt_11_pascal_near",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:jt12",
+      "image": "ICON.EXE",
+      "label": "jt_12_pascal_near",
+      "kind": "jump_table_target",
+      "tier": "B",
+      "table_ip": "00B4",
+      "target_ip": "0BAF",
+      "file_offset": 3503,
+      "table_file_offset": 692,
+      "prologue_hex": "558bec5581ec",
+      "role": "pascal_near_proc_frame",
+      "evidence": [
+        "jump_table@IP0090h slot 12 E9 \u2192 IP 0BAF",
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+      ],
+      "ghidra_name": "jt_12_pascal_near",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:jt13",
+      "image": "ICON.EXE",
+      "label": "jt_13_pascal_near",
+      "kind": "jump_table_target",
+      "tier": "B",
+      "table_ip": "00B7",
+      "target_ip": "0C05",
+      "file_offset": 3589,
+      "table_file_offset": 695,
+      "prologue_hex": "558bec5581ec",
+      "role": "pascal_near_proc_frame",
+      "evidence": [
+        "jump_table@IP0090h slot 13 E9 \u2192 IP 0C05",
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+      ],
+      "ghidra_name": "jt_13_pascal_near",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:jt14",
+      "image": "ICON.EXE",
+      "label": "jt_14_pascal_near",
+      "kind": "jump_table_target",
+      "tier": "B",
+      "table_ip": "00BA",
+      "target_ip": "0F89",
+      "file_offset": 4489,
+      "table_file_offset": 698,
+      "prologue_hex": "558bec5581ec",
+      "role": "pascal_near_proc_frame",
+      "evidence": [
+        "jump_table@IP0090h slot 14 E9 \u2192 IP 0F89",
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+      ],
+      "ghidra_name": "jt_14_pascal_near",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:jt15",
+      "image": "ICON.EXE",
+      "label": "jt_15_pascal_near",
+      "kind": "jump_table_target",
+      "tier": "B",
+      "table_ip": "00BD",
+      "target_ip": "1064",
+      "file_offset": 4708,
+      "table_file_offset": 701,
+      "prologue_hex": "558bec5581ec",
+      "role": "pascal_near_proc_frame",
+      "evidence": [
+        "jump_table@IP0090h slot 15 E9 \u2192 IP 1064",
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+      ],
+      "ghidra_name": "jt_15_pascal_near",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:jt16",
+      "image": "ICON.EXE",
+      "label": "jt_16_pascal_near",
+      "kind": "jump_table_target",
+      "tier": "B",
+      "table_ip": "00C0",
+      "target_ip": "125B",
+      "file_offset": 5211,
+      "table_file_offset": 704,
+      "prologue_hex": "558bec5581ec",
+      "role": "pascal_near_proc_frame",
+      "evidence": [
+        "jump_table@IP0090h slot 16 E9 \u2192 IP 125B",
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+      ],
+      "ghidra_name": "jt_16_pascal_near",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:jt17",
+      "image": "ICON.EXE",
+      "label": "jt_17_pascal_near",
+      "kind": "jump_table_target",
+      "tier": "B",
+      "table_ip": "00C3",
+      "target_ip": "140D",
+      "file_offset": 5645,
+      "table_file_offset": 707,
+      "prologue_hex": "558bec5581ec",
+      "role": "pascal_near_proc_frame",
+      "evidence": [
+        "jump_table@IP0090h slot 17 E9 \u2192 IP 140D",
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+      ],
+      "ghidra_name": "jt_17_pascal_near",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:jt18",
+      "image": "ICON.EXE",
+      "label": "jt_18_pascal_near",
+      "kind": "jump_table_target",
+      "tier": "B",
+      "table_ip": "00C6",
+      "target_ip": "1467",
+      "file_offset": 5735,
+      "table_file_offset": 710,
+      "prologue_hex": "558bec5581ec",
+      "role": "pascal_near_proc_frame",
+      "evidence": [
+        "jump_table@IP0090h slot 18 E9 \u2192 IP 1467",
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+      ],
+      "ghidra_name": "jt_18_pascal_near",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:jt19",
+      "image": "ICON.EXE",
+      "label": "jt_19_pascal_near",
+      "kind": "jump_table_target",
+      "tier": "B",
+      "table_ip": "00C9",
+      "target_ip": "165C",
+      "file_offset": 6236,
+      "table_file_offset": 713,
+      "prologue_hex": "558bec5581ec",
+      "role": "pascal_near_proc_frame",
+      "evidence": [
+        "jump_table@IP0090h slot 19 E9 \u2192 IP 165C",
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+      ],
+      "ghidra_name": "jt_19_pascal_near",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:jt20",
+      "image": "ICON.EXE",
+      "label": "jt_20_pascal_near",
+      "kind": "jump_table_target",
+      "tier": "B",
+      "table_ip": "00CC",
+      "target_ip": "16DA",
+      "file_offset": 6362,
+      "table_file_offset": 716,
+      "prologue_hex": "558bec5581ec",
+      "role": "pascal_near_proc_frame",
+      "evidence": [
+        "jump_table@IP0090h slot 20 E9 \u2192 IP 16DA",
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+      ],
+      "ghidra_name": "jt_20_pascal_near",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:jt21",
+      "image": "ICON.EXE",
+      "label": "jt_21_pascal_near",
+      "kind": "jump_table_target",
+      "tier": "B",
+      "table_ip": "00CF",
+      "target_ip": "16FA",
+      "file_offset": 6394,
+      "table_file_offset": 719,
+      "prologue_hex": "558bec5581ec",
+      "role": "pascal_near_proc_frame",
+      "evidence": [
+        "jump_table@IP0090h slot 21 E9 \u2192 IP 16FA",
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+      ],
+      "ghidra_name": "jt_21_pascal_near",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:jt22",
+      "image": "ICON.EXE",
+      "label": "jt_22_pascal_near",
+      "kind": "jump_table_target",
+      "tier": "B",
+      "table_ip": "00D2",
+      "target_ip": "17B4",
+      "file_offset": 6580,
+      "table_file_offset": 722,
+      "prologue_hex": "558bec5581ec",
+      "role": "pascal_near_proc_frame",
+      "evidence": [
+        "jump_table@IP0090h slot 22 E9 \u2192 IP 17B4",
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+      ],
+      "ghidra_name": "jt_22_pascal_near",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:fp0",
+      "image": "ICON.EXE",
+      "label": "pascal_mt_segment_table__0203",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 515,
+      "image_offset": 3,
+      "role": "pascal_mt_segment_table",
+      "pattern_id": "entry_segtable",
+      "confidence": 0.99,
+      "evidence": [
+        "words 0C80,08B0,0090,0000 after CALL",
+        "source_mt=INIPC.I86 segment sizes at CS+3..+9",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "pascal_mt_segment_table__0203",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:fp1",
+      "image": "ICON.EXE",
+      "label": "pascal_mt_startup_call__0200",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 512,
+      "image_offset": 0,
+      "role": "pascal_mt_startup_call",
+      "pattern_id": "entry_e8",
+      "confidence": 0.99,
+      "evidence": [
+        "E8 rel16 \u2192 IP 652Bh",
+        "source_mt=INIPC/PASLIB startup",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "pascal_mt_startup_call__0200",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:fp2",
+      "image": "ICON.EXE",
+      "label": "startup_read_data_size_paras__67AF",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 26543,
+      "image_offset": 26031,
+      "role": "startup_read_data_size_paras",
+      "pattern_id": "inipc_cs_word_5",
+      "confidence": 0.95,
+      "evidence": [
+        "2ea10500",
+        "source_mt=INIPC.I86 CS:WORD PTR [5]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_read_data_size_paras__67AF",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:fp3",
+      "image": "ICON.EXE",
+      "label": "startup_read_extra_size_paras__67BA",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 26554,
+      "image_offset": 26042,
+      "role": "startup_read_extra_size_paras",
+      "pattern_id": "inipc_cs_word_9",
+      "confidence": 0.95,
+      "evidence": [
+        "2ea10900",
+        "source_mt=INIPC.I86 CS:WORD PTR [9]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_read_extra_size_paras__67BA",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:fp4",
+      "image": "ICON.EXE",
+      "label": "startup_add_code_size__672D",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 26413,
+      "image_offset": 25901,
+      "role": "startup_add_code_size",
+      "pattern_id": "inipc_add_cs_3",
+      "confidence": 0.9,
+      "evidence": [
+        "2e03060300",
+        "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [3]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_add_code_size__672D",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:fp5",
+      "image": "ICON.EXE",
+      "label": "startup_add_code_size__676A",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 26474,
+      "image_offset": 25962,
+      "role": "startup_add_code_size",
+      "pattern_id": "inipc_add_cs_3",
+      "confidence": 0.9,
+      "evidence": [
+        "2e03060300",
+        "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [3]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_add_code_size__676A",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:fp6",
+      "image": "ICON.EXE",
+      "label": "startup_add_data_size__6732",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 26418,
+      "image_offset": 25906,
+      "role": "startup_add_data_size",
+      "pattern_id": "inipc_add_cs_5",
+      "confidence": 0.9,
+      "evidence": [
+        "2e03060500",
+        "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [5]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_add_data_size__6732",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:fp7",
+      "image": "ICON.EXE",
+      "label": "startup_add_data_size__6787",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 26503,
+      "image_offset": 25991,
+      "role": "startup_add_data_size",
+      "pattern_id": "inipc_add_cs_5",
+      "confidence": 0.9,
+      "evidence": [
+        "2e03060500",
+        "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [5]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_add_data_size__6787",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:fp8",
+      "image": "ICON.EXE",
+      "label": "startup_add_stack_size__6737",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 26423,
+      "image_offset": 25911,
+      "role": "startup_add_stack_size",
+      "pattern_id": "inipc_add_cs_7",
+      "confidence": 0.9,
+      "evidence": [
+        "2e03060700",
+        "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [7]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_add_stack_size__6737",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:fp9",
+      "image": "ICON.EXE",
+      "label": "dos_print_string__6760",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 26464,
+      "image_offset": 25952,
+      "role": "dos_print_string",
+      "pattern_id": "int21_ah09",
+      "confidence": 0.7,
+      "evidence": [
+        "b409cd21",
+        "source_mt=INIPC OUTOFMEM / DOS print $",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "dos_print_string__6760",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:fp10",
+      "image": "ICON.EXE",
+      "label": "rtl_error_string__02EE",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 750,
+      "image_offset": 238,
+      "role": "rtl_error_string",
+      "pattern_id": "str_pascal_mt_error",
+      "confidence": 0.99,
+      "evidence": [
+        "Pascal MT+ Error",
+        "source_mt=PASLIB/runtime",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "rtl_error_string__02EE",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON.EXE:fp11",
+      "image": "ICON.EXE",
+      "label": "game_version_string__17D4",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 6100,
+      "image_offset": 5588,
+      "role": "game_version_string",
+      "pattern_id": "str_icon_11",
+      "confidence": 0.99,
+      "evidence": [
+        "ICON 1.1",
+        "source_mt=game",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "game_version_string__17D4",
+      "rtl_vs_game": "game"
+    },
+    {
+      "id": "ICON.EXE:fp12",
+      "image": "ICON.EXE",
+      "label": "overlay_chain_name__1ED0",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 7888,
+      "image_offset": 7376,
+      "role": "overlay_chain_name",
+      "pattern_id": "str_icon0",
+      "confidence": 0.99,
+      "evidence": [
+        "icon0.ovl",
+        "source_mt=game/overlay",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "overlay_chain_name__1ED0",
+      "rtl_vs_game": "game"
+    },
+    {
+      "id": "ICON.EXE:fp13",
+      "image": "ICON.EXE",
+      "label": "overlay_chain_name__1EED",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 7917,
+      "image_offset": 7405,
+      "role": "overlay_chain_name",
+      "pattern_id": "str_icon0",
+      "confidence": 0.99,
+      "evidence": [
+        "icon0.ovl",
+        "source_mt=game/overlay",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "overlay_chain_name__1EED",
+      "rtl_vs_game": "game"
+    },
+    {
+      "id": "ICON.EXE:fp14",
+      "image": "ICON.EXE",
+      "label": "cga_requirement__1ACC",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 6860,
+      "image_offset": 6348,
+      "role": "cga_requirement",
+      "pattern_id": "str_cga",
+      "confidence": 0.95,
+      "evidence": [
+        "Color Graphics",
+        "source_mt=game",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "cga_requirement__1ACC",
+      "rtl_vs_game": "game"
+    },
+    {
+      "id": "ICON.EXE:fp15",
+      "image": "ICON.EXE",
+      "label": "rtl_oom__674B",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 26443,
+      "image_offset": 25931,
+      "role": "rtl_oom",
+      "pattern_id": "str_out_of_memory",
+      "confidence": 0.9,
+      "evidence": [
+        "OUT OF MEMORY",
+        "source_mt=INIPC.I86",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "rtl_oom__674B",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON0.OVL:fp16",
+      "image": "ICON0.OVL",
+      "label": "pascal_mt_segment_table__0203",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 515,
+      "image_offset": 3,
+      "role": "pascal_mt_segment_table",
+      "pattern_id": "entry_segtable",
+      "confidence": 0.99,
+      "evidence": [
+        "words 0C80,08B0,0090,0000 after CALL",
+        "source_mt=INIPC.I86 segment sizes at CS+3..+9",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "pascal_mt_segment_table__0203",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON0.OVL:fp17",
+      "image": "ICON0.OVL",
+      "label": "pascal_mt_startup_call__0200",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 512,
+      "image_offset": 0,
+      "role": "pascal_mt_startup_call",
+      "pattern_id": "entry_e8",
+      "confidence": 0.99,
+      "evidence": [
+        "E8 rel16 \u2192 IP 4C6Dh",
+        "source_mt=INIPC/PASLIB startup",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "pascal_mt_startup_call__0200",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON0.OVL:fp18",
+      "image": "ICON0.OVL",
+      "label": "startup_read_data_size_paras__4EF1",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 20209,
+      "image_offset": 19697,
+      "role": "startup_read_data_size_paras",
+      "pattern_id": "inipc_cs_word_5",
+      "confidence": 0.95,
+      "evidence": [
+        "2ea10500",
+        "source_mt=INIPC.I86 CS:WORD PTR [5]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_read_data_size_paras__4EF1",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON0.OVL:fp19",
+      "image": "ICON0.OVL",
+      "label": "startup_read_extra_size_paras__4EFC",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 20220,
+      "image_offset": 19708,
+      "role": "startup_read_extra_size_paras",
+      "pattern_id": "inipc_cs_word_9",
+      "confidence": 0.95,
+      "evidence": [
+        "2ea10900",
+        "source_mt=INIPC.I86 CS:WORD PTR [9]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_read_extra_size_paras__4EFC",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON0.OVL:fp20",
+      "image": "ICON0.OVL",
+      "label": "startup_add_code_size__4E6F",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 20079,
+      "image_offset": 19567,
+      "role": "startup_add_code_size",
+      "pattern_id": "inipc_add_cs_3",
+      "confidence": 0.9,
+      "evidence": [
+        "2e03060300",
+        "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [3]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_add_code_size__4E6F",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON0.OVL:fp21",
+      "image": "ICON0.OVL",
+      "label": "startup_add_code_size__4EAC",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 20140,
+      "image_offset": 19628,
+      "role": "startup_add_code_size",
+      "pattern_id": "inipc_add_cs_3",
+      "confidence": 0.9,
+      "evidence": [
+        "2e03060300",
+        "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [3]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_add_code_size__4EAC",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON0.OVL:fp22",
+      "image": "ICON0.OVL",
+      "label": "startup_add_data_size__4E74",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 20084,
+      "image_offset": 19572,
+      "role": "startup_add_data_size",
+      "pattern_id": "inipc_add_cs_5",
+      "confidence": 0.9,
+      "evidence": [
+        "2e03060500",
+        "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [5]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_add_data_size__4E74",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON0.OVL:fp23",
+      "image": "ICON0.OVL",
+      "label": "startup_add_data_size__4EC9",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 20169,
+      "image_offset": 19657,
+      "role": "startup_add_data_size",
+      "pattern_id": "inipc_add_cs_5",
+      "confidence": 0.9,
+      "evidence": [
+        "2e03060500",
+        "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [5]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_add_data_size__4EC9",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON0.OVL:fp24",
+      "image": "ICON0.OVL",
+      "label": "startup_add_stack_size__4E79",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 20089,
+      "image_offset": 19577,
+      "role": "startup_add_stack_size",
+      "pattern_id": "inipc_add_cs_7",
+      "confidence": 0.9,
+      "evidence": [
+        "2e03060700",
+        "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [7]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_add_stack_size__4E79",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON0.OVL:fp25",
+      "image": "ICON0.OVL",
+      "label": "dos_print_string__4EA2",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 20130,
+      "image_offset": 19618,
+      "role": "dos_print_string",
+      "pattern_id": "int21_ah09",
+      "confidence": 0.7,
+      "evidence": [
+        "b409cd21",
+        "source_mt=INIPC OUTOFMEM / DOS print $",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "dos_print_string__4EA2",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON0.OVL:fp26",
+      "image": "ICON0.OVL",
+      "label": "rtl_error_string__02F4",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 756,
+      "image_offset": 244,
+      "role": "rtl_error_string",
+      "pattern_id": "str_pascal_mt_error",
+      "confidence": 0.99,
+      "evidence": [
+        "Pascal MT+ Error",
+        "source_mt=PASLIB/runtime",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "rtl_error_string__02F4",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON0.OVL:fp27",
+      "image": "ICON0.OVL",
+      "label": "overlay_chain_name__20E6",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 8422,
+      "image_offset": 7910,
+      "role": "overlay_chain_name",
+      "pattern_id": "str_icon1",
+      "confidence": 0.99,
+      "evidence": [
+        "icon1.ovl",
+        "source_mt=game/overlay",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "overlay_chain_name__20E6",
+      "rtl_vs_game": "game"
+    },
+    {
+      "id": "ICON0.OVL:fp28",
+      "image": "ICON0.OVL",
+      "label": "overlay_chain_name__2103",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 8451,
+      "image_offset": 7939,
+      "role": "overlay_chain_name",
+      "pattern_id": "str_icon1",
+      "confidence": 0.99,
+      "evidence": [
+        "icon1.ovl",
+        "source_mt=game/overlay",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "overlay_chain_name__2103",
+      "rtl_vs_game": "game"
+    },
+    {
+      "id": "ICON0.OVL:fp29",
+      "image": "ICON0.OVL",
+      "label": "rtl_oom__4E8D",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 20109,
+      "image_offset": 19597,
+      "role": "rtl_oom",
+      "pattern_id": "str_out_of_memory",
+      "confidence": 0.9,
+      "evidence": [
+        "OUT OF MEMORY",
+        "source_mt=INIPC.I86",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "rtl_oom__4E8D",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON1.OVL:fp30",
+      "image": "ICON1.OVL",
+      "label": "pascal_mt_segment_table__0203",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 515,
+      "image_offset": 3,
+      "role": "pascal_mt_segment_table",
+      "pattern_id": "entry_segtable",
+      "confidence": 0.99,
+      "evidence": [
+        "words 0C80,08B0,0090,0000 after CALL",
+        "source_mt=INIPC.I86 segment sizes at CS+3..+9",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "pascal_mt_segment_table__0203",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON1.OVL:fp31",
+      "image": "ICON1.OVL",
+      "label": "pascal_mt_startup_call__0200",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 512,
+      "image_offset": 0,
+      "role": "pascal_mt_startup_call",
+      "pattern_id": "entry_e8",
+      "confidence": 0.99,
+      "evidence": [
+        "E8 rel16 \u2192 IP A085h",
+        "source_mt=INIPC/PASLIB startup",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "pascal_mt_startup_call__0200",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON1.OVL:fp32",
+      "image": "ICON1.OVL",
+      "label": "startup_read_data_size_paras__A309",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 41737,
+      "image_offset": 41225,
+      "role": "startup_read_data_size_paras",
+      "pattern_id": "inipc_cs_word_5",
+      "confidence": 0.95,
+      "evidence": [
+        "2ea10500",
+        "source_mt=INIPC.I86 CS:WORD PTR [5]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_read_data_size_paras__A309",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON1.OVL:fp33",
+      "image": "ICON1.OVL",
+      "label": "startup_read_extra_size_paras__A314",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 41748,
+      "image_offset": 41236,
+      "role": "startup_read_extra_size_paras",
+      "pattern_id": "inipc_cs_word_9",
+      "confidence": 0.95,
+      "evidence": [
+        "2ea10900",
+        "source_mt=INIPC.I86 CS:WORD PTR [9]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_read_extra_size_paras__A314",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON1.OVL:fp34",
+      "image": "ICON1.OVL",
+      "label": "startup_add_code_size__A287",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 41607,
+      "image_offset": 41095,
+      "role": "startup_add_code_size",
+      "pattern_id": "inipc_add_cs_3",
+      "confidence": 0.9,
+      "evidence": [
+        "2e03060300",
+        "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [3]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_add_code_size__A287",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON1.OVL:fp35",
+      "image": "ICON1.OVL",
+      "label": "startup_add_code_size__A2C4",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 41668,
+      "image_offset": 41156,
+      "role": "startup_add_code_size",
+      "pattern_id": "inipc_add_cs_3",
+      "confidence": 0.9,
+      "evidence": [
+        "2e03060300",
+        "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [3]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_add_code_size__A2C4",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON1.OVL:fp36",
+      "image": "ICON1.OVL",
+      "label": "startup_add_data_size__A28C",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 41612,
+      "image_offset": 41100,
+      "role": "startup_add_data_size",
+      "pattern_id": "inipc_add_cs_5",
+      "confidence": 0.9,
+      "evidence": [
+        "2e03060500",
+        "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [5]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_add_data_size__A28C",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON1.OVL:fp37",
+      "image": "ICON1.OVL",
+      "label": "startup_add_data_size__A2E1",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 41697,
+      "image_offset": 41185,
+      "role": "startup_add_data_size",
+      "pattern_id": "inipc_add_cs_5",
+      "confidence": 0.9,
+      "evidence": [
+        "2e03060500",
+        "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [5]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_add_data_size__A2E1",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON1.OVL:fp38",
+      "image": "ICON1.OVL",
+      "label": "startup_add_stack_size__A291",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 41617,
+      "image_offset": 41105,
+      "role": "startup_add_stack_size",
+      "pattern_id": "inipc_add_cs_7",
+      "confidence": 0.9,
+      "evidence": [
+        "2e03060700",
+        "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [7]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_add_stack_size__A291",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON1.OVL:fp39",
+      "image": "ICON1.OVL",
+      "label": "dos_print_string__A2BA",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 41658,
+      "image_offset": 41146,
+      "role": "dos_print_string",
+      "pattern_id": "int21_ah09",
+      "confidence": 0.7,
+      "evidence": [
+        "b409cd21",
+        "source_mt=INIPC OUTOFMEM / DOS print $",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "dos_print_string__A2BA",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON1.OVL:fp40",
+      "image": "ICON1.OVL",
+      "label": "rtl_error_string__0306",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 774,
+      "image_offset": 262,
+      "role": "rtl_error_string",
+      "pattern_id": "str_pascal_mt_error",
+      "confidence": 0.99,
+      "evidence": [
+        "Pascal MT+ Error",
+        "source_mt=PASLIB/runtime",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "rtl_error_string__0306",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON1.OVL:fp41",
+      "image": "ICON1.OVL",
+      "label": "overlay_chain_name__282F",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 10287,
+      "image_offset": 9775,
+      "role": "overlay_chain_name",
+      "pattern_id": "str_icon0",
+      "confidence": 0.99,
+      "evidence": [
+        "icon0.ovl",
+        "source_mt=game/overlay",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "overlay_chain_name__282F",
+      "rtl_vs_game": "game"
+    },
+    {
+      "id": "ICON1.OVL:fp42",
+      "image": "ICON1.OVL",
+      "label": "overlay_chain_name__2812",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 10258,
+      "image_offset": 9746,
+      "role": "overlay_chain_name",
+      "pattern_id": "str_icon2",
+      "confidence": 0.99,
+      "evidence": [
+        "icon2.ovl",
+        "source_mt=game/overlay",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "overlay_chain_name__2812",
+      "rtl_vs_game": "game"
+    },
+    {
+      "id": "ICON1.OVL:fp43",
+      "image": "ICON1.OVL",
+      "label": "overlay_chain_name__284C",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 10316,
+      "image_offset": 9804,
+      "role": "overlay_chain_name",
+      "pattern_id": "str_icon2",
+      "confidence": 0.99,
+      "evidence": [
+        "icon2.ovl",
+        "source_mt=game/overlay",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "overlay_chain_name__284C",
+      "rtl_vs_game": "game"
+    },
+    {
+      "id": "ICON1.OVL:fp44",
+      "image": "ICON1.OVL",
+      "label": "overlay_chain_name__293C",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 10556,
+      "image_offset": 10044,
+      "role": "overlay_chain_name",
+      "pattern_id": "str_icon2",
+      "confidence": 0.99,
+      "evidence": [
+        "icon2.ovl",
+        "source_mt=game/overlay",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "overlay_chain_name__293C",
+      "rtl_vs_game": "game"
+    },
+    {
+      "id": "ICON1.OVL:fp45",
+      "image": "ICON1.OVL",
+      "label": "overlay_chain_name__2959",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 10585,
+      "image_offset": 10073,
+      "role": "overlay_chain_name",
+      "pattern_id": "str_icon2",
+      "confidence": 0.99,
+      "evidence": [
+        "icon2.ovl",
+        "source_mt=game/overlay",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "overlay_chain_name__2959",
+      "rtl_vs_game": "game"
+    },
+    {
+      "id": "ICON1.OVL:fp46",
+      "image": "ICON1.OVL",
+      "label": "rtl_oom__A2A5",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 41637,
+      "image_offset": 41125,
+      "role": "rtl_oom",
+      "pattern_id": "str_out_of_memory",
+      "confidence": 0.9,
+      "evidence": [
+        "OUT OF MEMORY",
+        "source_mt=INIPC.I86",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "rtl_oom__A2A5",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON2.OVL:fp47",
+      "image": "ICON2.OVL",
+      "label": "pascal_mt_segment_table__0203",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 515,
+      "image_offset": 3,
+      "role": "pascal_mt_segment_table",
+      "pattern_id": "entry_segtable",
+      "confidence": 0.99,
+      "evidence": [
+        "words 0C80,08B0,0090,0000 after CALL",
+        "source_mt=INIPC.I86 segment sizes at CS+3..+9",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "pascal_mt_segment_table__0203",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON2.OVL:fp48",
+      "image": "ICON2.OVL",
+      "label": "pascal_mt_startup_call__0200",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 512,
+      "image_offset": 0,
+      "role": "pascal_mt_startup_call",
+      "pattern_id": "entry_e8",
+      "confidence": 0.99,
+      "evidence": [
+        "E8 rel16 \u2192 IP 36BBh",
+        "source_mt=INIPC/PASLIB startup",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "pascal_mt_startup_call__0200",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON2.OVL:fp49",
+      "image": "ICON2.OVL",
+      "label": "startup_read_data_size_paras__393F",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 14655,
+      "image_offset": 14143,
+      "role": "startup_read_data_size_paras",
+      "pattern_id": "inipc_cs_word_5",
+      "confidence": 0.95,
+      "evidence": [
+        "2ea10500",
+        "source_mt=INIPC.I86 CS:WORD PTR [5]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_read_data_size_paras__393F",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON2.OVL:fp50",
+      "image": "ICON2.OVL",
+      "label": "startup_read_extra_size_paras__394A",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 14666,
+      "image_offset": 14154,
+      "role": "startup_read_extra_size_paras",
+      "pattern_id": "inipc_cs_word_9",
+      "confidence": 0.95,
+      "evidence": [
+        "2ea10900",
+        "source_mt=INIPC.I86 CS:WORD PTR [9]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_read_extra_size_paras__394A",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON2.OVL:fp51",
+      "image": "ICON2.OVL",
+      "label": "startup_add_code_size__38BD",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 14525,
+      "image_offset": 14013,
+      "role": "startup_add_code_size",
+      "pattern_id": "inipc_add_cs_3",
+      "confidence": 0.9,
+      "evidence": [
+        "2e03060300",
+        "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [3]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_add_code_size__38BD",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON2.OVL:fp52",
+      "image": "ICON2.OVL",
+      "label": "startup_add_code_size__38FA",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 14586,
+      "image_offset": 14074,
+      "role": "startup_add_code_size",
+      "pattern_id": "inipc_add_cs_3",
+      "confidence": 0.9,
+      "evidence": [
+        "2e03060300",
+        "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [3]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_add_code_size__38FA",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON2.OVL:fp53",
+      "image": "ICON2.OVL",
+      "label": "startup_add_data_size__38C2",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 14530,
+      "image_offset": 14018,
+      "role": "startup_add_data_size",
+      "pattern_id": "inipc_add_cs_5",
+      "confidence": 0.9,
+      "evidence": [
+        "2e03060500",
+        "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [5]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_add_data_size__38C2",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON2.OVL:fp54",
+      "image": "ICON2.OVL",
+      "label": "startup_add_data_size__3917",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 14615,
+      "image_offset": 14103,
+      "role": "startup_add_data_size",
+      "pattern_id": "inipc_add_cs_5",
+      "confidence": 0.9,
+      "evidence": [
+        "2e03060500",
+        "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [5]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_add_data_size__3917",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON2.OVL:fp55",
+      "image": "ICON2.OVL",
+      "label": "startup_add_stack_size__38C7",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 14535,
+      "image_offset": 14023,
+      "role": "startup_add_stack_size",
+      "pattern_id": "inipc_add_cs_7",
+      "confidence": 0.9,
+      "evidence": [
+        "2e03060700",
+        "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [7]",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "startup_add_stack_size__38C7",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON2.OVL:fp56",
+      "image": "ICON2.OVL",
+      "label": "dos_print_string__38F0",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 14576,
+      "image_offset": 14064,
+      "role": "dos_print_string",
+      "pattern_id": "int21_ah09",
+      "confidence": 0.7,
+      "evidence": [
+        "b409cd21",
+        "source_mt=INIPC OUTOFMEM / DOS print $",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "dos_print_string__38F0",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON2.OVL:fp57",
+      "image": "ICON2.OVL",
+      "label": "rtl_error_string__02DC",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 732,
+      "image_offset": 220,
+      "role": "rtl_error_string",
+      "pattern_id": "str_pascal_mt_error",
+      "confidence": 0.99,
+      "evidence": [
+        "Pascal MT+ Error",
+        "source_mt=PASLIB/runtime",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "rtl_error_string__02DC",
+      "rtl_vs_game": "rtl"
+    },
+    {
+      "id": "ICON2.OVL:fp58",
+      "image": "ICON2.OVL",
+      "label": "game_version_string__0AC6",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 2758,
+      "image_offset": 2246,
+      "role": "game_version_string",
+      "pattern_id": "str_icon_11",
+      "confidence": 0.99,
+      "evidence": [
+        "ICON 1.1",
+        "source_mt=game",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "game_version_string__0AC6",
+      "rtl_vs_game": "game"
+    },
+    {
+      "id": "ICON2.OVL:fp59",
+      "image": "ICON2.OVL",
+      "label": "rtl_oom__38DB",
+      "kind": "fingerprint_site",
+      "tier": "A",
+      "target_ip": null,
+      "file_offset": 14555,
+      "image_offset": 14043,
+      "role": "rtl_oom",
+      "pattern_id": "str_out_of_memory",
+      "confidence": 0.9,
+      "evidence": [
+        "OUT OF MEMORY",
+        "source_mt=INIPC.I86",
+        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+      ],
+      "ghidra_name": "rtl_oom__38DB",
+      "rtl_vs_game": "rtl"
+    }
+  ],
+  "chain_model": {
+    "order": [
+      "ICON.EXE",
+      "ICON0.OVL",
+      "ICON1.OVL",
+      "ICON2.OVL"
+    ],
+    "shared": "Pascal MT+ entry CALL + segment table at CS+3",
+    "icon_exe_startup_ip": "652B",
+    "icon_exe_startup_file": "0x672B"
+  },
+  "ghidra_import_notes": "Apply ghidra_name at file_offset (or target_ip for jump slots) in project analysis/ghidra/icon_project. Labels are stable RE names, not original Pascal symbols."
+}

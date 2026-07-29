@@ -1,0 +1,13 @@
+pascal_mt_segment_table__0203 00000203
+pascal_mt_startup_call__0200 00000200
+startup_read_data_size_paras__393F 0000393F
+startup_read_extra_size_paras__394A 0000394A
+startup_add_code_size__38BD 000038BD
+startup_add_code_size__38FA 000038FA
+startup_add_data_size__38C2 000038C2
+startup_add_data_size__3917 00003917
+startup_add_stack_size__38C7 000038C7
+dos_print_string__38F0 000038F0
+rtl_error_string__02DC 000002DC
+game_version_string__0AC6 00000AC6
+rtl_oom__38DB 000038DB

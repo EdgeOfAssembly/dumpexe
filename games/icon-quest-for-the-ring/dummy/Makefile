@@ -14,6 +14,8 @@ icon_dummy.com: icon_dummy.asm
 	$(UASM) -bin -Fo $@ $<
 
 install: icon_dummy.com
+	# DOS 8.3: icon_dummy.com is not a valid short name — install as DUMMY.COM
+	cp -f icon_dummy.com $(ICONDIR)/DUMMY.COM
 	cp -f icon_dummy.com $(ICONDIR)/icon_dummy.com
 
 install-rt:

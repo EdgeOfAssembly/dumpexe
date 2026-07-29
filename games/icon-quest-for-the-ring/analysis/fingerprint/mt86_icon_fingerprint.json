@@ -1,0 +1,447 @@
+{
+  "version": 1,
+  "compiler": "Pascal MT+86 3.1.1 for MS-DOS (Digital Research, 12-03-84)",
+  "sources": "/tmp/Pascal MT-86 3.1.1 for MSDOS/b",
+  "images": {
+    "ICON.EXE": {
+      "file": "ICON.EXE",
+      "sha256": "0b2e33559b9b1aa3005c51b0695ae08b40c60f601c645c50e80c8e4304894bd4",
+      "header_size": 512,
+      "image_size": 34816,
+      "entry_hex": "e82865800cb008900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "segment_table": {
+        "code_paras": 3200,
+        "data_paras": 2224,
+        "stack_paras": 144,
+        "extra_paras": 0
+      },
+      "matches": {
+        "pascal_mt_error_str": [
+          "0x2ee"
+        ],
+        "out_of_memory_str": [
+          "0x674b"
+        ],
+        "icon_1_1": [
+          "0x17d4"
+        ],
+        "icon0_ovl": [
+          "0x1ed0",
+          "0x1eed"
+        ],
+        "seg_table_0c80_08b0_0090": [
+          "0x203"
+        ],
+        "entry_call_plus_segtable_icon_style": [
+          "0x203"
+        ]
+      }
+    },
+    "ICON0.OVL": {
+      "file": "ICON0.OVL",
+      "sha256": "07b8f4967dc4d2e108b7e6fdc43cdf8876d53bb3502aa2322d37e8b84b14bb1e",
+      "header_size": 512,
+      "image_size": 31232,
+      "entry_hex": "e86a4c800cb008900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "segment_table": {
+        "code_paras": 3200,
+        "data_paras": 2224,
+        "stack_paras": 144,
+        "extra_paras": 0
+      },
+      "matches": {
+        "pascal_mt_error_str": [
+          "0x2f4"
+        ],
+        "out_of_memory_str": [
+          "0x4e8d"
+        ],
+        "icon1_ovl": [
+          "0x20e6",
+          "0x2103"
+        ],
+        "seg_table_0c80_08b0_0090": [
+          "0x203"
+        ],
+        "entry_call_plus_segtable_icon_style": [
+          "0x203"
+        ]
+      }
+    },
+    "ICON1.OVL": {
+      "file": "ICON1.OVL",
+      "sha256": "fe67ce8b176cc7beaba5ad5cafaa1f151f5b21693ac9b0de577e2f57e7fc33f5",
+      "header_size": 512,
+      "image_size": 51200,
+      "entry_hex": "e882a0800cb008900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "segment_table": {
+        "code_paras": 3200,
+        "data_paras": 2224,
+        "stack_paras": 144,
+        "extra_paras": 0
+      },
+      "matches": {
+        "pascal_mt_error_str": [
+          "0x306"
+        ],
+        "out_of_memory_str": [
+          "0xa2a5"
+        ],
+        "icon0_ovl": [
+          "0x282f"
+        ],
+        "icon2_ovl": [
+          "0x2812",
+          "0x284c",
+          "0x293c",
+          "0x2959"
+        ],
+        "seg_table_0c80_08b0_0090": [
+          "0x203"
+        ],
+        "entry_call_plus_segtable_icon_style": [
+          "0x203"
+        ]
+      }
+    },
+    "ICON2.OVL": {
+      "file": "ICON2.OVL",
+      "sha256": "9823d59ccfff5c2b64606c3e7dcbc194a87162a05e91345d108a7e34345519f3",
+      "header_size": 512,
+      "image_size": 23552,
+      "entry_hex": "e8b836800cb008900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "segment_table": {
+        "code_paras": 3200,
+        "data_paras": 2224,
+        "stack_paras": 144,
+        "extra_paras": 0
+      },
+      "matches": {
+        "pascal_mt_error_str": [
+          "0x2dc"
+        ],
+        "out_of_memory_str": [
+          "0x38db"
+        ],
+        "icon_1_1": [
+          "0xac6"
+        ],
+        "seg_table_0c80_08b0_0090": [
+          "0x203"
+        ],
+        "entry_call_plus_segtable_icon_style": [
+          "0x203"
+        ]
+      }
+    }
+  },
+  "signatures": [
+    {
+      "id": "pascal_mt_error_str",
+      "bytes_hex": "50617363616c204d542b204572726f72",
+      "role": "pascal_mt_error_str",
+      "hits": {
+        "ICON.EXE": [
+          "0x2ee"
+        ],
+        "ICON0.OVL": [
+          "0x2f4"
+        ],
+        "ICON1.OVL": [
+          "0x306"
+        ],
+        "ICON2.OVL": [
+          "0x2dc"
+        ]
+      }
+    },
+    {
+      "id": "out_of_memory_str",
+      "bytes_hex": "4f5554204f46204d454d4f5259",
+      "role": "out_of_memory_str",
+      "hits": {
+        "ICON.EXE": [
+          "0x674b"
+        ],
+        "ICON0.OVL": [
+          "0x4e8d"
+        ],
+        "ICON1.OVL": [
+          "0xa2a5"
+        ],
+        "ICON2.OVL": [
+          "0x38db"
+        ]
+      }
+    },
+    {
+      "id": "icon_1_1",
+      "bytes_hex": "49434f4e20312e31",
+      "role": "icon_1_1",
+      "hits": {
+        "ICON.EXE": [
+          "0x17d4"
+        ],
+        "ICON0.OVL": [],
+        "ICON1.OVL": [],
+        "ICON2.OVL": [
+          "0xac6"
+        ]
+      }
+    },
+    {
+      "id": "icon0_ovl",
+      "bytes_hex": "69636f6e302e6f766c",
+      "role": "icon0_ovl",
+      "hits": {
+        "ICON.EXE": [
+          "0x1ed0",
+          "0x1eed"
+        ],
+        "ICON0.OVL": [],
+        "ICON1.OVL": [
+          "0x282f"
+        ],
+        "ICON2.OVL": []
+      }
+    },
+    {
+      "id": "icon1_ovl",
+      "bytes_hex": "69636f6e312e6f766c",
+      "role": "icon1_ovl",
+      "hits": {
+        "ICON.EXE": [],
+        "ICON0.OVL": [
+          "0x20e6",
+          "0x2103"
+        ],
+        "ICON1.OVL": [],
+        "ICON2.OVL": []
+      }
+    },
+    {
+      "id": "icon2_ovl",
+      "bytes_hex": "69636f6e322e6f766c",
+      "role": "icon2_ovl",
+      "hits": {
+        "ICON.EXE": [],
+        "ICON0.OVL": [],
+        "ICON1.OVL": [
+          "0x2812",
+          "0x284c",
+          "0x293c",
+          "0x2959"
+        ],
+        "ICON2.OVL": []
+      }
+    },
+    {
+      "id": "seg_table_0c80_08b0_0090",
+      "bytes_hex": "800cb0089000",
+      "role": "seg_table_0c80_08b0_0090",
+      "hits": {
+        "ICON.EXE": [
+          "0x203"
+        ],
+        "ICON0.OVL": [
+          "0x203"
+        ],
+        "ICON1.OVL": [
+          "0x203"
+        ],
+        "ICON2.OVL": [
+          "0x203"
+        ]
+      }
+    },
+    {
+      "id": "entry_call_plus_segtable_icon_style",
+      "bytes_hex": "800cb0089000",
+      "role": "entry_call_plus_segtable_icon_style",
+      "hits": {
+        "ICON.EXE": [
+          "0x203"
+        ],
+        "ICON0.OVL": [
+          "0x203"
+        ],
+        "ICON1.OVL": [
+          "0x203"
+        ],
+        "ICON2.OVL": [
+          "0x203"
+        ]
+      }
+    }
+  ],
+  "rtl_roles": [
+    {
+      "id": "mt_startup_call",
+      "description": "Entry is near CALL into Pascal MT+ startup; following 8 bytes are segment table paragraphs (code,data,stack,extra)",
+      "source": "INIPC.I86 MEMOK path; ICON RE-NOTES",
+      "icon_evidence": "ICON.EXE file+0x200: E8 .. .. then 80 0c b0 08 90 00",
+      "annotate_as": "PascalMT+_startup_call + segment_table"
+    },
+    {
+      "id": "mt_error_string",
+      "description": "RTL error banner string",
+      "source": "PASLIB / runtime",
+      "icon_evidence": "file offset 0x2EE 'Pascal MT+ Error '",
+      "annotate_as": "str_Pascal_MT_Error"
+    },
+    {
+      "id": "overlay_chain_names",
+      "description": "Chain-load next overlay by name",
+      "source": "OVLMGRPC.I86 @OVL / game chain",
+      "icon_evidence": "icon0.ovl in EXE; icon1.ovl in ICON0",
+      "annotate_as": "overlay_filename"
+    },
+    {
+      "id": "jump_table_0090",
+      "description": "Near JMP dispatch table after RTL init (Pascal procedure vectors)",
+      "source": "ICON RE-NOTES + r2",
+      "icon_evidence": "IP 0x90: 23x E9 rel16",
+      "annotate_as": "proc_vector_table"
+    }
+  ],
+  "jump_table_0090": [
+    {
+      "slot": 0,
+      "ip": "0x90",
+      "target_ip": "0x1885",
+      "rel": 6130
+    },
+    {
+      "slot": 1,
+      "ip": "0x93",
+      "target_ip": "0xd5",
+      "rel": 63
+    },
+    {
+      "slot": 2,
+      "ip": "0x96",
+      "target_ip": "0x11a",
+      "rel": 129
+    },
+    {
+      "slot": 3,
+      "ip": "0x99",
+      "target_ip": "0x149",
+      "rel": 173
+    },
+    {
+      "slot": 4,
+      "ip": "0x9c",
+      "target_ip": "0x16f",
+      "rel": 208
+    },
+    {
+      "slot": 5,
+      "ip": "0x9f",
+      "target_ip": "0x1ad",
+      "rel": 267
+    },
+    {
+      "slot": 6,
+      "ip": "0xa2",
+      "target_ip": "0x1d2",
+      "rel": 301
+    },
+    {
+      "slot": 7,
+      "ip": "0xa5",
+      "target_ip": "0x2b8",
+      "rel": 528
+    },
+    {
+      "slot": 8,
+      "ip": "0xa8",
+      "target_ip": "0x892",
+      "rel": 2023
+    },
+    {
+      "slot": 9,
+      "ip": "0xab",
+      "target_ip": "0x332",
+      "rel": 644
+    },
+    {
+      "slot": 10,
+      "ip": "0xae",
+      "target_ip": "0x4bb",
+      "rel": 1034
+    },
+    {
+      "slot": 11,
+      "ip": "0xb1",
+      "target_ip": "0xb34",
+      "rel": 2688
+    },
+    {
+      "slot": 12,
+      "ip": "0xb4",
+      "target_ip": "0xbaf",
+      "rel": 2808
+    },
+    {
+      "slot": 13,
+      "ip": "0xb7",
+      "target_ip": "0xc05",
+      "rel": 2891
+    },
+    {
+      "slot": 14,
+      "ip": "0xba",
+      "target_ip": "0xf89",
+      "rel": 3788
+    },
+    {
+      "slot": 15,
+      "ip": "0xbd",
+      "target_ip": "0x1064",
+      "rel": 4004
+    },
+    {
+      "slot": 16,
+      "ip": "0xc0",
+      "target_ip": "0x125b",
+      "rel": 4504
+    },
+    {
+      "slot": 17,
+      "ip": "0xc3",
+      "target_ip": "0x140d",
+      "rel": 4935
+    },
+    {
+      "slot": 18,
+      "ip": "0xc6",
+      "target_ip": "0x1467",
+      "rel": 5022
+    },
+    {
+      "slot": 19,
+      "ip": "0xc9",
+      "target_ip": "0x165c",
+      "rel": 5520
+    },
+    {
+      "slot": 20,
+      "ip": "0xcc",
+      "target_ip": "0x16da",
+      "rel": 5643
+    },
+    {
+      "slot": 21,
+      "ip": "0xcf",
+      "target_ip": "0x16fa",
+      "rel": 5672
+    },
+    {
+      "slot": 22,
+      "ip": "0xd2",
+      "target_ip": "0x17b4",
+      "rel": 5855
+    }
+  ]
+}

@@ -1,0 +1,1091 @@
+{
+  "idAllocatorNext": 102,
+  "entryPoints": [
+    "017D:0000",
+    "F000:0006",
+    "F000:0011",
+    "F000:0057",
+    "F000:005D",
+    "F000:0067",
+    "F000:006C",
+    "F000:0071",
+    "F000:0076",
+    "F000:007B",
+    "F000:0080"
+  ],
+  "nodes": [
+    {
+      "id": 0,
+      "type": "instruction",
+      "addr": "F000:0006",
+      "bytes": "FE380800",
+      "speculative": true
+    },
+    {
+      "id": 1,
+      "type": "instruction",
+      "addr": "F000:000A",
+      "bytes": "CD1C",
+      "speculative": true
+    },
+    {
+      "id": 4,
+      "type": "instruction",
+      "addr": "F000:000C",
+      "bytes": "FE380101",
+      "speculative": true
+    },
+    {
+      "id": 6,
+      "type": "instruction",
+      "addr": "F000:0010",
+      "bytes": "CF",
+      "speculative": true
+    },
+    {
+      "id": 8,
+      "type": "instruction",
+      "addr": "F000:0011",
+      "bytes": "FE380900",
+      "speculative": true
+    },
+    {
+      "id": 9,
+      "type": "instruction",
+      "addr": "F000:0015",
+      "bytes": "CF",
+      "speculative": true
+    },
+    {
+      "id": 12,
+      "type": "instruction",
+      "addr": "F000:0057",
+      "bytes": "FE387000",
+      "speculative": true
+    },
+    {
+      "id": 13,
+      "type": "instruction",
+      "addr": "F000:005B",
+      "bytes": "CF",
+      "speculative": true
+    },
+    {
+      "id": 16,
+      "type": "instruction",
+      "addr": "F000:005D",
+      "bytes": "9AE30000F0",
+      "speculative": true
+    },
+    {
+      "id": 17,
+      "type": "instruction",
+      "addr": "F000:00E3",
+      "bytes": "FE380C01",
+      "speculative": true
+    },
+    {
+      "id": 20,
+      "type": "instruction",
+      "addr": "F000:0062",
+      "bytes": "FE387400",
+      "speculative": true
+    },
+    {
+      "id": 22,
+      "type": "instruction",
+      "addr": "F000:00E7",
+      "bytes": "9AE20000F0",
+      "speculative": true
+    },
+    {
+      "id": 24,
+      "type": "instruction",
+      "addr": "F000:0066",
+      "bytes": "CF",
+      "speculative": true
+    },
+    {
+      "id": 26,
+      "type": "instruction",
+      "addr": "F000:00E2",
+      "bytes": "CB",
+      "speculative": true
+    },
+    {
+      "id": 28,
+      "type": "instruction",
+      "addr": "F000:00EC",
+      "bytes": "FE380D01",
+      "speculative": true
+    },
+    {
+      "id": 30,
+      "type": "instruction",
+      "addr": "F000:00F0",
+      "bytes": "CB",
+      "speculative": true
+    },
+    {
+      "id": 32,
+      "type": "instruction",
+      "addr": "F000:0067",
+      "bytes": "FE380401",
+      "speculative": true
+    },
+    {
+      "id": 33,
+      "type": "instruction",
+      "addr": "F000:006B",
+      "bytes": "CF",
+      "speculative": true
+    },
+    {
+      "id": 36,
+      "type": "instruction",
+      "addr": "F000:006C",
+      "bytes": "FE380501",
+      "speculative": true
+    },
+    {
+      "id": 37,
+      "type": "instruction",
+      "addr": "F000:0070",
+      "bytes": "CF",
+      "speculative": true
+    },
+    {
+      "id": 40,
+      "type": "instruction",
+      "addr": "F000:0071",
+      "bytes": "FE380601",
+      "speculative": true
+    },
+    {
+      "id": 41,
+      "type": "instruction",
+      "addr": "F000:0075",
+      "bytes": "CF",
+      "speculative": true
+    },
+    {
+      "id": 44,
+      "type": "instruction",
+      "addr": "F000:0076",
+      "bytes": "FE380701",
+      "speculative": true
+    },
+    {
+      "id": 45,
+      "type": "instruction",
+      "addr": "F000:007A",
+      "bytes": "CF",
+      "speculative": true
+    },
+    {
+      "id": 48,
+      "type": "instruction",
+      "addr": "F000:007B",
+      "bytes": "FE380801",
+      "speculative": true
+    },
+    {
+      "id": 49,
+      "type": "instruction",
+      "addr": "F000:007F",
+      "bytes": "CF",
+      "speculative": true
+    },
+    {
+      "id": 52,
+      "type": "instruction",
+      "addr": "F000:0080",
+      "bytes": "FE380901",
+      "speculative": true
+    },
+    {
+      "id": 53,
+      "type": "instruction",
+      "addr": "F000:0084",
+      "bytes": "CF",
+      "speculative": true
+    },
+    {
+      "id": 56,
+      "type": "instruction",
+      "addr": "017D:0000",
+      "bytes": "E82865"
+    },
+    {
+      "id": 57,
+      "type": "instruction",
+      "addr": "017D:652B",
+      "bytes": "8CC8",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 60,
+      "type": "instruction",
+      "addr": "017D:652D",
+      "bytes": "2E03060300",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 61,
+      "type": "instruction",
+      "addr": "017D:6532",
+      "bytes": "2E03060500",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 62,
+      "type": "instruction",
+      "addr": "017D:6537",
+      "bytes": "2E03060700",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 63,
+      "type": "instruction",
+      "addr": "017D:653C",
+      "bytes": "2E03060900",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 64,
+      "type": "instruction",
+      "addr": "017D:6541",
+      "bytes": "3B060200",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 65,
+      "type": "instruction",
+      "addr": "017D:6545",
+      "bytes": "7621",
+      "maxSucc": 2,
+      "speculative": true
+    },
+    {
+      "id": 66,
+      "type": "instruction",
+      "addr": "017D:6568",
+      "bytes": "8CC8",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 68,
+      "type": "instruction",
+      "addr": "017D:6547",
+      "bytes": "1E",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 70,
+      "type": "instruction",
+      "addr": "017D:656A",
+      "bytes": "2E03060300",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 71,
+      "type": "instruction",
+      "addr": "017D:6548",
+      "bytes": "E81000",
+      "speculative": true
+    },
+    {
+      "id": 72,
+      "type": "instruction",
+      "addr": "017D:656F",
+      "bytes": "8EC0",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 73,
+      "type": "instruction",
+      "addr": "017D:655B",
+      "bytes": "8CC8",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 75,
+      "type": "instruction",
+      "addr": "017D:6571",
+      "bytes": "BF0000",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 76,
+      "type": "instruction",
+      "addr": "017D:655D",
+      "bytes": "8ED8",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 77,
+      "type": "instruction",
+      "addr": "017D:6574",
+      "bytes": "8BF7",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 78,
+      "type": "instruction",
+      "addr": "017D:655F",
+      "bytes": "5A",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 79,
+      "type": "instruction",
+      "addr": "017D:6576",
+      "bytes": "FC",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 80,
+      "type": "instruction",
+      "addr": "017D:6560",
+      "bytes": "B409",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 81,
+      "type": "instruction",
+      "addr": "017D:6577",
+      "bytes": "B90001",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 82,
+      "type": "instruction",
+      "addr": "017D:6562",
+      "bytes": "CD21",
+      "speculative": true
+    },
+    {
+      "id": 83,
+      "type": "instruction",
+      "addr": "017D:657A",
+      "bytes": "F3A4",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 84,
+      "type": "instruction",
+      "addr": "017D:657C",
+      "bytes": "268C1E4000",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 85,
+      "type": "instruction",
+      "addr": "017D:6581",
+      "bytes": "8ED8",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 86,
+      "type": "instruction",
+      "addr": "017D:6583",
+      "bytes": "8C1E0900",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 87,
+      "type": "instruction",
+      "addr": "017D:6587",
+      "bytes": "2E03060500",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 88,
+      "type": "instruction",
+      "addr": "017D:658C",
+      "bytes": "A30F00",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 89,
+      "type": "instruction",
+      "addr": "017D:658F",
+      "bytes": "2E03060900",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 90,
+      "type": "instruction",
+      "addr": "017D:6594",
+      "bytes": "A31500",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 91,
+      "type": "instruction",
+      "addr": "017D:6597",
+      "bytes": "B90400",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 92,
+      "type": "instruction",
+      "addr": "017D:659A",
+      "bytes": "2E8B1E0700",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 93,
+      "type": "instruction",
+      "addr": "017D:659F",
+      "bytes": "D3E3",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 94,
+      "type": "instruction",
+      "addr": "017D:65A1",
+      "bytes": "891E1200",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 95,
+      "type": "instruction",
+      "addr": "017D:65A5",
+      "bytes": "9C",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 96,
+      "type": "instruction",
+      "addr": "017D:65A6",
+      "bytes": "5A",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 97,
+      "type": "instruction",
+      "addr": "017D:65A7",
+      "bytes": "FA",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 99,
+      "type": "instruction",
+      "addr": "017D:65A8",
+      "bytes": "8ED0",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 100,
+      "type": "instruction",
+      "addr": "017D:65AA",
+      "bytes": "8BE3",
+      "maxSucc": 1,
+      "speculative": true
+    },
+    {
+      "id": 101,
+      "type": "instruction",
+      "addr": "017D:65AC",
+      "bytes": "FB",
+      "maxSucc": 1,
+      "speculative": true
+    }
+  ],
+  "edges": [
+    {
+      "from": 0,
+      "to": 1,
+      "type": "Normal"
+    },
+    {
+      "from": 1,
+      "to": 4,
+      "type": "CallToReturn"
+    },
+    {
+      "from": 4,
+      "to": 6,
+      "type": "Normal"
+    },
+    {
+      "from": 8,
+      "to": 9,
+      "type": "Normal"
+    },
+    {
+      "from": 12,
+      "to": 13,
+      "type": "Normal"
+    },
+    {
+      "from": 16,
+      "to": 17,
+      "type": "Normal"
+    },
+    {
+      "from": 16,
+      "to": 20,
+      "type": "CallToReturn"
+    },
+    {
+      "from": 17,
+      "to": 22,
+      "type": "Normal"
+    },
+    {
+      "from": 20,
+      "to": 24,
+      "type": "Normal"
+    },
+    {
+      "from": 22,
+      "to": 26,
+      "type": "Normal"
+    },
+    {
+      "from": 22,
+      "to": 28,
+      "type": "CallToReturn"
+    },
+    {
+      "from": 28,
+      "to": 30,
+      "type": "Normal"
+    },
+    {
+      "from": 32,
+      "to": 33,
+      "type": "Normal"
+    },
+    {
+      "from": 36,
+      "to": 37,
+      "type": "Normal"
+    },
+    {
+      "from": 40,
+      "to": 41,
+      "type": "Normal"
+    },
+    {
+      "from": 44,
+      "to": 45,
+      "type": "Normal"
+    },
+    {
+      "from": 48,
+      "to": 49,
+      "type": "Normal"
+    },
+    {
+      "from": 52,
+      "to": 53,
+      "type": "Normal"
+    },
+    {
+      "from": 56,
+      "to": 57,
+      "type": "Normal"
+    },
+    {
+      "from": 57,
+      "to": 60,
+      "type": "Normal"
+    },
+    {
+      "from": 60,
+      "to": 61,
+      "type": "Normal"
+    },
+    {
+      "from": 61,
+      "to": 62,
+      "type": "Normal"
+    },
+    {
+      "from": 62,
+      "to": 63,
+      "type": "Normal"
+    },
+    {
+      "from": 63,
+      "to": 64,
+      "type": "Normal"
+    },
+    {
+      "from": 64,
+      "to": 65,
+      "type": "Normal"
+    },
+    {
+      "from": 65,
+      "to": 66,
+      "type": "Normal"
+    },
+    {
+      "from": 65,
+      "to": 68,
+      "type": "Normal"
+    },
+    {
+      "from": 66,
+      "to": 70,
+      "type": "Normal"
+    },
+    {
+      "from": 68,
+      "to": 71,
+      "type": "Normal"
+    },
+    {
+      "from": 70,
+      "to": 72,
+      "type": "Normal"
+    },
+    {
+      "from": 71,
+      "to": 73,
+      "type": "Normal"
+    },
+    {
+      "from": 72,
+      "to": 75,
+      "type": "Normal"
+    },
+    {
+      "from": 73,
+      "to": 76,
+      "type": "Normal"
+    },
+    {
+      "from": 75,
+      "to": 77,
+      "type": "Normal"
+    },
+    {
+      "from": 76,
+      "to": 78,
+      "type": "Normal"
+    },
+    {
+      "from": 77,
+      "to": 79,
+      "type": "Normal"
+    },
+    {
+      "from": 78,
+      "to": 80,
+      "type": "Normal"
+    },
+    {
+      "from": 79,
+      "to": 81,
+      "type": "Normal"
+    },
+    {
+      "from": 80,
+      "to": 82,
+      "type": "Normal"
+    },
+    {
+      "from": 81,
+      "to": 83,
+      "type": "Normal"
+    },
+    {
+      "from": 83,
+      "to": 84,
+      "type": "Normal"
+    },
+    {
+      "from": 84,
+      "to": 85,
+      "type": "Normal"
+    },
+    {
+      "from": 85,
+      "to": 86,
+      "type": "Normal"
+    },
+    {
+      "from": 86,
+      "to": 87,
+      "type": "Normal"
+    },
+    {
+      "from": 87,
+      "to": 88,
+      "type": "Normal"
+    },
+    {
+      "from": 88,
+      "to": 89,
+      "type": "Normal"
+    },
+    {
+      "from": 89,
+      "to": 90,
+      "type": "Normal"
+    },
+    {
+      "from": 90,
+      "to": 91,
+      "type": "Normal"
+    },
+    {
+      "from": 91,
+      "to": 92,
+      "type": "Normal"
+    },
+    {
+      "from": 92,
+      "to": 93,
+      "type": "Normal"
+    },
+    {
+      "from": 93,
+      "to": 94,
+      "type": "Normal"
+    },
+    {
+      "from": 94,
+      "to": 95,
+      "type": "Normal"
+    },
+    {
+      "from": 95,
+      "to": 96,
+      "type": "Normal"
+    },
+    {
+      "from": 96,
+      "to": 97,
+      "type": "Normal"
+    },
+    {
+      "from": 97,
+      "to": 99,
+      "type": "Normal"
+    },
+    {
+      "from": 99,
+      "to": 100,
+      "type": "Normal"
+    },
+    {
+      "from": 100,
+      "to": 101,
+      "type": "Normal"
+    }
+  ],
+  "blocks": [
+    {
+      "id": 2,
+      "nodes": [
+        0
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 3,
+      "nodes": [
+        1
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 5,
+      "nodes": [
+        4
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 7,
+      "nodes": [
+        6
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 10,
+      "nodes": [
+        8
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 11,
+      "nodes": [
+        9
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 14,
+      "nodes": [
+        12
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 15,
+      "nodes": [
+        13
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 18,
+      "nodes": [
+        16
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 19,
+      "nodes": [
+        17
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 21,
+      "nodes": [
+        20
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 23,
+      "nodes": [
+        22
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 25,
+      "nodes": [
+        24
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 27,
+      "nodes": [
+        26
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 29,
+      "nodes": [
+        28
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 31,
+      "nodes": [
+        30
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 34,
+      "nodes": [
+        32
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 35,
+      "nodes": [
+        33
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 38,
+      "nodes": [
+        36
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 39,
+      "nodes": [
+        37
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 42,
+      "nodes": [
+        40
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 43,
+      "nodes": [
+        41
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 46,
+      "nodes": [
+        44
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 47,
+      "nodes": [
+        45
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 50,
+      "nodes": [
+        48
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 51,
+      "nodes": [
+        49
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 54,
+      "nodes": [
+        52
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 55,
+      "nodes": [
+        53
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 58,
+      "nodes": [
+        56
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 59,
+      "nodes": [
+        57,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 67,
+      "nodes": [
+        66,
+        70,
+        72,
+        75,
+        77,
+        79,
+        81,
+        83,
+        84,
+        85,
+        86,
+        87,
+        88,
+        89,
+        90,
+        91,
+        92,
+        93,
+        94,
+        95,
+        96
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 69,
+      "nodes": [
+        68,
+        71
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 74,
+      "nodes": [
+        73,
+        76,
+        78,
+        80,
+        82
+      ],
+      "discoveryComplete": true
+    },
+    {
+      "id": 98,
+      "nodes": [
+        97,
+        99,
+        100,
+        101
+      ],
+      "discoveryComplete": true
+    }
+  ]
+}

@@ -1,0 +1,85 @@
+xmux: 2026-07-30 00:38:10 [info] xmux 0.4.0 client log=/home/wizard/.xmux/log/xmux.log
+xmux: 2026-07-30 00:38:10 [info] run session=icon-re display=:10 gl=mesa cmd=/usr/local/bin/dosbox
+date       time         | 
+2026-07-30 00:38:10.433 | arguments: /usr/local/bin/dosbox -noprimaryconf -conf /tmp/grok-goal-3be9eee63a80/implementer/dynamic/icon-play.conf
+2026-07-30 00:38:10.433 | Current dir: /tmp/quality
+2026-07-30 00:38:10.433 | stderr verbosity: 0
+2026-07-30 00:38:10.433 | -----------------------------------
+2026-07-30 00:38:10.433 | dosbox-staging version 0.83.0-alpha (a7ad1)
+2026-07-30 00:38:10.433 | ---
+2026-07-30 00:38:10.433 | Loguru version 2.1.0 initialised
+2026-07-30 00:38:10.465 | CONFIG: Loaded custom config file '/tmp/grok-goal-3be9eee63a80/implementer/dynamic/icon-play.conf'
+2026-07-30 00:38:10.465 | LOCALE: Using internal English language messages (detected from 'LANG=C.UTF-8')
+2026-07-30 00:38:10.485 | SDL: Version 2.30.3 initialised
+2026-07-30 00:38:10.485 | SDL: x11 video initialised
+2026-07-30 00:38:10.485 | VIDEO: Using the DOS video modes' refresh rate
+2026-07-30 00:38:10.504 | MEMORY: Using 4096 DOS memory pages (16 MB) at address: 0x7f40259ff010
+2026-07-30 00:38:10.504 | CPU: Setting fixed 25000 cycles. Try setting 'core = dynamic' for increased performance if you need more than 20000 cycles.
+2026-07-30 00:38:10.504 | VIDEO: Initialised S3 Trio64 VESA 2.0 compatible with 4 MB of FP DRAM supporting 89 modes
+2026-07-30 00:38:10.512 | VOODOO: Initialized with 4 MB of RAM, 8 threads, and bilinear filtering
+2026-07-30 00:38:10.512 | CAPTURE: Image capturer started
+2026-07-30 00:38:10.523 | SDL: alsa audio initialised
+2026-07-30 00:38:10.523 | MIXER: SDL negotiated the requested blocksize of 512 to 1024 frames
+2026-07-30 00:38:10.523 | MIXER: Initialised stereo 48000 Hz audio with 1024 sample frame buffer
+2026-07-30 00:38:10.523 | MIXER: Reverb disabled
+2026-07-30 00:38:10.523 | MIXER: Master compressor enabled
+2026-07-30 00:38:10.523 | MPU-401: Running in intelligent mode on ports 330h and 331h
+2026-07-30 00:38:10.523 | MIDI:ALSA: Attempting connection to: ''
+ALSA lib /var/tmp/portage/media-libs/alsa-lib-1.2.14/work/alsa-lib-1.2.14/src/seq/seq_hw.c:540:(snd_seq_hw_open) open /dev/snd/seq failed: No such file or directory
+2026-07-30 00:38:10.523 | MIDI:ALSA: Can't open MIDI sequencer
+ALSA lib /var/tmp/portage/media-libs/alsa-lib-1.2.14/work/alsa-lib-1.2.14/src/seq/seq_hw.c:540:(snd_seq_hw_open) open /dev/snd/seq failed: No such file or directory
+2026-07-30 00:38:10.523 | MIDI:ALSA: Can't open MIDI sequencer
+2026-07-30 00:38:10.523 | MIDI:ALSA: No available MIDI devices found
+2026-07-30 00:38:10.523 | MIDI: Error opening MIDI device 'port'; using 'none' (disabling MIDI output)
+2026-07-30 00:38:10.523 | OPL: Speex resampler is on, input rate: 49716 Hz, output rate: 48000 Hz
+2026-07-30 00:38:10.523 | OPL: Operating at 49716 Hz and downsampling to the output rate
+2026-07-30 00:38:10.523 | OPL: Speex resampler is on, input rate: 49716 Hz, output rate: 48000 Hz
+2026-07-30 00:38:10.523 | OPL: Noise gate enabled
+2026-07-30 00:38:10.523 | OPL: Running OPL3 on ports 220h and 388h
+2026-07-30 00:38:10.523 | OPL: Sound Blaster 16 OPL output filter enabled
+2026-07-30 00:38:10.523 | OPL: Speex resampler is on, input rate: 49716 Hz, output rate: 48000 Hz
+2026-07-30 00:38:10.523 | DMA: Initialised primary controller
+2026-07-30 00:38:10.523 | DMA: Initialised secondary controller
+2026-07-30 00:38:10.523 | SB: Speex resampler is on, input rate: 22050 Hz, output rate: 48000 Hz
+2026-07-30 00:38:10.523 | SB: Operating at 22050 Hz and upsampling to the output rate
+2026-07-30 00:38:10.524 | SB: Speex resampler is on, input rate: 22050 Hz, output rate: 48000 Hz
+2026-07-30 00:38:10.524 | SB: Speex resampler is on, input rate: 45454 Hz, output rate: 48000 Hz
+2026-07-30 00:38:10.524 | SB16: Modern DAC output filter enabled
+2026-07-30 00:38:10.524 | SB16: Setting 'BLASTER' environment variable to 'A220 I7 D1 H5 T6'
+2026-07-30 00:38:10.524 | SB16: Running on port 220h, IRQ 7, DMA 1, and high DMA 5
+2026-07-30 00:38:10.526 | PCSPEAKER: Speex resampler is on, input rate: 32000 Hz, output rate: 48000 Hz
+2026-07-30 00:38:10.526 | PCSPEAKER: Operating at 32000 Hz and upsampling to the output rate
+2026-07-30 00:38:10.526 | PCSPEAKER: Initialised impulse model
+2026-07-30 00:38:10.526 | PCSPEAKER: High-pass filter enabled (18 dB/oct at 120 Hz)
+2026-07-30 00:38:10.526 | PCSPEAKER: Low-pass filter enabled (18 dB/oct at 4300 Hz)
+2026-07-30 00:38:10.562 | LOCALE: Country detected from ''
+2026-07-30 00:38:10.562 | LOCALE: Loading native locale for country 61 - 'International (English)'
+2026-07-30 00:38:10.562 | LOCALE: Using numeric/time/date format detected from host OS
+2026-07-30 00:38:10.562 | LOCALE: Could not detect host keyboard layouts
+2026-07-30 00:38:10.562 | LOCALE: Loaded keyboard layout 'us' - 'US (standard, QWERTY/national)'
+2026-07-30 00:38:10.562 | DEBUG_OVERLAY: init visible=false grid~80x25 force=0,0 hotkey=ctrl+alt+g (host-only)
+2026-07-30 00:38:10.562 | WEBSERVER: Starting HTTP REST API on http://127.0.0.1:8080
+2026-07-30 00:38:10.562 | WEBSERVER: Using document root directory '/home/wizard/.config/dosbox/webserver'
+2026-07-30 00:38:10.562 | CONFIG: Loaded auto-mounted drive config file '/usr/local/share/dosbox-staging/drives/y.conf'
+2026-07-30 00:38:10.563 | AUTOEXEC: Using autoexec from one or more joined sections
+2026-07-30 00:38:10.563 | DISPLAY: Invalid 'window_size' setting: '640x400', using 'default'
+2026-07-30 00:38:10.563 | DISPLAY: Using 640x480 window size in windowed mode on display-0
+2026-07-30 00:38:10.601 | SDL: Using 'opengl' SDL render driver
+2026-07-30 00:38:10.602 | VGA: Double scanning VGA video modes enabled
+2026-07-30 00:38:10.602 | VGA: Pixel doubling enabled
+2026-07-30 00:38:10.602 | RENDER: Auto-switched to P22 CRT color profile
+2026-07-30 00:38:10.602 | RENDER: Auto-switched to 7800K colour temperature
+2026-07-30 00:38:10.602 | MOUSE: Will be captured after the first left or right button click
+2026-07-30 00:38:10.602 | MOUSE: Middle button will capture/release the mouse (clicks not sent to the game/program)
+2026-07-30 00:38:10.630 | MAPPER: No joysticks found
+2026-07-30 00:38:10.630 | MAPPER: Loaded default key bindings
+2026-07-30 00:38:10.641 | RENDER: Auto-switched to P22 CRT color profile
+2026-07-30 00:38:10.641 | RENDER: Auto-switched to 7800K colour temperature
+2026-07-30 00:38:10.642 | DISPLAY: VGA 720x400 16-colour text mode 03h at 70.087 Hz, scaled to 640x480 pixels with 1:1.35 (20:27) pixel aspect ratio
+2026-07-30 00:38:10.642 | DISPLAY: Presenting at DOS rate without vsync
+2026-07-30 00:38:10.644 | MOUSE (DOS): Built-in driver is simulating a 2 buttons model
+2026-07-30 00:38:10.733 | DISPLAY: VGA 360x200 16-colour text mode at 70.087 Hz, scaled to 640x480 pixels with 1:1.35 (20:27) pixel aspect ratio
+2026-07-30 00:38:51.015 | DISPLAY: VGA 360x400 16-colour text mode 01h at 70.087 Hz, scaled to 640x480 pixels with 1:0.675 (40:27) pixel aspect ratio
+2026-07-30 00:38:54.586 | DISPLAY: VGA 360x200 16-colour text mode at 70.087 Hz, scaled to 640x480 pixels with 1:1.35 (20:27) pixel aspect ratio
+2026-07-30 00:38:55.831 | DISPLAY: VGA 360x400 16-colour text mode 01h at 70.087 Hz, scaled to 640x480 pixels with 1:0.675 (40:27) pixel aspect ratio
+2026-07-30 00:39:05.658 | DISPLAY: VGA 360x200 16-colour text mode at 70.087 Hz, scaled to 640x480 pixels with 1:1.35 (20:27) pixel aspect ratio

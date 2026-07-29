@@ -1,0 +1,88 @@
+xmux: 2026-07-30 00:32:51 [info] xmux 0.4.0 client log=/home/wizard/.xmux/log/xmux.log
+xmux: 2026-07-30 00:32:51 [info] run session=icon-re display=:10 gl=mesa cmd=/usr/local/bin/dosbox
+date       time         | 
+2026-07-30 00:32:51.113 | arguments: /usr/local/bin/dosbox -conf /tmp/grok-goal-3be9eee63a80/implementer/dynamic/icon-run.conf --set cpu_cycles=8000 --set core=normal
+2026-07-30 00:32:51.113 | Current dir: /tmp/dumpexe
+2026-07-30 00:32:51.113 | stderr verbosity: 0
+2026-07-30 00:32:51.113 | -----------------------------------
+2026-07-30 00:32:51.113 | dosbox-staging version 0.83.0-alpha (a7ad1)
+2026-07-30 00:32:51.113 | ---
+2026-07-30 00:32:51.113 | Loguru version 2.1.0 initialised
+2026-07-30 00:32:51.141 | CONFIG: Loaded primary+include config file '/home/wizard/.config/dosbox/presets/common.conf'
+2026-07-30 00:32:51.142 | CONFIG: Loaded primary config file '/home/wizard/.config/dosbox/dosbox-staging.conf'
+2026-07-30 00:32:51.142 | CONFIG: Deprecated setting 'cycles'
+2026-07-30 00:32:51.142 | CONFIG: The 'cycles' setting is deprecated but still accepted; please use 'cpu_cycles', 'cpu_cycles_protected' and 'cpu_throttle' instead.
+2026-07-30 00:32:51.142 | CONFIG: Loaded custom config file '/tmp/grok-goal-3be9eee63a80/implementer/dynamic/icon-run.conf'
+2026-07-30 00:32:51.142 | LOCALE: Using internal English language messages (detected from 'LANG=C.UTF-8')
+2026-07-30 00:32:51.157 | SDL: Version 2.30.3 initialised
+2026-07-30 00:32:51.157 | SDL: x11 video initialised
+2026-07-30 00:32:51.157 | VIDEO: Using the DOS video modes' refresh rate
+2026-07-30 00:32:51.173 | MEMORY: Using 4096 DOS memory pages (16 MB) at address: 0x7f838c1ff010
+2026-07-30 00:32:51.173 | VIDEO: Initialised S3 Trio64 VESA 2.0 compatible with 2 MB of EDO DRAM supporting 84 modes
+2026-07-30 00:32:51.177 | VOODOO: Initialized with 4 MB of RAM, 8 threads, and bilinear filtering
+2026-07-30 00:32:51.177 | CAPTURE: Image capturer started
+2026-07-30 00:32:51.188 | SDL: alsa audio initialised
+2026-07-30 00:32:51.189 | MIXER: SDL negotiated the requested blocksize of 512 to 940 frames
+2026-07-30 00:32:51.189 | MIXER: Initialised stereo 44100 Hz audio with 940 sample frame buffer
+2026-07-30 00:32:51.189 | MIXER: Reverb disabled
+2026-07-30 00:32:51.189 | MIXER: Master compressor enabled
+2026-07-30 00:32:51.189 | MPU-401: Running in intelligent mode on ports 330h and 331h
+2026-07-30 00:32:51.189 | MT32: Unknown file in ROM folder: /usr/share/mt32-rom-data/.keep_media-sound_munt-mt32emu-alsadrv-0
+2026-07-30 00:32:51.200 | MT32: Initialised CM-32L/LAPC-I Control v1.02 from '/home/wizard/.config/dosbox/mt32-roms'
+2026-07-30 00:32:51.211 | MT32: Speex resampler is on, input rate: 48000 Hz, output rate: 44100 Hz
+2026-07-30 00:32:51.211 | MT32: Operating at 48000 Hz and downsampling to the output rate
+2026-07-30 00:32:51.212 | MT32: Speex resampler is on, input rate: 48000 Hz, output rate: 44100 Hz
+2026-07-30 00:32:51.212 | MIDI: Opened device 'mt32'
+2026-07-30 00:32:51.212 | OPL: Speex resampler is on, input rate: 49716 Hz, output rate: 44100 Hz
+2026-07-30 00:32:51.212 | OPL: Operating at 49716 Hz and downsampling to the output rate
+2026-07-30 00:32:51.212 | OPL: Speex resampler is on, input rate: 49716 Hz, output rate: 44100 Hz
+2026-07-30 00:32:51.212 | OPL: Noise gate enabled
+2026-07-30 00:32:51.212 | OPL: Running OPL3 on ports 220h and 388h
+2026-07-30 00:32:51.212 | OPL: Sound Blaster 16 OPL output filter enabled
+2026-07-30 00:32:51.212 | OPL: Speex resampler is on, input rate: 49716 Hz, output rate: 44100 Hz
+2026-07-30 00:32:51.212 | DMA: Initialised primary controller
+2026-07-30 00:32:51.212 | DMA: Initialised secondary controller
+2026-07-30 00:32:51.212 | SB: Speex resampler is on, input rate: 22050 Hz, output rate: 44100 Hz
+2026-07-30 00:32:51.212 | SB: Operating at 22050 Hz and upsampling to the output rate
+2026-07-30 00:32:51.212 | SB: Speex resampler is on, input rate: 22050 Hz, output rate: 44100 Hz
+2026-07-30 00:32:51.212 | SB: Speex resampler is on, input rate: 45454 Hz, output rate: 44100 Hz
+2026-07-30 00:32:51.212 | SB16: Modern DAC output filter enabled
+2026-07-30 00:32:51.212 | SB16: Setting 'BLASTER' environment variable to 'A220 I7 D1 H5 T6'
+2026-07-30 00:32:51.212 | SB16: Running on port 220h, IRQ 7, DMA 1, and high DMA 5
+2026-07-30 00:32:51.212 | GUS: Operating at 44100 Hz without resampling
+2026-07-30 00:32:51.212 | GUS: Low-pass filter enabled (6 dB/oct at 8000 Hz)
+2026-07-30 00:32:51.213 | GUS: Setting 'ULTRASND' environment variable to '240,3,3,5,5'
+2026-07-30 00:32:51.213 | GUS: Setting 'ULTRADIR' environment variable to 'C:\ULTRASND'
+2026-07-30 00:32:51.213 | GUS: Running on port 240h, IRQ 5, and DMA 3
+2026-07-30 00:32:51.215 | PCSPEAKER: Speex resampler is on, input rate: 32000 Hz, output rate: 44100 Hz
+2026-07-30 00:32:51.215 | PCSPEAKER: Operating at 32000 Hz and upsampling to the output rate
+2026-07-30 00:32:51.215 | PCSPEAKER: Initialised impulse model
+2026-07-30 00:32:51.215 | PCSPEAKER: High-pass filter enabled (18 dB/oct at 120 Hz)
+2026-07-30 00:32:51.215 | PCSPEAKER: Low-pass filter enabled (18 dB/oct at 4300 Hz)
+2026-07-30 00:32:51.250 | LOCALE: Country detected from ''
+2026-07-30 00:32:51.250 | LOCALE: Loading native locale for country 61 - 'International (English)'
+2026-07-30 00:32:51.250 | LOCALE: Using numeric/time/date format detected from host OS
+2026-07-30 00:32:51.250 | LOCALE: Could not detect host keyboard layouts
+2026-07-30 00:32:51.251 | LOCALE: Loaded keyboard layout 'us' - 'US (standard, QWERTY/national)'
+2026-07-30 00:32:51.251 | DEBUG_OVERLAY: init visible=false grid~80x25 force=0,0 hotkey=ctrl+alt+g (host-only)
+2026-07-30 00:32:51.251 | WEBSERVER: Starting HTTP REST API on http://127.0.0.1:8080
+2026-07-30 00:32:51.251 | WEBSERVER: Using document root directory '/home/wizard/.config/dosbox/webserver'
+2026-07-30 00:32:51.251 | CONFIG: Loaded auto-mounted drive config file '/usr/local/share/dosbox-staging/drives/y.conf'
+2026-07-30 00:32:51.251 | AUTOEXEC: Using autoexec from one or more joined sections
+2026-07-30 00:32:51.252 | DISPLAY: Invalid 'window_size' setting: '640x400', using 'default'
+2026-07-30 00:32:51.252 | DISPLAY: Using 640x480 window size in windowed mode on display-0
+2026-07-30 00:32:51.546 | SDL: Using 'opengl' SDL render driver
+2026-07-30 00:32:51.546 | VGA: Double scanning VGA video modes enabled
+2026-07-30 00:32:51.546 | VGA: Pixel doubling enabled
+2026-07-30 00:32:51.546 | RENDER: Auto-switched to P22 CRT color profile
+2026-07-30 00:32:51.546 | RENDER: Auto-switched to 7800K colour temperature
+2026-07-30 00:32:51.546 | MOUSE: Will move seamlessly: left and right button clicks won't capture the mouse
+2026-07-30 00:32:51.546 | MOUSE: Middle button will capture/release the mouse (clicks not sent to the game/program)
+2026-07-30 00:32:51.574 | MAPPER: No joysticks found
+2026-07-30 00:32:51.574 | MAPPER: Loaded default key bindings
+2026-07-30 00:32:51.584 | RENDER: Auto-switched to P22 CRT color profile
+2026-07-30 00:32:51.584 | RENDER: Auto-switched to 7800K colour temperature
+2026-07-30 00:32:51.586 | DISPLAY: VGA 720x400 16-colour text mode 03h at 70.087 Hz, scaled to 640x480 pixels with 1:1.35 (20:27) pixel aspect ratio
+2026-07-30 00:32:51.586 | DISPLAY: Presenting at DOS rate without vsync
+2026-07-30 00:32:51.588 | MOUSE (DOS): Built-in driver is simulating a 2 buttons model
+2026-07-30 00:32:51.592 | MOUNT: Drive C already mounted with Local directory /usr/share/games/ 
