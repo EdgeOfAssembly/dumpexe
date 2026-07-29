@@ -22,6 +22,7 @@
 #include "options.h"
 #include "pascal_mt.h"
 #include "strings.h"
+#include "toolchain.h"
 
 //=============================================================================
 // Escape
@@ -60,7 +61,7 @@ static inline std::string json_escape(std::string_view s)
 struct JsonReport
 {
     std::string tool = "dumpexe";
-    std::string version = "1.3";
+    std::string version = "1.5";
     std::string file;
     std::string format; ///< "mz" | "com" | "sys"
 
@@ -79,6 +80,9 @@ struct JsonReport
 
     PascalMtReport pascal_mt{};
     bool pascal_mt_ran = false;
+
+    ToolchainReport toolchain{};
+    bool toolchain_ran = false;
 
     std::vector<ExtractedString> strings;
     bool strings_ran = false;
@@ -184,6 +188,47 @@ struct JsonReport
                     json_escape(h.pattern_id), json_escape(h.role),
                     h.confidence, json_escape(h.evidence),
                     (i + 1 < pascal_mt.hits.size()) ? ",\n" : "\n");
+            }
+            os << "    ]\n";
+            os << "  }";
+        }
+        os << ",\n";
+
+        // Toolchain (JWASM 1.8 / COM-in-EXE / CuteMouse)
+        os << "  \"toolchain\": ";
+        if (!toolchain_ran)
+            os << "null";
+        else if (!toolchain.detected)
+            os << std::format("{{\"detected\": false, \"confidence\": {:.3f}}}",
+                              toolchain.confidence);
+        else
+        {
+            os << "{\n";
+            os << "    \"detected\": true,\n";
+            os << std::format("    \"confidence\": {:.3f},\n", toolchain.confidence);
+            os << std::format("    \"assembler\": \"{}\",\n",
+                              json_escape(toolchain.assembler));
+            os << std::format("    \"assembler_version\": \"{}\",\n",
+                              json_escape(toolchain.assembler_version));
+            os << std::format("    \"jwasm_1_8\": {},\n",
+                              toolchain.jwasm_1_8 ? "true" : "false");
+            os << std::format("    \"com_in_exe\": {},\n",
+                              toolchain.com_in_exe ? "true" : "false");
+            os << std::format("    \"product\": \"{}\",\n",
+                              json_escape(toolchain.product));
+            os << std::format("    \"product_version\": \"{}\",\n",
+                              json_escape(toolchain.product_version));
+            os << std::format("    \"toolchain\": \"{}\",\n",
+                              json_escape(toolchain.toolchain));
+            os << std::format("    \"tool_path_hint\": \"{}\",\n",
+                              json_escape(toolchain.tool_path_hint));
+            os << std::format("    \"fc_pad_runs\": {},\n", toolchain.fc_pad_runs);
+            os << "    \"evidence\": [\n";
+            for (size_t i = 0; i < toolchain.evidence.size(); ++i)
+            {
+                os << std::format(
+                    "      \"{}\"{}", json_escape(toolchain.evidence[i]),
+                    (i + 1 < toolchain.evidence.size()) ? ",\n" : "\n");
             }
             os << "    ]\n";
             os << "  }";

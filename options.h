@@ -576,7 +576,7 @@ static inline void show_usage(const char* progname) {
         "  -a, --all           Show all sections (reloc + hex + disasm + strings)\n"
         "  --strings           Extract Pascal length-prefixed + CALL-inline + ASCIIZ strings\n"
         "  --no-pascal-mt      Disable Pascal MT+ 3.1.1 detect/annotate (default: on)\n"
-        "  --no-toolchain      Disable COM-in-EXE / CuteMouse / assembler detect (default: on)\n"
+        "  --no-toolchain      Disable JWASM 1.8 / COM-in-EXE / CuteMouse detect (default: on)\n"
         "  --map=FILE          Load symbol map for listing (IP name); disables need for auto\n"
         "  --no-map            Do not auto-load <stem>.sym / <stem>.map (default: auto on)\n"
         "  --json              Machine-readable JSON report on stdout (default: off)\n"

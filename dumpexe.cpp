@@ -7,7 +7,7 @@
 
 /// Print version information to stdout
 static inline void print_version() {
-    std::cout << "dumpexe 1.4 — 16-bit MS-DOS Binary Analyzer & Multi-Pass Listing\n"
+    std::cout << "dumpexe 1.5 — 16-bit MS-DOS Binary Analyzer & Multi-Pass Listing\n"
                  "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n"
                  "License: GPLv2 | Commercial (contact author)\n"
                  "Built with Capstone disassembly support: yes\n";
@@ -215,6 +215,11 @@ int main(int argc, char* argv[]) {
             {
                 rep.pascal_mt = std::move(mt_rep);
                 rep.pascal_mt_ran = true;
+            }
+            if (opts.toolchainDetect)
+            {
+                rep.toolchain = std::move(tc_rep);
+                rep.toolchain_ran = true;
             }
             rep.strings = std::move(strs);
             rep.strings_ran = true;
