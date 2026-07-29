@@ -78,6 +78,16 @@ Show all sections in order: static info, relocation table (EXE), hexdump, and di
 .TP
 .BR \-n ", " \-\-no-int-annotations
 Suppress INT annotation comments in disassembly output.
+.TP
+.B \-\-strings
+Extract Pascal length-prefixed, CALL-inline, and ASCIIZ strings (opt-in; default off).
+.TP
+.B \-\-no-pascal-mt
+Disable Pascal MT+86 3.1.1 detection and annotation.
+.B Default: on.
+When signatures match, dumpexe prints compiler ID, entry CALL + segment table,
+near-JMP procedure vector table, and INIPC/PASLIB fingerprint hits.
+Only a disable switch is provided (sane-defaults CLI policy).
 
 .SS Simulation Options
 .TP

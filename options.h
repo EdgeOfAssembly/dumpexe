@@ -68,7 +68,8 @@ struct Options {
     bool showHexdump = false;       ///< -x, --hexdump
     bool showDisasm = false;        ///< -d, --disassemble
     bool showAll = false;           ///< -a, --all
-    bool showStrings = false;       ///< --strings  Pascal + ASCIIZ string table
+    bool showStrings = false;       ///< --strings  Pascal + ASCIIZ string table (opt-in)
+    bool pascalMt = true;           ///< Pascal MT+ 3.1.1 detect/annotate (default ON)
     bool showCfg = false;           ///< --cfg  static control-flow graph
     bool simulate = false;          ///< --simulate
     bool noIntAnnot = false;        ///< -n, --no-int-annotations
@@ -344,6 +345,9 @@ struct Options {
                 showAll = true;
             } else if (arg == "--strings") {
                 showStrings = true;
+            } else if (arg == "--no-pascal-mt" || arg == "--no-pascal-mt+") {
+                // Default ON: only provide disable switch (cli-design sane defaults)
+                pascalMt = false;
             } else if (arg == "--cfg") {
                 showCfg = true;
             } else if (arg == "--cfg-no-insns") {
@@ -526,6 +530,7 @@ static inline void show_usage(const char* progname) {
         "  --cfg-load-max=N    Max path/FCB seeds in load graph (default 40)\n"
         "  -a, --all           Show all sections (reloc + hex + disasm + strings)\n"
         "  --strings           Extract Pascal length-prefixed + CALL-inline + ASCIIZ strings\n"
+        "  --no-pascal-mt      Disable Pascal MT+ 3.1.1 detect/annotate (default: on)\n"
         "  -n, --no-int-annotations  Suppress INT annotation comments in disassembly\n"
         "  --simulate          Enable DOS load simulation / execution engine\n"
         "  --base=XXXX         Set load image segment (hex, default: 1000h)\n"
