@@ -68,6 +68,7 @@ struct Options {
     bool showHexdump = false;       ///< -x, --hexdump
     bool showDisasm = false;        ///< -d, --disassemble
     bool showAll = false;           ///< -a, --all
+    bool showStrings = false;       ///< --strings  Pascal + ASCIIZ string table
     bool showCfg = false;           ///< --cfg  static control-flow graph
     bool simulate = false;          ///< --simulate
     bool noIntAnnot = false;        ///< -n, --no-int-annotations
@@ -341,6 +342,8 @@ struct Options {
                 showDisasm = true;
             } else if (arg == "-a" || arg == "--all") {
                 showAll = true;
+            } else if (arg == "--strings") {
+                showStrings = true;
             } else if (arg == "--cfg") {
                 showCfg = true;
             } else if (arg == "--cfg-no-insns") {
@@ -479,6 +482,7 @@ struct Options {
             showReloc = true;
             showHexdump = true;
             showDisasm = true;
+            showStrings = true;
         }
 
         if (comForcePsp && comForceNoPsp) {
@@ -520,7 +524,8 @@ static inline void show_usage(const char* progname) {
         "  --cfg-interesting-max=N  Max interesting blocks to expand (default 80)\n"
         "  --cfg-load-depth=N  Reverse walk depth for load/I/O graph (default 6)\n"
         "  --cfg-load-max=N    Max path/FCB seeds in load graph (default 40)\n"
-        "  -a, --all           Show all sections (relocation + hexdump + disassembly)\n"
+        "  -a, --all           Show all sections (reloc + hex + disasm + strings)\n"
+        "  --strings           Extract Pascal length-prefixed + CALL-inline + ASCIIZ strings\n"
         "  -n, --no-int-annotations  Suppress INT annotation comments in disassembly\n"
         "  --simulate          Enable DOS load simulation / execution engine\n"
         "  --base=XXXX         Set load image segment (hex, default: 1000h)\n"

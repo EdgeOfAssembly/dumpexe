@@ -93,6 +93,9 @@ int main(int argc, char* argv[]) {
         std::vector<RelocEntry> relocs;
         dump_relocations(opts, header, fileData, sizes, relocs);
         dump_hex(opts, fileData, sizes);
+        // Pascal MT+ length-prefixed / CALL-inline + ASCIIZ (also via -a)
+        dump_strings(opts, fileData, sizes.headerSizeBytes,
+                     static_cast<size_t>(sizes.loadImageSize));
 
         if (opts.showDisasm || opts.showAll) {
             disassemble(fileData, sizes.entryPointFileOffset,
