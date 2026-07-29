@@ -1,0 +1,463 @@
+===== ICON.EXE APPLY =====
+openjdk version "21.0.1" 2023-10-17 LTS
+OpenJDK Runtime Environment Temurin-21.0.1+12 (build 21.0.1+12-LTS)
+OpenJDK 64-Bit Server VM Temurin-21.0.1+12 (build 21.0.1+12-LTS, mixed mode)
+Module manifest file error on line 2 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_NAME=GhidraMCP
+Module manifest file error on line 3 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_DESC=An HTTP server plugin for Ghidra
+Module manifest file error on line 2 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_NAME=GhidraMCP
+Module manifest file error on line 3 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_DESC=An HTTP server plugin for Ghidra
+INFO  Using log config file: jar:file:/mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Framework/Generic/lib/Generic.jar!/generic.log4j.xml (LoggingInitialization)  
+INFO  Using log file: /home/wizard/.config/ghidra/ghidra_12.1.2_PUBLIC/application.log (LoggingInitialization)  
+INFO  Loading user preferences: /home/wizard/.config/ghidra/ghidra_12.1.2_PUBLIC/preferences (Preferences)  
+INFO  Loading previous preferences: /home/wizard/.ghidra/.ghidra_10.2.2_PUBLIC/preferences (Preferences)  
+INFO  Searching for classes... (ClassSearcher)  
+INFO  Class search complete (1056 ms) (ClassSearcher)  
+INFO  Initializing SSL Context (DefaultSSLContextInitializer)  
+INFO  Initializing Random Number Generator... (SecureRandomFactory)  
+INFO  Random Number Generator initialization complete: NativePRNGNonBlocking (SecureRandomFactory)  
+INFO  Trust manager disabled, cacerts have not been set (DefaultTrustManagerFactory)  
+INFO  Headless startup complete (2169 ms) (AnalyzeHeadless)  
+INFO  Class searcher loaded 60 extension points (20 false positives) (ClassSearcher)  
+INFO  HEADLESS Script Paths:
+    /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Debug/Debugger/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/VersionTracking/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/PIC/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/DATA/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/BSim/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/FileFormats/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/Base/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/8051/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Debug/Debugger-rmi-trace/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/PDB/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/SwiftDemangler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/GnuDemangler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/DecompilerDependent/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/Atmel/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/reverse-engineering-assistant/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/PyGhidra/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/Decompiler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/FunctionID/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/BytePatterns/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/MicrosoftCodeAnalyzer/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/SystemEmulation/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/WildcardAssembler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/JVM/ghidra_scripts (HeadlessAnalyzer)  
+INFO  HEADLESS: execution starts (HeadlessAnalyzer)  
+INFO  Opening existing project: /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/icon_project (HeadlessAnalyzer)  
+INFO  Opening project: /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/icon_project (HeadlessProject)  
+INFO  REPORT: Processing project file: /ICON.EXE (HeadlessAnalyzer)  
+INFO  REPORT: Execute script: ApplyFunctionMap.java '/tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/labels.tsv'  (HeadlessAnalyzer)  
+INFO  SCRIPT: /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/ApplyFunctionMap.java (HeadlessAnalyzer)  
+INFO  ApplyFunctionMap.java> ApplyFunctionMap: removed stale labels=39 (GhidraScript)  
+INFO  ApplyFunctionMap.java> ApplyFunctionMap.java: ICON.EXE applied=39 skipped=0 addressing=image_offset minAddress=1000:0000 tsv=v1.1 (GhidraScript)  
+INFO  REPORT: Save succeeded for processed file: /ICON.EXE (HeadlessAnalyzer)  
+===== ICON.EXE CHECK =====
+openjdk version "21.0.1" 2023-10-17 LTS
+OpenJDK Runtime Environment Temurin-21.0.1+12 (build 21.0.1+12-LTS)
+OpenJDK 64-Bit Server VM Temurin-21.0.1+12 (build 21.0.1+12-LTS, mixed mode)
+Module manifest file error on line 2 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_NAME=GhidraMCP
+Module manifest file error on line 3 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_DESC=An HTTP server plugin for Ghidra
+Module manifest file error on line 2 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_NAME=GhidraMCP
+Module manifest file error on line 3 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_DESC=An HTTP server plugin for Ghidra
+INFO  Using log config file: jar:file:/mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Framework/Generic/lib/Generic.jar!/generic.log4j.xml (LoggingInitialization)  
+INFO  Using log file: /home/wizard/.config/ghidra/ghidra_12.1.2_PUBLIC/application.log (LoggingInitialization)  
+INFO  Loading user preferences: /home/wizard/.config/ghidra/ghidra_12.1.2_PUBLIC/preferences (Preferences)  
+INFO  Loading previous preferences: /home/wizard/.ghidra/.ghidra_10.2.2_PUBLIC/preferences (Preferences)  
+INFO  Searching for classes... (ClassSearcher)  
+INFO  Class search complete (999 ms) (ClassSearcher)  
+INFO  Initializing SSL Context (DefaultSSLContextInitializer)  
+INFO  Initializing Random Number Generator... (SecureRandomFactory)  
+INFO  Random Number Generator initialization complete: NativePRNGNonBlocking (SecureRandomFactory)  
+INFO  Trust manager disabled, cacerts have not been set (DefaultTrustManagerFactory)  
+INFO  Headless startup complete (2160 ms) (AnalyzeHeadless)  
+INFO  Class searcher loaded 60 extension points (20 false positives) (ClassSearcher)  
+INFO  HEADLESS Script Paths:
+    /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Debug/Debugger/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/VersionTracking/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/PIC/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/DATA/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/BSim/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/FileFormats/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/Base/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/8051/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Debug/Debugger-rmi-trace/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/PDB/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/SwiftDemangler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/GnuDemangler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/DecompilerDependent/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/Atmel/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/reverse-engineering-assistant/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/PyGhidra/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/Decompiler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/FunctionID/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/BytePatterns/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/MicrosoftCodeAnalyzer/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/SystemEmulation/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/WildcardAssembler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/JVM/ghidra_scripts (HeadlessAnalyzer)  
+INFO  HEADLESS: execution starts (HeadlessAnalyzer)  
+INFO  Opening existing project: /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/icon_project (HeadlessAnalyzer)  
+INFO  Opening project: /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/icon_project (HeadlessProject)  
+INFO  REPORT: Processing project file: /ICON.EXE (HeadlessAnalyzer)  
+INFO  REPORT: Execute script: CheckLabels.java '/tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/labels.tsv'  (HeadlessAnalyzer)  
+INFO  SCRIPT: /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/CheckLabels.java (HeadlessAnalyzer)  
+INFO  CheckLabels.java> CheckLabels: ICON.EXE ok=39 fail=0 missing=0 minAddress=1000:0000 (GhidraScript)  
+INFO  CheckLabels.java>   SPOT OK jt_01_pascal_near @ 1000:00d5 bytes=558bec (GhidraScript)  
+INFO  CheckLabels.java>   SPOT OK pascal_mt_startup_call__0200 @ 1000:0000 bytes=e82865 (GhidraScript)  
+INFO  CheckLabels.java>   SPOT OK rtl_error_string__02EE @ 1000:00ee bytes=506173 (GhidraScript)  
+INFO  REPORT: Save succeeded for processed file: /ICON.EXE (HeadlessAnalyzer)  
+===== ICON0.OVL APPLY =====
+openjdk version "21.0.1" 2023-10-17 LTS
+OpenJDK Runtime Environment Temurin-21.0.1+12 (build 21.0.1+12-LTS)
+OpenJDK 64-Bit Server VM Temurin-21.0.1+12 (build 21.0.1+12-LTS, mixed mode)
+Module manifest file error on line 2 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_NAME=GhidraMCP
+Module manifest file error on line 3 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_DESC=An HTTP server plugin for Ghidra
+Module manifest file error on line 2 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_NAME=GhidraMCP
+Module manifest file error on line 3 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_DESC=An HTTP server plugin for Ghidra
+INFO  Using log config file: jar:file:/mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Framework/Generic/lib/Generic.jar!/generic.log4j.xml (LoggingInitialization)  
+INFO  Using log file: /home/wizard/.config/ghidra/ghidra_12.1.2_PUBLIC/application.log (LoggingInitialization)  
+INFO  Loading user preferences: /home/wizard/.config/ghidra/ghidra_12.1.2_PUBLIC/preferences (Preferences)  
+INFO  Loading previous preferences: /home/wizard/.ghidra/.ghidra_10.2.2_PUBLIC/preferences (Preferences)  
+INFO  Searching for classes... (ClassSearcher)  
+INFO  Class search complete (1074 ms) (ClassSearcher)  
+INFO  Initializing SSL Context (DefaultSSLContextInitializer)  
+INFO  Initializing Random Number Generator... (SecureRandomFactory)  
+INFO  Random Number Generator initialization complete: NativePRNGNonBlocking (SecureRandomFactory)  
+INFO  Trust manager disabled, cacerts have not been set (DefaultTrustManagerFactory)  
+INFO  Headless startup complete (2224 ms) (AnalyzeHeadless)  
+INFO  Class searcher loaded 60 extension points (20 false positives) (ClassSearcher)  
+INFO  HEADLESS Script Paths:
+    /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Debug/Debugger/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/VersionTracking/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/PIC/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/DATA/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/BSim/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/FileFormats/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/Base/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/8051/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Debug/Debugger-rmi-trace/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/PDB/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/SwiftDemangler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/GnuDemangler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/DecompilerDependent/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/Atmel/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/reverse-engineering-assistant/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/PyGhidra/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/Decompiler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/FunctionID/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/BytePatterns/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/MicrosoftCodeAnalyzer/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/SystemEmulation/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/WildcardAssembler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/JVM/ghidra_scripts (HeadlessAnalyzer)  
+INFO  HEADLESS: execution starts (HeadlessAnalyzer)  
+INFO  Opening existing project: /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/icon_project (HeadlessAnalyzer)  
+INFO  Opening project: /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/icon_project (HeadlessProject)  
+INFO  REPORT: Processing project file: /ICON0.OVL (HeadlessAnalyzer)  
+INFO  REPORT: Execute script: ApplyFunctionMap.java '/tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/labels.tsv'  (HeadlessAnalyzer)  
+INFO  SCRIPT: /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/ApplyFunctionMap.java (HeadlessAnalyzer)  
+INFO  ApplyFunctionMap.java> ApplyFunctionMap: removed stale labels=14 (GhidraScript)  
+INFO  ApplyFunctionMap.java> ApplyFunctionMap.java: ICON0.OVL applied=14 skipped=0 addressing=image_offset minAddress=1000:0000 tsv=v1.1 (GhidraScript)  
+INFO  REPORT: Save succeeded for processed file: /ICON0.OVL (HeadlessAnalyzer)  
+===== ICON0.OVL CHECK =====
+openjdk version "21.0.1" 2023-10-17 LTS
+OpenJDK Runtime Environment Temurin-21.0.1+12 (build 21.0.1+12-LTS)
+OpenJDK 64-Bit Server VM Temurin-21.0.1+12 (build 21.0.1+12-LTS, mixed mode)
+Module manifest file error on line 2 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_NAME=GhidraMCP
+Module manifest file error on line 3 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_DESC=An HTTP server plugin for Ghidra
+Module manifest file error on line 2 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_NAME=GhidraMCP
+Module manifest file error on line 3 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_DESC=An HTTP server plugin for Ghidra
+INFO  Using log config file: jar:file:/mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Framework/Generic/lib/Generic.jar!/generic.log4j.xml (LoggingInitialization)  
+INFO  Using log file: /home/wizard/.config/ghidra/ghidra_12.1.2_PUBLIC/application.log (LoggingInitialization)  
+INFO  Loading user preferences: /home/wizard/.config/ghidra/ghidra_12.1.2_PUBLIC/preferences (Preferences)  
+INFO  Loading previous preferences: /home/wizard/.ghidra/.ghidra_10.2.2_PUBLIC/preferences (Preferences)  
+INFO  Searching for classes... (ClassSearcher)  
+INFO  Class search complete (1069 ms) (ClassSearcher)  
+INFO  Initializing SSL Context (DefaultSSLContextInitializer)  
+INFO  Initializing Random Number Generator... (SecureRandomFactory)  
+INFO  Random Number Generator initialization complete: NativePRNGNonBlocking (SecureRandomFactory)  
+INFO  Trust manager disabled, cacerts have not been set (DefaultTrustManagerFactory)  
+INFO  Headless startup complete (2298 ms) (AnalyzeHeadless)  
+INFO  Class searcher loaded 60 extension points (20 false positives) (ClassSearcher)  
+INFO  HEADLESS Script Paths:
+    /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Debug/Debugger/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/VersionTracking/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/PIC/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/DATA/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/BSim/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/FileFormats/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/Base/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/8051/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Debug/Debugger-rmi-trace/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/PDB/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/SwiftDemangler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/GnuDemangler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/DecompilerDependent/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/Atmel/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/reverse-engineering-assistant/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/PyGhidra/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/Decompiler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/FunctionID/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/BytePatterns/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/MicrosoftCodeAnalyzer/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/SystemEmulation/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/WildcardAssembler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/JVM/ghidra_scripts (HeadlessAnalyzer)  
+INFO  HEADLESS: execution starts (HeadlessAnalyzer)  
+INFO  Opening existing project: /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/icon_project (HeadlessAnalyzer)  
+INFO  Opening project: /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/icon_project (HeadlessProject)  
+INFO  REPORT: Processing project file: /ICON0.OVL (HeadlessAnalyzer)  
+INFO  REPORT: Execute script: CheckLabels.java '/tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/labels.tsv'  (HeadlessAnalyzer)  
+INFO  SCRIPT: /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/CheckLabels.java (HeadlessAnalyzer)  
+INFO  CheckLabels.java> CheckLabels: ICON0.OVL ok=14 fail=0 missing=0 minAddress=1000:0000 (GhidraScript)  
+INFO  REPORT: Save succeeded for processed file: /ICON0.OVL (HeadlessAnalyzer)  
+===== ICON1.OVL APPLY =====
+openjdk version "21.0.1" 2023-10-17 LTS
+OpenJDK Runtime Environment Temurin-21.0.1+12 (build 21.0.1+12-LTS)
+OpenJDK 64-Bit Server VM Temurin-21.0.1+12 (build 21.0.1+12-LTS, mixed mode)
+Module manifest file error on line 2 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_NAME=GhidraMCP
+Module manifest file error on line 3 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_DESC=An HTTP server plugin for Ghidra
+Module manifest file error on line 2 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_NAME=GhidraMCP
+Module manifest file error on line 3 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_DESC=An HTTP server plugin for Ghidra
+INFO  Using log config file: jar:file:/mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Framework/Generic/lib/Generic.jar!/generic.log4j.xml (LoggingInitialization)  
+INFO  Using log file: /home/wizard/.config/ghidra/ghidra_12.1.2_PUBLIC/application.log (LoggingInitialization)  
+INFO  Loading user preferences: /home/wizard/.config/ghidra/ghidra_12.1.2_PUBLIC/preferences (Preferences)  
+INFO  Loading previous preferences: /home/wizard/.ghidra/.ghidra_10.2.2_PUBLIC/preferences (Preferences)  
+INFO  Searching for classes... (ClassSearcher)  
+INFO  Class search complete (1140 ms) (ClassSearcher)  
+INFO  Initializing SSL Context (DefaultSSLContextInitializer)  
+INFO  Initializing Random Number Generator... (SecureRandomFactory)  
+INFO  Random Number Generator initialization complete: NativePRNGNonBlocking (SecureRandomFactory)  
+INFO  Trust manager disabled, cacerts have not been set (DefaultTrustManagerFactory)  
+INFO  Headless startup complete (2324 ms) (AnalyzeHeadless)  
+INFO  Class searcher loaded 60 extension points (20 false positives) (ClassSearcher)  
+INFO  HEADLESS Script Paths:
+    /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Debug/Debugger/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/VersionTracking/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/PIC/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/DATA/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/BSim/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/FileFormats/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/Base/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/8051/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Debug/Debugger-rmi-trace/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/PDB/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/SwiftDemangler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/GnuDemangler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/DecompilerDependent/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/Atmel/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/reverse-engineering-assistant/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/PyGhidra/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/Decompiler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/FunctionID/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/BytePatterns/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/MicrosoftCodeAnalyzer/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/SystemEmulation/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/WildcardAssembler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/JVM/ghidra_scripts (HeadlessAnalyzer)  
+INFO  HEADLESS: execution starts (HeadlessAnalyzer)  
+INFO  Opening existing project: /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/icon_project (HeadlessAnalyzer)  
+INFO  Opening project: /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/icon_project (HeadlessProject)  
+INFO  REPORT: Processing project file: /ICON1.OVL (HeadlessAnalyzer)  
+INFO  REPORT: Execute script: ApplyFunctionMap.java '/tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/labels.tsv'  (HeadlessAnalyzer)  
+INFO  SCRIPT: /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/ApplyFunctionMap.java (HeadlessAnalyzer)  
+INFO  ApplyFunctionMap.java> ApplyFunctionMap: removed stale labels=17 (GhidraScript)  
+INFO  ApplyFunctionMap.java> ApplyFunctionMap.java: ICON1.OVL applied=17 skipped=0 addressing=image_offset minAddress=1000:0000 tsv=v1.1 (GhidraScript)  
+INFO  REPORT: Save succeeded for processed file: /ICON1.OVL (HeadlessAnalyzer)  
+===== ICON1.OVL CHECK =====
+openjdk version "21.0.1" 2023-10-17 LTS
+OpenJDK Runtime Environment Temurin-21.0.1+12 (build 21.0.1+12-LTS)
+OpenJDK 64-Bit Server VM Temurin-21.0.1+12 (build 21.0.1+12-LTS, mixed mode)
+Module manifest file error on line 2 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_NAME=GhidraMCP
+Module manifest file error on line 3 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_DESC=An HTTP server plugin for Ghidra
+Module manifest file error on line 2 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_NAME=GhidraMCP
+Module manifest file error on line 3 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_DESC=An HTTP server plugin for Ghidra
+INFO  Using log config file: jar:file:/mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Framework/Generic/lib/Generic.jar!/generic.log4j.xml (LoggingInitialization)  
+INFO  Using log file: /home/wizard/.config/ghidra/ghidra_12.1.2_PUBLIC/application.log (LoggingInitialization)  
+INFO  Loading user preferences: /home/wizard/.config/ghidra/ghidra_12.1.2_PUBLIC/preferences (Preferences)  
+INFO  Loading previous preferences: /home/wizard/.ghidra/.ghidra_10.2.2_PUBLIC/preferences (Preferences)  
+INFO  Searching for classes... (ClassSearcher)  
+INFO  Class search complete (748 ms) (ClassSearcher)  
+INFO  Initializing SSL Context (DefaultSSLContextInitializer)  
+INFO  Initializing Random Number Generator... (SecureRandomFactory)  
+INFO  Random Number Generator initialization complete: NativePRNGNonBlocking (SecureRandomFactory)  
+INFO  Trust manager disabled, cacerts have not been set (DefaultTrustManagerFactory)  
+INFO  Headless startup complete (1874 ms) (AnalyzeHeadless)  
+INFO  Class searcher loaded 60 extension points (20 false positives) (ClassSearcher)  
+INFO  HEADLESS Script Paths:
+    /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Debug/Debugger/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/VersionTracking/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/PIC/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/DATA/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/BSim/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/FileFormats/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/Base/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/8051/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Debug/Debugger-rmi-trace/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/PDB/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/SwiftDemangler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/GnuDemangler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/DecompilerDependent/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/Atmel/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/reverse-engineering-assistant/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/PyGhidra/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/Decompiler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/FunctionID/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/BytePatterns/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/MicrosoftCodeAnalyzer/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/SystemEmulation/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/WildcardAssembler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/JVM/ghidra_scripts (HeadlessAnalyzer)  
+INFO  HEADLESS: execution starts (HeadlessAnalyzer)  
+INFO  Opening existing project: /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/icon_project (HeadlessAnalyzer)  
+INFO  Opening project: /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/icon_project (HeadlessProject)  
+INFO  REPORT: Processing project file: /ICON1.OVL (HeadlessAnalyzer)  
+INFO  REPORT: Execute script: CheckLabels.java '/tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/labels.tsv'  (HeadlessAnalyzer)  
+INFO  SCRIPT: /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/CheckLabels.java (HeadlessAnalyzer)  
+INFO  CheckLabels.java> CheckLabels: ICON1.OVL ok=17 fail=0 missing=0 minAddress=1000:0000 (GhidraScript)  
+INFO  REPORT: Save succeeded for processed file: /ICON1.OVL (HeadlessAnalyzer)  
+===== ICON2.OVL APPLY =====
+openjdk version "21.0.1" 2023-10-17 LTS
+OpenJDK Runtime Environment Temurin-21.0.1+12 (build 21.0.1+12-LTS)
+OpenJDK 64-Bit Server VM Temurin-21.0.1+12 (build 21.0.1+12-LTS, mixed mode)
+Module manifest file error on line 2 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_NAME=GhidraMCP
+Module manifest file error on line 3 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_DESC=An HTTP server plugin for Ghidra
+Module manifest file error on line 2 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_NAME=GhidraMCP
+Module manifest file error on line 3 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_DESC=An HTTP server plugin for Ghidra
+INFO  Using log config file: jar:file:/mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Framework/Generic/lib/Generic.jar!/generic.log4j.xml (LoggingInitialization)  
+INFO  Using log file: /home/wizard/.config/ghidra/ghidra_12.1.2_PUBLIC/application.log (LoggingInitialization)  
+INFO  Loading user preferences: /home/wizard/.config/ghidra/ghidra_12.1.2_PUBLIC/preferences (Preferences)  
+INFO  Loading previous preferences: /home/wizard/.ghidra/.ghidra_10.2.2_PUBLIC/preferences (Preferences)  
+INFO  Searching for classes... (ClassSearcher)  
+INFO  Class search complete (1061 ms) (ClassSearcher)  
+INFO  Initializing SSL Context (DefaultSSLContextInitializer)  
+INFO  Initializing Random Number Generator... (SecureRandomFactory)  
+INFO  Random Number Generator initialization complete: NativePRNGNonBlocking (SecureRandomFactory)  
+INFO  Trust manager disabled, cacerts have not been set (DefaultTrustManagerFactory)  
+INFO  Headless startup complete (2184 ms) (AnalyzeHeadless)  
+INFO  Class searcher loaded 60 extension points (20 false positives) (ClassSearcher)  
+INFO  HEADLESS Script Paths:
+    /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Debug/Debugger/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/VersionTracking/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/PIC/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/DATA/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/BSim/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/FileFormats/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/Base/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/8051/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Debug/Debugger-rmi-trace/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/PDB/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/SwiftDemangler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/GnuDemangler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/DecompilerDependent/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/Atmel/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/reverse-engineering-assistant/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/PyGhidra/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/Decompiler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/FunctionID/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/BytePatterns/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/MicrosoftCodeAnalyzer/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/SystemEmulation/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/WildcardAssembler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/JVM/ghidra_scripts (HeadlessAnalyzer)  
+INFO  HEADLESS: execution starts (HeadlessAnalyzer)  
+INFO  Opening existing project: /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/icon_project (HeadlessAnalyzer)  
+INFO  Opening project: /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/icon_project (HeadlessProject)  
+INFO  REPORT: Processing project file: /ICON2.OVL (HeadlessAnalyzer)  
+INFO  REPORT: Execute script: ApplyFunctionMap.java '/tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/labels.tsv'  (HeadlessAnalyzer)  
+INFO  SCRIPT: /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/ApplyFunctionMap.java (HeadlessAnalyzer)  
+INFO  ApplyFunctionMap.java> ApplyFunctionMap: removed stale labels=13 (GhidraScript)  
+INFO  ApplyFunctionMap.java> ApplyFunctionMap.java: ICON2.OVL applied=13 skipped=0 addressing=image_offset minAddress=1000:0000 tsv=v1.1 (GhidraScript)  
+INFO  REPORT: Save succeeded for processed file: /ICON2.OVL (HeadlessAnalyzer)  
+===== ICON2.OVL CHECK =====
+openjdk version "21.0.1" 2023-10-17 LTS
+OpenJDK Runtime Environment Temurin-21.0.1+12 (build 21.0.1+12-LTS)
+OpenJDK 64-Bit Server VM Temurin-21.0.1+12 (build 21.0.1+12-LTS, mixed mode)
+Module manifest file error on line 2 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_NAME=GhidraMCP
+Module manifest file error on line 3 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_DESC=An HTTP server plugin for Ghidra
+Module manifest file error on line 2 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_NAME=GhidraMCP
+Module manifest file error on line 3 of file: /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/GhidraMCP/Module.manifest
+	-> Invalid line encountered: GHIDRA_MODULE_DESC=An HTTP server plugin for Ghidra
+INFO  Using log config file: jar:file:/mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Framework/Generic/lib/Generic.jar!/generic.log4j.xml (LoggingInitialization)  
+INFO  Using log file: /home/wizard/.config/ghidra/ghidra_12.1.2_PUBLIC/application.log (LoggingInitialization)  
+INFO  Loading user preferences: /home/wizard/.config/ghidra/ghidra_12.1.2_PUBLIC/preferences (Preferences)  
+INFO  Loading previous preferences: /home/wizard/.ghidra/.ghidra_10.2.2_PUBLIC/preferences (Preferences)  
+INFO  Searching for classes... (ClassSearcher)  
+INFO  Class search complete (1082 ms) (ClassSearcher)  
+INFO  Initializing SSL Context (DefaultSSLContextInitializer)  
+INFO  Initializing Random Number Generator... (SecureRandomFactory)  
+INFO  Random Number Generator initialization complete: NativePRNGNonBlocking (SecureRandomFactory)  
+INFO  Trust manager disabled, cacerts have not been set (DefaultTrustManagerFactory)  
+INFO  Headless startup complete (2208 ms) (AnalyzeHeadless)  
+INFO  Class searcher loaded 60 extension points (20 false positives) (ClassSearcher)  
+INFO  HEADLESS Script Paths:
+    /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Debug/Debugger/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/VersionTracking/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/PIC/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/DATA/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/BSim/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/FileFormats/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/Base/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/8051/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Debug/Debugger-rmi-trace/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/PDB/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/SwiftDemangler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/GnuDemangler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/DecompilerDependent/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/Atmel/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Extensions/reverse-engineering-assistant/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/PyGhidra/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/Decompiler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/FunctionID/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/BytePatterns/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/MicrosoftCodeAnalyzer/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/SystemEmulation/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Features/WildcardAssembler/ghidra_scripts
+    /mnt/re-tools/opt/ghidra_12.1.2_PUBLIC/Ghidra/Processors/JVM/ghidra_scripts (HeadlessAnalyzer)  
+INFO  HEADLESS: execution starts (HeadlessAnalyzer)  
+INFO  Opening existing project: /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/icon_project (HeadlessAnalyzer)  
+INFO  Opening project: /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/icon_project (HeadlessProject)  
+INFO  REPORT: Processing project file: /ICON2.OVL (HeadlessAnalyzer)  
+INFO  REPORT: Execute script: CheckLabels.java '/tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/labels.tsv'  (HeadlessAnalyzer)  
+INFO  SCRIPT: /tmp/dumpexe/games/icon-quest-for-the-ring/analysis/ghidra/CheckLabels.java (HeadlessAnalyzer)  
+INFO  CheckLabels.java> CheckLabels: ICON2.OVL ok=13 fail=0 missing=0 minAddress=1000:0000 (GhidraScript)  
+INFO  REPORT: Save succeeded for processed file: /ICON2.OVL (HeadlessAnalyzer)  

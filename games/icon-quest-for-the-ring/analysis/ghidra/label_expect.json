@@ -1,0 +1,753 @@
+{
+  "version": "1.1",
+  "header_bytes": 512,
+  "expects": [
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "jt_00_calls_further",
+      "file_offset": 6789,
+      "image_offset": 6277,
+      "expect_hex": "e8374b",
+      "kind": "jump_table_target",
+      "role": "calls_further"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "jt_01_pascal_near",
+      "file_offset": 725,
+      "image_offset": 213,
+      "expect_hex": "558bec5581ec",
+      "kind": "jump_table_target",
+      "role": "pascal_near_proc_frame"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "jt_02_pascal_near",
+      "file_offset": 794,
+      "image_offset": 282,
+      "expect_hex": "558bec5581ec",
+      "kind": "jump_table_target",
+      "role": "pascal_near_proc_frame"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "jt_03_pascal_near",
+      "file_offset": 841,
+      "image_offset": 329,
+      "expect_hex": "558bec5581ec",
+      "kind": "jump_table_target",
+      "role": "pascal_near_proc_frame"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "jt_04_pascal_near",
+      "file_offset": 879,
+      "image_offset": 367,
+      "expect_hex": "558bec5581ec",
+      "kind": "jump_table_target",
+      "role": "pascal_near_proc_frame"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "jt_05_pascal_near",
+      "file_offset": 941,
+      "image_offset": 429,
+      "expect_hex": "558bec5581ec",
+      "kind": "jump_table_target",
+      "role": "pascal_near_proc_frame"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "jt_06_pascal_near",
+      "file_offset": 978,
+      "image_offset": 466,
+      "expect_hex": "558bec5581ec",
+      "kind": "jump_table_target",
+      "role": "pascal_near_proc_frame"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "jt_07_pascal_near",
+      "file_offset": 1208,
+      "image_offset": 696,
+      "expect_hex": "558bec5581ec",
+      "kind": "jump_table_target",
+      "role": "pascal_near_proc_frame"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "jt_08_pascal_near",
+      "file_offset": 2706,
+      "image_offset": 2194,
+      "expect_hex": "558bec5581ec",
+      "kind": "jump_table_target",
+      "role": "pascal_near_proc_frame"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "jt_09_game_or_rtl",
+      "file_offset": 1330,
+      "image_offset": 818,
+      "expect_hex": "558bc4ff76fe",
+      "kind": "jump_table_target",
+      "role": "game_or_rtl_proc"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "jt_10_game_or_rtl",
+      "file_offset": 1723,
+      "image_offset": 1211,
+      "expect_hex": "558bc4ff76fe",
+      "kind": "jump_table_target",
+      "role": "game_or_rtl_proc"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "jt_11_pascal_near",
+      "file_offset": 3380,
+      "image_offset": 2868,
+      "expect_hex": "558bec5581ec",
+      "kind": "jump_table_target",
+      "role": "pascal_near_proc_frame"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "jt_12_pascal_near",
+      "file_offset": 3503,
+      "image_offset": 2991,
+      "expect_hex": "558bec5581ec",
+      "kind": "jump_table_target",
+      "role": "pascal_near_proc_frame"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "jt_13_pascal_near",
+      "file_offset": 3589,
+      "image_offset": 3077,
+      "expect_hex": "558bec5581ec",
+      "kind": "jump_table_target",
+      "role": "pascal_near_proc_frame"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "jt_14_pascal_near",
+      "file_offset": 4489,
+      "image_offset": 3977,
+      "expect_hex": "558bec5581ec",
+      "kind": "jump_table_target",
+      "role": "pascal_near_proc_frame"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "jt_15_pascal_near",
+      "file_offset": 4708,
+      "image_offset": 4196,
+      "expect_hex": "558bec5581ec",
+      "kind": "jump_table_target",
+      "role": "pascal_near_proc_frame"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "jt_16_pascal_near",
+      "file_offset": 5211,
+      "image_offset": 4699,
+      "expect_hex": "558bec5581ec",
+      "kind": "jump_table_target",
+      "role": "pascal_near_proc_frame"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "jt_17_pascal_near",
+      "file_offset": 5645,
+      "image_offset": 5133,
+      "expect_hex": "558bec5581ec",
+      "kind": "jump_table_target",
+      "role": "pascal_near_proc_frame"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "jt_18_pascal_near",
+      "file_offset": 5735,
+      "image_offset": 5223,
+      "expect_hex": "558bec5581ec",
+      "kind": "jump_table_target",
+      "role": "pascal_near_proc_frame"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "jt_19_pascal_near",
+      "file_offset": 6236,
+      "image_offset": 5724,
+      "expect_hex": "558bec5581ec",
+      "kind": "jump_table_target",
+      "role": "pascal_near_proc_frame"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "jt_20_pascal_near",
+      "file_offset": 6362,
+      "image_offset": 5850,
+      "expect_hex": "558bec5581ec",
+      "kind": "jump_table_target",
+      "role": "pascal_near_proc_frame"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "jt_21_pascal_near",
+      "file_offset": 6394,
+      "image_offset": 5882,
+      "expect_hex": "558bec5581ec",
+      "kind": "jump_table_target",
+      "role": "pascal_near_proc_frame"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "jt_22_pascal_near",
+      "file_offset": 6580,
+      "image_offset": 6068,
+      "expect_hex": "558bec5581ec",
+      "kind": "jump_table_target",
+      "role": "pascal_near_proc_frame"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "pascal_mt_segment_table__0203",
+      "file_offset": 515,
+      "image_offset": 3,
+      "expect_hex": "800cb0089000",
+      "kind": "fingerprint_site",
+      "role": "pascal_mt_segment_table"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "pascal_mt_startup_call__0200",
+      "file_offset": 512,
+      "image_offset": 0,
+      "expect_hex": "e82865800cb0",
+      "kind": "fingerprint_site",
+      "role": "pascal_mt_startup_call"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "startup_read_data_size_paras__67AF",
+      "file_offset": 26543,
+      "image_offset": 26031,
+      "expect_hex": "2ea10500b104",
+      "kind": "fingerprint_site",
+      "role": "startup_read_data_size_paras"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "startup_read_extra_size_paras__67BA",
+      "file_offset": 26554,
+      "image_offset": 26042,
+      "expect_hex": "2ea109008bd8",
+      "kind": "fingerprint_site",
+      "role": "startup_read_extra_size_paras"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "startup_add_code_size__672D",
+      "file_offset": 26413,
+      "image_offset": 25901,
+      "expect_hex": "2e030603002e",
+      "kind": "fingerprint_site",
+      "role": "startup_add_code_size"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "startup_add_code_size__676A",
+      "file_offset": 26474,
+      "image_offset": 25962,
+      "expect_hex": "2e030603008e",
+      "kind": "fingerprint_site",
+      "role": "startup_add_code_size"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "startup_add_data_size__6732",
+      "file_offset": 26418,
+      "image_offset": 25906,
+      "expect_hex": "2e030605002e",
+      "kind": "fingerprint_site",
+      "role": "startup_add_data_size"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "startup_add_data_size__6787",
+      "file_offset": 26503,
+      "image_offset": 25991,
+      "expect_hex": "2e03060500a3",
+      "kind": "fingerprint_site",
+      "role": "startup_add_data_size"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "startup_add_stack_size__6737",
+      "file_offset": 26423,
+      "image_offset": 25911,
+      "expect_hex": "2e030607002e",
+      "kind": "fingerprint_site",
+      "role": "startup_add_stack_size"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "dos_print_string__6760",
+      "file_offset": 26464,
+      "image_offset": 25952,
+      "expect_hex": "b409cd2133c050cb8cc82e030603008e",
+      "kind": "fingerprint_site",
+      "role": "dos_print_string"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "rtl_error_string__02EE",
+      "file_offset": 750,
+      "image_offset": 238,
+      "expect_hex": "50617363616c204d542b204572726f72",
+      "kind": "fingerprint_site",
+      "role": "rtl_error_string"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "game_version_string__17D4",
+      "file_offset": 6100,
+      "image_offset": 5588,
+      "expect_hex": "49434f4e20312e31e81267d0d87203e9",
+      "kind": "fingerprint_site",
+      "role": "game_version_string"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "overlay_chain_name__1ED0",
+      "file_offset": 7888,
+      "image_offset": 7376,
+      "expect_hex": "69636f6e302e6f766ce898661eb83a5a",
+      "kind": "fingerprint_site",
+      "role": "overlay_chain_name"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "overlay_chain_name__1EED",
+      "file_offset": 7917,
+      "image_offset": 7405,
+      "expect_hex": "69636f6e302e6f766ce8cae31eb83e83",
+      "kind": "fingerprint_site",
+      "role": "overlay_chain_name"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "cga_requirement__1ACC",
+      "file_offset": 6860,
+      "image_offset": 6348,
+      "expect_hex": "436f6c6f72204772617068696373b8ff",
+      "kind": "fingerprint_site",
+      "role": "cga_requirement"
+    },
+    {
+      "image": "ICON.EXE",
+      "ghidra_name": "rtl_oom__674B",
+      "file_offset": 26443,
+      "image_offset": 25931,
+      "expect_hex": "4f5554204f46",
+      "kind": "fingerprint_site",
+      "role": "rtl_oom"
+    },
+    {
+      "image": "ICON0.OVL",
+      "ghidra_name": "pascal_mt_segment_table__0203",
+      "file_offset": 515,
+      "image_offset": 3,
+      "expect_hex": "800cb0089000",
+      "kind": "fingerprint_site",
+      "role": "pascal_mt_segment_table"
+    },
+    {
+      "image": "ICON0.OVL",
+      "ghidra_name": "pascal_mt_startup_call__0200",
+      "file_offset": 512,
+      "image_offset": 0,
+      "expect_hex": "e86a4c800cb0",
+      "kind": "fingerprint_site",
+      "role": "pascal_mt_startup_call"
+    },
+    {
+      "image": "ICON0.OVL",
+      "ghidra_name": "startup_read_data_size_paras__4EF1",
+      "file_offset": 20209,
+      "image_offset": 19697,
+      "expect_hex": "2ea10500b104",
+      "kind": "fingerprint_site",
+      "role": "startup_read_data_size_paras"
+    },
+    {
+      "image": "ICON0.OVL",
+      "ghidra_name": "startup_read_extra_size_paras__4EFC",
+      "file_offset": 20220,
+      "image_offset": 19708,
+      "expect_hex": "2ea109008bd8",
+      "kind": "fingerprint_site",
+      "role": "startup_read_extra_size_paras"
+    },
+    {
+      "image": "ICON0.OVL",
+      "ghidra_name": "startup_add_code_size__4E6F",
+      "file_offset": 20079,
+      "image_offset": 19567,
+      "expect_hex": "2e030603002e",
+      "kind": "fingerprint_site",
+      "role": "startup_add_code_size"
+    },
+    {
+      "image": "ICON0.OVL",
+      "ghidra_name": "startup_add_code_size__4EAC",
+      "file_offset": 20140,
+      "image_offset": 19628,
+      "expect_hex": "2e030603008e",
+      "kind": "fingerprint_site",
+      "role": "startup_add_code_size"
+    },
+    {
+      "image": "ICON0.OVL",
+      "ghidra_name": "startup_add_data_size__4E74",
+      "file_offset": 20084,
+      "image_offset": 19572,
+      "expect_hex": "2e030605002e",
+      "kind": "fingerprint_site",
+      "role": "startup_add_data_size"
+    },
+    {
+      "image": "ICON0.OVL",
+      "ghidra_name": "startup_add_data_size__4EC9",
+      "file_offset": 20169,
+      "image_offset": 19657,
+      "expect_hex": "2e03060500a3",
+      "kind": "fingerprint_site",
+      "role": "startup_add_data_size"
+    },
+    {
+      "image": "ICON0.OVL",
+      "ghidra_name": "startup_add_stack_size__4E79",
+      "file_offset": 20089,
+      "image_offset": 19577,
+      "expect_hex": "2e030607002e",
+      "kind": "fingerprint_site",
+      "role": "startup_add_stack_size"
+    },
+    {
+      "image": "ICON0.OVL",
+      "ghidra_name": "dos_print_string__4EA2",
+      "file_offset": 20130,
+      "image_offset": 19618,
+      "expect_hex": "b409cd2133c050cb8cc82e030603008e",
+      "kind": "fingerprint_site",
+      "role": "dos_print_string"
+    },
+    {
+      "image": "ICON0.OVL",
+      "ghidra_name": "rtl_error_string__02F4",
+      "file_offset": 756,
+      "image_offset": 244,
+      "expect_hex": "50617363616c204d542b204572726f72",
+      "kind": "fingerprint_site",
+      "role": "rtl_error_string"
+    },
+    {
+      "image": "ICON0.OVL",
+      "ghidra_name": "overlay_chain_name__20E6",
+      "file_offset": 8422,
+      "image_offset": 7910,
+      "expect_hex": "69636f6e312e6f766ce8ce551eb83a5a",
+      "kind": "fingerprint_site",
+      "role": "overlay_chain_name"
+    },
+    {
+      "image": "ICON0.OVL",
+      "ghidra_name": "overlay_chain_name__2103",
+      "file_offset": 8451,
+      "image_offset": 7939,
+      "expect_hex": "69636f6e312e6f766ce8b1e11eb83e83",
+      "kind": "fingerprint_site",
+      "role": "overlay_chain_name"
+    },
+    {
+      "image": "ICON0.OVL",
+      "ghidra_name": "rtl_oom__4E8D",
+      "file_offset": 20109,
+      "image_offset": 19597,
+      "expect_hex": "4f5554204f46",
+      "kind": "fingerprint_site",
+      "role": "rtl_oom"
+    },
+    {
+      "image": "ICON1.OVL",
+      "ghidra_name": "pascal_mt_segment_table__0203",
+      "file_offset": 515,
+      "image_offset": 3,
+      "expect_hex": "800cb0089000",
+      "kind": "fingerprint_site",
+      "role": "pascal_mt_segment_table"
+    },
+    {
+      "image": "ICON1.OVL",
+      "ghidra_name": "pascal_mt_startup_call__0200",
+      "file_offset": 512,
+      "image_offset": 0,
+      "expect_hex": "e882a0800cb0",
+      "kind": "fingerprint_site",
+      "role": "pascal_mt_startup_call"
+    },
+    {
+      "image": "ICON1.OVL",
+      "ghidra_name": "startup_read_data_size_paras__A309",
+      "file_offset": 41737,
+      "image_offset": 41225,
+      "expect_hex": "2ea10500b104",
+      "kind": "fingerprint_site",
+      "role": "startup_read_data_size_paras"
+    },
+    {
+      "image": "ICON1.OVL",
+      "ghidra_name": "startup_read_extra_size_paras__A314",
+      "file_offset": 41748,
+      "image_offset": 41236,
+      "expect_hex": "2ea109008bd8",
+      "kind": "fingerprint_site",
+      "role": "startup_read_extra_size_paras"
+    },
+    {
+      "image": "ICON1.OVL",
+      "ghidra_name": "startup_add_code_size__A287",
+      "file_offset": 41607,
+      "image_offset": 41095,
+      "expect_hex": "2e030603002e",
+      "kind": "fingerprint_site",
+      "role": "startup_add_code_size"
+    },
+    {
+      "image": "ICON1.OVL",
+      "ghidra_name": "startup_add_code_size__A2C4",
+      "file_offset": 41668,
+      "image_offset": 41156,
+      "expect_hex": "2e030603008e",
+      "kind": "fingerprint_site",
+      "role": "startup_add_code_size"
+    },
+    {
+      "image": "ICON1.OVL",
+      "ghidra_name": "startup_add_data_size__A28C",
+      "file_offset": 41612,
+      "image_offset": 41100,
+      "expect_hex": "2e030605002e",
+      "kind": "fingerprint_site",
+      "role": "startup_add_data_size"
+    },
+    {
+      "image": "ICON1.OVL",
+      "ghidra_name": "startup_add_data_size__A2E1",
+      "file_offset": 41697,
+      "image_offset": 41185,
+      "expect_hex": "2e03060500a3",
+      "kind": "fingerprint_site",
+      "role": "startup_add_data_size"
+    },
+    {
+      "image": "ICON1.OVL",
+      "ghidra_name": "startup_add_stack_size__A291",
+      "file_offset": 41617,
+      "image_offset": 41105,
+      "expect_hex": "2e030607002e",
+      "kind": "fingerprint_site",
+      "role": "startup_add_stack_size"
+    },
+    {
+      "image": "ICON1.OVL",
+      "ghidra_name": "dos_print_string__A2BA",
+      "file_offset": 41658,
+      "image_offset": 41146,
+      "expect_hex": "b409cd2133c050cb8cc82e030603008e",
+      "kind": "fingerprint_site",
+      "role": "dos_print_string"
+    },
+    {
+      "image": "ICON1.OVL",
+      "ghidra_name": "rtl_error_string__0306",
+      "file_offset": 774,
+      "image_offset": 262,
+      "expect_hex": "50617363616c204d542b204572726f72",
+      "kind": "fingerprint_site",
+      "role": "rtl_error_string"
+    },
+    {
+      "image": "ICON1.OVL",
+      "ghidra_name": "overlay_chain_name__282F",
+      "file_offset": 10287,
+      "image_offset": 9775,
+      "expect_hex": "69636f6e302e6f766ce8839b1eb83a5a",
+      "kind": "fingerprint_site",
+      "role": "overlay_chain_name"
+    },
+    {
+      "image": "ICON1.OVL",
+      "ghidra_name": "overlay_chain_name__2812",
+      "file_offset": 10258,
+      "image_offset": 9746,
+      "expect_hex": "69636f6e322e6f766ce8a09be91a001e",
+      "kind": "fingerprint_site",
+      "role": "overlay_chain_name"
+    },
+    {
+      "image": "ICON1.OVL",
+      "ghidra_name": "overlay_chain_name__284C",
+      "file_offset": 10316,
+      "image_offset": 9804,
+      "expect_hex": "69636f6e322e6f766ce87ada1eb83e83",
+      "kind": "fingerprint_site",
+      "role": "overlay_chain_name"
+    },
+    {
+      "image": "ICON1.OVL",
+      "ghidra_name": "overlay_chain_name__293C",
+      "file_offset": 10556,
+      "image_offset": 10044,
+      "expect_hex": "69636f6e322e6f766ce8769a1eb83a5a",
+      "kind": "fingerprint_site",
+      "role": "overlay_chain_name"
+    },
+    {
+      "image": "ICON1.OVL",
+      "ghidra_name": "overlay_chain_name__2959",
+      "file_offset": 10585,
+      "image_offset": 10073,
+      "expect_hex": "69636f6e322e6f766ce86dd91eb83e83",
+      "kind": "fingerprint_site",
+      "role": "overlay_chain_name"
+    },
+    {
+      "image": "ICON1.OVL",
+      "ghidra_name": "rtl_oom__A2A5",
+      "file_offset": 41637,
+      "image_offset": 41125,
+      "expect_hex": "4f5554204f46",
+      "kind": "fingerprint_site",
+      "role": "rtl_oom"
+    },
+    {
+      "image": "ICON2.OVL",
+      "ghidra_name": "pascal_mt_segment_table__0203",
+      "file_offset": 515,
+      "image_offset": 3,
+      "expect_hex": "800cb0089000",
+      "kind": "fingerprint_site",
+      "role": "pascal_mt_segment_table"
+    },
+    {
+      "image": "ICON2.OVL",
+      "ghidra_name": "pascal_mt_startup_call__0200",
+      "file_offset": 512,
+      "image_offset": 0,
+      "expect_hex": "e8b836800cb0",
+      "kind": "fingerprint_site",
+      "role": "pascal_mt_startup_call"
+    },
+    {
+      "image": "ICON2.OVL",
+      "ghidra_name": "startup_read_data_size_paras__393F",
+      "file_offset": 14655,
+      "image_offset": 14143,
+      "expect_hex": "2ea10500b104",
+      "kind": "fingerprint_site",
+      "role": "startup_read_data_size_paras"
+    },
+    {
+      "image": "ICON2.OVL",
+      "ghidra_name": "startup_read_extra_size_paras__394A",
+      "file_offset": 14666,
+      "image_offset": 14154,
+      "expect_hex": "2ea109008bd8",
+      "kind": "fingerprint_site",
+      "role": "startup_read_extra_size_paras"
+    },
+    {
+      "image": "ICON2.OVL",
+      "ghidra_name": "startup_add_code_size__38BD",
+      "file_offset": 14525,
+      "image_offset": 14013,
+      "expect_hex": "2e030603002e",
+      "kind": "fingerprint_site",
+      "role": "startup_add_code_size"
+    },
+    {
+      "image": "ICON2.OVL",
+      "ghidra_name": "startup_add_code_size__38FA",
+      "file_offset": 14586,
+      "image_offset": 14074,
+      "expect_hex": "2e030603008e",
+      "kind": "fingerprint_site",
+      "role": "startup_add_code_size"
+    },
+    {
+      "image": "ICON2.OVL",
+      "ghidra_name": "startup_add_data_size__38C2",
+      "file_offset": 14530,
+      "image_offset": 14018,
+      "expect_hex": "2e030605002e",
+      "kind": "fingerprint_site",
+      "role": "startup_add_data_size"
+    },
+    {
+      "image": "ICON2.OVL",
+      "ghidra_name": "startup_add_data_size__3917",
+      "file_offset": 14615,
+      "image_offset": 14103,
+      "expect_hex": "2e03060500a3",
+      "kind": "fingerprint_site",
+      "role": "startup_add_data_size"
+    },
+    {
+      "image": "ICON2.OVL",
+      "ghidra_name": "startup_add_stack_size__38C7",
+      "file_offset": 14535,
+      "image_offset": 14023,
+      "expect_hex": "2e030607002e",
+      "kind": "fingerprint_site",
+      "role": "startup_add_stack_size"
+    },
+    {
+      "image": "ICON2.OVL",
+      "ghidra_name": "dos_print_string__38F0",
+      "file_offset": 14576,
+      "image_offset": 14064,
+      "expect_hex": "b409cd2133c050cb8cc82e030603008e",
+      "kind": "fingerprint_site",
+      "role": "dos_print_string"
+    },
+    {
+      "image": "ICON2.OVL",
+      "ghidra_name": "rtl_error_string__02DC",
+      "file_offset": 732,
+      "image_offset": 220,
+      "expect_hex": "50617363616c204d542b204572726f72",
+      "kind": "fingerprint_site",
+      "role": "rtl_error_string"
+    },
+    {
+      "image": "ICON2.OVL",
+      "ghidra_name": "game_version_string__0AC6",
+      "file_offset": 2758,
+      "image_offset": 2246,
+      "expect_hex": "49434f4e20312e31b8500050e8be30c7",
+      "kind": "fingerprint_site",
+      "role": "game_version_string"
+    },
+    {
+      "image": "ICON2.OVL",
+      "ghidra_name": "rtl_oom__38DB",
+      "file_offset": 14555,
+      "image_offset": 14043,
+      "expect_hex": "4f5554204f46",
+      "kind": "fingerprint_site",
+      "role": "rtl_oom"
+    }
+  ]
+}

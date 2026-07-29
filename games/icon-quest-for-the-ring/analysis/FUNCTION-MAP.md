@@ -11,6 +11,17 @@
 | Fingerprint matches | 60 |
 | Tier A / B / C | 60 / 21 / 2 |
 
+
+## Ghidra addressing (do not use file_offset as CODE addr)
+
+| View | Entry CALL | jt_01 frame | "Pascal MT+ Error" |
+|------|------------|-------------|----------------------|
+| File offset | 0x0200 | 0x02D5 | 0x02EE |
+| Image / Ghidra `1000:xxxx` | 1000:0000 | 1000:00d5 | 1000:00ee |
+| Bytes | `e8 28 65` | `55 8b ec` | `Pas…` |
+
+Labels live at **image_offset**. See `ghidra/LABELS-APPLIED.md` + `CheckLabels.java`.
+
 ## Jump table @ ICON.EXE IP 0090h (Pascal procedure vectors)
 
 | Slot | IP | Target | File off | Ghidra label | Tier | Role |

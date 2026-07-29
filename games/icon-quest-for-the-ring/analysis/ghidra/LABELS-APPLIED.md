@@ -1,35 +1,42 @@
 # Ghidra labels for ICON function map
 
-## Status (applied headless 2026-07-30)
+## Addressing (critical)
 
-| Program | Labels applied | Skipped |
-|---------|----------------|---------|
-| ICON.EXE | 39 | 0 |
-| ICON0.OVL | 14 | 0 |
-| ICON1.OVL | 17 | 0 |
-| ICON2.OVL | 13 | 0 |
-| **Total** | **83** | **0** |
+Ghidra MZ load image is at **`1000:0000` = file_offset − 0x200** (header is separate).
 
-Script: `ApplyFunctionMap.java` + `labels.tsv` via Ghidra 12 `analyzeHeadless`.
+| Field | Use for Ghidra labels? |
+|-------|------------------------|
+| `image_offset` / IP | **Yes** — CODE address |
+| `file_offset` | No (that is dumpexe/file view; +0x200 vs Ghidra) |
+
+**v1.0 bug:** `ApplyFunctionMap` placed labels at `file_offset` → all 83 were +0x200 wrong.  
+**v1.1 fix:** use `image_offset` column; clear stale labels; `CheckLabels` proves bytes.
+
+## Status (re-applied + verified 2026-07-30)
+
+| Program | Applied | CheckLabels ok | fail | missing |
+|---------|---------|----------------|------|---------|
+| ICON.EXE | 39 | 39 | 0 | 0 |
+| ICON0.OVL | 14 | 14 | 0 | 0 |
+| ICON1.OVL | 17 | 17 | 0 | 0 |
+| ICON2.OVL | 13 | 13 | 0 | 0 |
+| **Total** | **83** | **83** | **0** | **0** |
+
+### ICON.EXE spot-checks (bytes at label address)
 
 ```
-ApplyFunctionMap.java: ICON.EXE applied=39 skipped=0
-ApplyFunctionMap.java: ICON0.OVL applied=14 skipped=0
-ApplyFunctionMap.java: ICON1.OVL applied=17 skipped=0
-ApplyFunctionMap.java: ICON2.OVL applied=13 skipped=0
+SPOT OK jt_01_pascal_near @ 1000:00d5 bytes=558bec
+SPOT OK pascal_mt_startup_call__0200 @ 1000:0000 bytes=e82865
+SPOT OK rtl_error_string__02EE @ 1000:00ee bytes=506173   ("Pas")
 ```
+
+Log: `{SCRATCH}/ghidra/reapply-check.log` (session) and headless output above.
+
+## Scripts
+- `ApplyFunctionMap.java` — apply at image_offset; removes stale names first
+- `CheckLabels.java` — address + prologue/string byte match; throws on fail
+- `labels.tsv` v1.1 columns: image, file_offset, image_offset, ip, ghidra_name, tier, kind, role, prologue_hex
 
 ## Sources
-- Machine-readable map: `../function_map.json` (83 procedures)
-- TSV: `labels.tsv`
-- Per-image symbol lists: `symbols_ICON_EXE.txt` etc.
-- Jump table list: `jump_table_labels.txt`
-- Project: `icon_project.gpr` (x86:LE:16:Real Mode)
-
-## Summary from function_map.json
-```
-procedure_count=83
-jump_table_slots=23
-fingerprint_matches=60
-tier A/B/C = 60/21/2
-```
+- `../function_map.json` v1.1 (`addressing` block documents the fix)
+- Project: `icon_project.gpr`

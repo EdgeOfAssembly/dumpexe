@@ -30,3 +30,7 @@
 ```
 SPECTATOR: xmux attach icon-re --no-reconnect
 ```
+
+## FIXUP: Ghidra label addresses
+- v1.0 used file_offset (+0x200 wrong)
+- v1.1 image_offset; CheckLabels 83/83 ok

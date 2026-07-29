@@ -1,84 +1,84 @@
-image	file_offset	ip	ghidra_name	tier	kind	role
-ICON.EXE	0x1A85	1885	jt_00_calls_further	B	jump_table_target	calls_further
-ICON.EXE	0x02D5	00D5	jt_01_pascal_near	B	jump_table_target	pascal_near_proc_frame
-ICON.EXE	0x031A	011A	jt_02_pascal_near	B	jump_table_target	pascal_near_proc_frame
-ICON.EXE	0x0349	0149	jt_03_pascal_near	B	jump_table_target	pascal_near_proc_frame
-ICON.EXE	0x036F	016F	jt_04_pascal_near	B	jump_table_target	pascal_near_proc_frame
-ICON.EXE	0x03AD	01AD	jt_05_pascal_near	B	jump_table_target	pascal_near_proc_frame
-ICON.EXE	0x03D2	01D2	jt_06_pascal_near	B	jump_table_target	pascal_near_proc_frame
-ICON.EXE	0x04B8	02B8	jt_07_pascal_near	B	jump_table_target	pascal_near_proc_frame
-ICON.EXE	0x0A92	0892	jt_08_pascal_near	B	jump_table_target	pascal_near_proc_frame
-ICON.EXE	0x0532	0332	jt_09_game_or_rtl	C	jump_table_target	game_or_rtl_proc
-ICON.EXE	0x06BB	04BB	jt_10_game_or_rtl	C	jump_table_target	game_or_rtl_proc
-ICON.EXE	0x0D34	0B34	jt_11_pascal_near	B	jump_table_target	pascal_near_proc_frame
-ICON.EXE	0x0DAF	0BAF	jt_12_pascal_near	B	jump_table_target	pascal_near_proc_frame
-ICON.EXE	0x0E05	0C05	jt_13_pascal_near	B	jump_table_target	pascal_near_proc_frame
-ICON.EXE	0x1189	0F89	jt_14_pascal_near	B	jump_table_target	pascal_near_proc_frame
-ICON.EXE	0x1264	1064	jt_15_pascal_near	B	jump_table_target	pascal_near_proc_frame
-ICON.EXE	0x145B	125B	jt_16_pascal_near	B	jump_table_target	pascal_near_proc_frame
-ICON.EXE	0x160D	140D	jt_17_pascal_near	B	jump_table_target	pascal_near_proc_frame
-ICON.EXE	0x1667	1467	jt_18_pascal_near	B	jump_table_target	pascal_near_proc_frame
-ICON.EXE	0x185C	165C	jt_19_pascal_near	B	jump_table_target	pascal_near_proc_frame
-ICON.EXE	0x18DA	16DA	jt_20_pascal_near	B	jump_table_target	pascal_near_proc_frame
-ICON.EXE	0x18FA	16FA	jt_21_pascal_near	B	jump_table_target	pascal_near_proc_frame
-ICON.EXE	0x19B4	17B4	jt_22_pascal_near	B	jump_table_target	pascal_near_proc_frame
-ICON.EXE	0x0203		pascal_mt_segment_table__0203	A	fingerprint_site	pascal_mt_segment_table
-ICON.EXE	0x0200		pascal_mt_startup_call__0200	A	fingerprint_site	pascal_mt_startup_call
-ICON.EXE	0x67AF		startup_read_data_size_paras__67AF	A	fingerprint_site	startup_read_data_size_paras
-ICON.EXE	0x67BA		startup_read_extra_size_paras__67BA	A	fingerprint_site	startup_read_extra_size_paras
-ICON.EXE	0x672D		startup_add_code_size__672D	A	fingerprint_site	startup_add_code_size
-ICON.EXE	0x676A		startup_add_code_size__676A	A	fingerprint_site	startup_add_code_size
-ICON.EXE	0x6732		startup_add_data_size__6732	A	fingerprint_site	startup_add_data_size
-ICON.EXE	0x6787		startup_add_data_size__6787	A	fingerprint_site	startup_add_data_size
-ICON.EXE	0x6737		startup_add_stack_size__6737	A	fingerprint_site	startup_add_stack_size
-ICON.EXE	0x6760		dos_print_string__6760	A	fingerprint_site	dos_print_string
-ICON.EXE	0x02EE		rtl_error_string__02EE	A	fingerprint_site	rtl_error_string
-ICON.EXE	0x17D4		game_version_string__17D4	A	fingerprint_site	game_version_string
-ICON.EXE	0x1ED0		overlay_chain_name__1ED0	A	fingerprint_site	overlay_chain_name
-ICON.EXE	0x1EED		overlay_chain_name__1EED	A	fingerprint_site	overlay_chain_name
-ICON.EXE	0x1ACC		cga_requirement__1ACC	A	fingerprint_site	cga_requirement
-ICON.EXE	0x674B		rtl_oom__674B	A	fingerprint_site	rtl_oom
-ICON0.OVL	0x0203		pascal_mt_segment_table__0203	A	fingerprint_site	pascal_mt_segment_table
-ICON0.OVL	0x0200		pascal_mt_startup_call__0200	A	fingerprint_site	pascal_mt_startup_call
-ICON0.OVL	0x4EF1		startup_read_data_size_paras__4EF1	A	fingerprint_site	startup_read_data_size_paras
-ICON0.OVL	0x4EFC		startup_read_extra_size_paras__4EFC	A	fingerprint_site	startup_read_extra_size_paras
-ICON0.OVL	0x4E6F		startup_add_code_size__4E6F	A	fingerprint_site	startup_add_code_size
-ICON0.OVL	0x4EAC		startup_add_code_size__4EAC	A	fingerprint_site	startup_add_code_size
-ICON0.OVL	0x4E74		startup_add_data_size__4E74	A	fingerprint_site	startup_add_data_size
-ICON0.OVL	0x4EC9		startup_add_data_size__4EC9	A	fingerprint_site	startup_add_data_size
-ICON0.OVL	0x4E79		startup_add_stack_size__4E79	A	fingerprint_site	startup_add_stack_size
-ICON0.OVL	0x4EA2		dos_print_string__4EA2	A	fingerprint_site	dos_print_string
-ICON0.OVL	0x02F4		rtl_error_string__02F4	A	fingerprint_site	rtl_error_string
-ICON0.OVL	0x20E6		overlay_chain_name__20E6	A	fingerprint_site	overlay_chain_name
-ICON0.OVL	0x2103		overlay_chain_name__2103	A	fingerprint_site	overlay_chain_name
-ICON0.OVL	0x4E8D		rtl_oom__4E8D	A	fingerprint_site	rtl_oom
-ICON1.OVL	0x0203		pascal_mt_segment_table__0203	A	fingerprint_site	pascal_mt_segment_table
-ICON1.OVL	0x0200		pascal_mt_startup_call__0200	A	fingerprint_site	pascal_mt_startup_call
-ICON1.OVL	0xA309		startup_read_data_size_paras__A309	A	fingerprint_site	startup_read_data_size_paras
-ICON1.OVL	0xA314		startup_read_extra_size_paras__A314	A	fingerprint_site	startup_read_extra_size_paras
-ICON1.OVL	0xA287		startup_add_code_size__A287	A	fingerprint_site	startup_add_code_size
-ICON1.OVL	0xA2C4		startup_add_code_size__A2C4	A	fingerprint_site	startup_add_code_size
-ICON1.OVL	0xA28C		startup_add_data_size__A28C	A	fingerprint_site	startup_add_data_size
-ICON1.OVL	0xA2E1		startup_add_data_size__A2E1	A	fingerprint_site	startup_add_data_size
-ICON1.OVL	0xA291		startup_add_stack_size__A291	A	fingerprint_site	startup_add_stack_size
-ICON1.OVL	0xA2BA		dos_print_string__A2BA	A	fingerprint_site	dos_print_string
-ICON1.OVL	0x0306		rtl_error_string__0306	A	fingerprint_site	rtl_error_string
-ICON1.OVL	0x282F		overlay_chain_name__282F	A	fingerprint_site	overlay_chain_name
-ICON1.OVL	0x2812		overlay_chain_name__2812	A	fingerprint_site	overlay_chain_name
-ICON1.OVL	0x284C		overlay_chain_name__284C	A	fingerprint_site	overlay_chain_name
-ICON1.OVL	0x293C		overlay_chain_name__293C	A	fingerprint_site	overlay_chain_name
-ICON1.OVL	0x2959		overlay_chain_name__2959	A	fingerprint_site	overlay_chain_name
-ICON1.OVL	0xA2A5		rtl_oom__A2A5	A	fingerprint_site	rtl_oom
-ICON2.OVL	0x0203		pascal_mt_segment_table__0203	A	fingerprint_site	pascal_mt_segment_table
-ICON2.OVL	0x0200		pascal_mt_startup_call__0200	A	fingerprint_site	pascal_mt_startup_call
-ICON2.OVL	0x393F		startup_read_data_size_paras__393F	A	fingerprint_site	startup_read_data_size_paras
-ICON2.OVL	0x394A		startup_read_extra_size_paras__394A	A	fingerprint_site	startup_read_extra_size_paras
-ICON2.OVL	0x38BD		startup_add_code_size__38BD	A	fingerprint_site	startup_add_code_size
-ICON2.OVL	0x38FA		startup_add_code_size__38FA	A	fingerprint_site	startup_add_code_size
-ICON2.OVL	0x38C2		startup_add_data_size__38C2	A	fingerprint_site	startup_add_data_size
-ICON2.OVL	0x3917		startup_add_data_size__3917	A	fingerprint_site	startup_add_data_size
-ICON2.OVL	0x38C7		startup_add_stack_size__38C7	A	fingerprint_site	startup_add_stack_size
-ICON2.OVL	0x38F0		dos_print_string__38F0	A	fingerprint_site	dos_print_string
-ICON2.OVL	0x02DC		rtl_error_string__02DC	A	fingerprint_site	rtl_error_string
-ICON2.OVL	0x0AC6		game_version_string__0AC6	A	fingerprint_site	game_version_string
-ICON2.OVL	0x38DB		rtl_oom__38DB	A	fingerprint_site	rtl_oom
+image	file_offset	image_offset	ip	ghidra_name	tier	kind	role	prologue_hex
+ICON.EXE	0x1A85	0x1885	1885	jt_00_calls_further	B	jump_table_target	calls_further	e8374b
+ICON.EXE	0x02D5	0x00D5	00D5	jt_01_pascal_near	B	jump_table_target	pascal_near_proc_frame	558bec5581ec
+ICON.EXE	0x031A	0x011A	011A	jt_02_pascal_near	B	jump_table_target	pascal_near_proc_frame	558bec5581ec
+ICON.EXE	0x0349	0x0149	0149	jt_03_pascal_near	B	jump_table_target	pascal_near_proc_frame	558bec5581ec
+ICON.EXE	0x036F	0x016F	016F	jt_04_pascal_near	B	jump_table_target	pascal_near_proc_frame	558bec5581ec
+ICON.EXE	0x03AD	0x01AD	01AD	jt_05_pascal_near	B	jump_table_target	pascal_near_proc_frame	558bec5581ec
+ICON.EXE	0x03D2	0x01D2	01D2	jt_06_pascal_near	B	jump_table_target	pascal_near_proc_frame	558bec5581ec
+ICON.EXE	0x04B8	0x02B8	02B8	jt_07_pascal_near	B	jump_table_target	pascal_near_proc_frame	558bec5581ec
+ICON.EXE	0x0A92	0x0892	0892	jt_08_pascal_near	B	jump_table_target	pascal_near_proc_frame	558bec5581ec
+ICON.EXE	0x0532	0x0332	0332	jt_09_game_or_rtl	C	jump_table_target	game_or_rtl_proc	558bc4ff76fe
+ICON.EXE	0x06BB	0x04BB	04BB	jt_10_game_or_rtl	C	jump_table_target	game_or_rtl_proc	558bc4ff76fe
+ICON.EXE	0x0D34	0x0B34	0B34	jt_11_pascal_near	B	jump_table_target	pascal_near_proc_frame	558bec5581ec
+ICON.EXE	0x0DAF	0x0BAF	0BAF	jt_12_pascal_near	B	jump_table_target	pascal_near_proc_frame	558bec5581ec
+ICON.EXE	0x0E05	0x0C05	0C05	jt_13_pascal_near	B	jump_table_target	pascal_near_proc_frame	558bec5581ec
+ICON.EXE	0x1189	0x0F89	0F89	jt_14_pascal_near	B	jump_table_target	pascal_near_proc_frame	558bec5581ec
+ICON.EXE	0x1264	0x1064	1064	jt_15_pascal_near	B	jump_table_target	pascal_near_proc_frame	558bec5581ec
+ICON.EXE	0x145B	0x125B	125B	jt_16_pascal_near	B	jump_table_target	pascal_near_proc_frame	558bec5581ec
+ICON.EXE	0x160D	0x140D	140D	jt_17_pascal_near	B	jump_table_target	pascal_near_proc_frame	558bec5581ec
+ICON.EXE	0x1667	0x1467	1467	jt_18_pascal_near	B	jump_table_target	pascal_near_proc_frame	558bec5581ec
+ICON.EXE	0x185C	0x165C	165C	jt_19_pascal_near	B	jump_table_target	pascal_near_proc_frame	558bec5581ec
+ICON.EXE	0x18DA	0x16DA	16DA	jt_20_pascal_near	B	jump_table_target	pascal_near_proc_frame	558bec5581ec
+ICON.EXE	0x18FA	0x16FA	16FA	jt_21_pascal_near	B	jump_table_target	pascal_near_proc_frame	558bec5581ec
+ICON.EXE	0x19B4	0x17B4	17B4	jt_22_pascal_near	B	jump_table_target	pascal_near_proc_frame	558bec5581ec
+ICON.EXE	0x0203	0x0003	0003	pascal_mt_segment_table__0203	A	fingerprint_site	pascal_mt_segment_table	800cb0089000
+ICON.EXE	0x0200	0x0000	0000	pascal_mt_startup_call__0200	A	fingerprint_site	pascal_mt_startup_call	e82865800cb0
+ICON.EXE	0x67AF	0x65AF	65AF	startup_read_data_size_paras__67AF	A	fingerprint_site	startup_read_data_size_paras	2ea10500b104
+ICON.EXE	0x67BA	0x65BA	65BA	startup_read_extra_size_paras__67BA	A	fingerprint_site	startup_read_extra_size_paras	2ea109008bd8
+ICON.EXE	0x672D	0x652D	652D	startup_add_code_size__672D	A	fingerprint_site	startup_add_code_size	2e030603002e
+ICON.EXE	0x676A	0x656A	656A	startup_add_code_size__676A	A	fingerprint_site	startup_add_code_size	2e030603008e
+ICON.EXE	0x6732	0x6532	6532	startup_add_data_size__6732	A	fingerprint_site	startup_add_data_size	2e030605002e
+ICON.EXE	0x6787	0x6587	6587	startup_add_data_size__6787	A	fingerprint_site	startup_add_data_size	2e03060500a3
+ICON.EXE	0x6737	0x6537	6537	startup_add_stack_size__6737	A	fingerprint_site	startup_add_stack_size	2e030607002e
+ICON.EXE	0x6760	0x6560	6560	dos_print_string__6760	A	fingerprint_site	dos_print_string	b409cd2133c050cb8cc82e030603008e
+ICON.EXE	0x02EE	0x00EE	00EE	rtl_error_string__02EE	A	fingerprint_site	rtl_error_string	50617363616c204d542b204572726f72
+ICON.EXE	0x17D4	0x15D4	15D4	game_version_string__17D4	A	fingerprint_site	game_version_string	49434f4e20312e31e81267d0d87203e9
+ICON.EXE	0x1ED0	0x1CD0	1CD0	overlay_chain_name__1ED0	A	fingerprint_site	overlay_chain_name	69636f6e302e6f766ce898661eb83a5a
+ICON.EXE	0x1EED	0x1CED	1CED	overlay_chain_name__1EED	A	fingerprint_site	overlay_chain_name	69636f6e302e6f766ce8cae31eb83e83
+ICON.EXE	0x1ACC	0x18CC	18CC	cga_requirement__1ACC	A	fingerprint_site	cga_requirement	436f6c6f72204772617068696373b8ff
+ICON.EXE	0x674B	0x654B	654B	rtl_oom__674B	A	fingerprint_site	rtl_oom	4f5554204f46204d454d4f52590a0d24
+ICON0.OVL	0x0203	0x0003	0003	pascal_mt_segment_table__0203	A	fingerprint_site	pascal_mt_segment_table	800cb0089000
+ICON0.OVL	0x0200	0x0000	0000	pascal_mt_startup_call__0200	A	fingerprint_site	pascal_mt_startup_call	e86a4c800cb0
+ICON0.OVL	0x4EF1	0x4CF1	4CF1	startup_read_data_size_paras__4EF1	A	fingerprint_site	startup_read_data_size_paras	2ea10500b104
+ICON0.OVL	0x4EFC	0x4CFC	4CFC	startup_read_extra_size_paras__4EFC	A	fingerprint_site	startup_read_extra_size_paras	2ea109008bd8
+ICON0.OVL	0x4E6F	0x4C6F	4C6F	startup_add_code_size__4E6F	A	fingerprint_site	startup_add_code_size	2e030603002e
+ICON0.OVL	0x4EAC	0x4CAC	4CAC	startup_add_code_size__4EAC	A	fingerprint_site	startup_add_code_size	2e030603008e
+ICON0.OVL	0x4E74	0x4C74	4C74	startup_add_data_size__4E74	A	fingerprint_site	startup_add_data_size	2e030605002e
+ICON0.OVL	0x4EC9	0x4CC9	4CC9	startup_add_data_size__4EC9	A	fingerprint_site	startup_add_data_size	2e03060500a3
+ICON0.OVL	0x4E79	0x4C79	4C79	startup_add_stack_size__4E79	A	fingerprint_site	startup_add_stack_size	2e030607002e
+ICON0.OVL	0x4EA2	0x4CA2	4CA2	dos_print_string__4EA2	A	fingerprint_site	dos_print_string	b409cd2133c050cb8cc82e030603008e
+ICON0.OVL	0x02F4	0x00F4	00F4	rtl_error_string__02F4	A	fingerprint_site	rtl_error_string	50617363616c204d542b204572726f72
+ICON0.OVL	0x20E6	0x1EE6	1EE6	overlay_chain_name__20E6	A	fingerprint_site	overlay_chain_name	69636f6e312e6f766ce8ce551eb83a5a
+ICON0.OVL	0x2103	0x1F03	1F03	overlay_chain_name__2103	A	fingerprint_site	overlay_chain_name	69636f6e312e6f766ce8b1e11eb83e83
+ICON0.OVL	0x4E8D	0x4C8D	4C8D	rtl_oom__4E8D	A	fingerprint_site	rtl_oom	4f5554204f46204d454d4f52590a0d24
+ICON1.OVL	0x0203	0x0003	0003	pascal_mt_segment_table__0203	A	fingerprint_site	pascal_mt_segment_table	800cb0089000
+ICON1.OVL	0x0200	0x0000	0000	pascal_mt_startup_call__0200	A	fingerprint_site	pascal_mt_startup_call	e882a0800cb0
+ICON1.OVL	0xA309	0xA109	A109	startup_read_data_size_paras__A309	A	fingerprint_site	startup_read_data_size_paras	2ea10500b104
+ICON1.OVL	0xA314	0xA114	A114	startup_read_extra_size_paras__A314	A	fingerprint_site	startup_read_extra_size_paras	2ea109008bd8
+ICON1.OVL	0xA287	0xA087	A087	startup_add_code_size__A287	A	fingerprint_site	startup_add_code_size	2e030603002e
+ICON1.OVL	0xA2C4	0xA0C4	A0C4	startup_add_code_size__A2C4	A	fingerprint_site	startup_add_code_size	2e030603008e
+ICON1.OVL	0xA28C	0xA08C	A08C	startup_add_data_size__A28C	A	fingerprint_site	startup_add_data_size	2e030605002e
+ICON1.OVL	0xA2E1	0xA0E1	A0E1	startup_add_data_size__A2E1	A	fingerprint_site	startup_add_data_size	2e03060500a3
+ICON1.OVL	0xA291	0xA091	A091	startup_add_stack_size__A291	A	fingerprint_site	startup_add_stack_size	2e030607002e
+ICON1.OVL	0xA2BA	0xA0BA	A0BA	dos_print_string__A2BA	A	fingerprint_site	dos_print_string	b409cd2133c050cb8cc82e030603008e
+ICON1.OVL	0x0306	0x0106	0106	rtl_error_string__0306	A	fingerprint_site	rtl_error_string	50617363616c204d542b204572726f72
+ICON1.OVL	0x282F	0x262F	262F	overlay_chain_name__282F	A	fingerprint_site	overlay_chain_name	69636f6e302e6f766ce8839b1eb83a5a
+ICON1.OVL	0x2812	0x2612	2612	overlay_chain_name__2812	A	fingerprint_site	overlay_chain_name	69636f6e322e6f766ce8a09be91a001e
+ICON1.OVL	0x284C	0x264C	264C	overlay_chain_name__284C	A	fingerprint_site	overlay_chain_name	69636f6e322e6f766ce87ada1eb83e83
+ICON1.OVL	0x293C	0x273C	273C	overlay_chain_name__293C	A	fingerprint_site	overlay_chain_name	69636f6e322e6f766ce8769a1eb83a5a
+ICON1.OVL	0x2959	0x2759	2759	overlay_chain_name__2959	A	fingerprint_site	overlay_chain_name	69636f6e322e6f766ce86dd91eb83e83
+ICON1.OVL	0xA2A5	0xA0A5	A0A5	rtl_oom__A2A5	A	fingerprint_site	rtl_oom	4f5554204f46204d454d4f52590a0d24
+ICON2.OVL	0x0203	0x0003	0003	pascal_mt_segment_table__0203	A	fingerprint_site	pascal_mt_segment_table	800cb0089000
+ICON2.OVL	0x0200	0x0000	0000	pascal_mt_startup_call__0200	A	fingerprint_site	pascal_mt_startup_call	e8b836800cb0
+ICON2.OVL	0x393F	0x373F	373F	startup_read_data_size_paras__393F	A	fingerprint_site	startup_read_data_size_paras	2ea10500b104
+ICON2.OVL	0x394A	0x374A	374A	startup_read_extra_size_paras__394A	A	fingerprint_site	startup_read_extra_size_paras	2ea109008bd8
+ICON2.OVL	0x38BD	0x36BD	36BD	startup_add_code_size__38BD	A	fingerprint_site	startup_add_code_size	2e030603002e
+ICON2.OVL	0x38FA	0x36FA	36FA	startup_add_code_size__38FA	A	fingerprint_site	startup_add_code_size	2e030603008e
+ICON2.OVL	0x38C2	0x36C2	36C2	startup_add_data_size__38C2	A	fingerprint_site	startup_add_data_size	2e030605002e
+ICON2.OVL	0x3917	0x3717	3717	startup_add_data_size__3917	A	fingerprint_site	startup_add_data_size	2e03060500a3
+ICON2.OVL	0x38C7	0x36C7	36C7	startup_add_stack_size__38C7	A	fingerprint_site	startup_add_stack_size	2e030607002e
+ICON2.OVL	0x38F0	0x36F0	36F0	dos_print_string__38F0	A	fingerprint_site	dos_print_string	b409cd2133c050cb8cc82e030603008e
+ICON2.OVL	0x02DC	0x00DC	00DC	rtl_error_string__02DC	A	fingerprint_site	rtl_error_string	50617363616c204d542b204572726f72
+ICON2.OVL	0x0AC6	0x08C6	08C6	game_version_string__0AC6	A	fingerprint_site	game_version_string	49434f4e20312e31b8500050e8be30c7
+ICON2.OVL	0x38DB	0x36DB	36DB	rtl_oom__38DB	A	fingerprint_site	rtl_oom	4f5554204f46204d454d4f52590a0d24

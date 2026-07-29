@@ -1,8 +1,14 @@
 {
-  "version": "1.0",
-  "generated_utc": "2026-07-29T21:36:58Z",
+  "version": "1.1",
+  "generated_utc": "2026-07-29T21:47:52Z",
   "compiler": "Pascal MT+86 for MS-DOS 3.1.1 (Digital Research, 12-03-84)",
   "source_fingerprint": "analysis/fingerprint/mt_fingerprint_db.json",
+  "addressing": {
+    "mz_header_bytes": 512,
+    "ghidra_code_base": "1000:0000 = load image = file_offset - 0x200",
+    "label_field": "image_offset (NOT file_offset)",
+    "fix": "v1.0 ApplyFunctionMap used file_offset as CODE addr (+0x200 wrong); v1.1 uses image_offset"
+  },
   "jump_table": {
     "image": "ICON.EXE",
     "base_ip": "0090",
@@ -14,6 +20,7 @@
         "table_ip": "0090",
         "target_ip": "1885",
         "target_file_offset": 6789,
+        "target_image_offset": 6277,
         "ghidra_name": "jt_00_calls_further",
         "tier": "B",
         "role": "calls_further",
@@ -24,6 +31,7 @@
         "table_ip": "0093",
         "target_ip": "00D5",
         "target_file_offset": 725,
+        "target_image_offset": 213,
         "ghidra_name": "jt_01_pascal_near",
         "tier": "B",
         "role": "pascal_near_proc_frame",
@@ -34,6 +42,7 @@
         "table_ip": "0096",
         "target_ip": "011A",
         "target_file_offset": 794,
+        "target_image_offset": 282,
         "ghidra_name": "jt_02_pascal_near",
         "tier": "B",
         "role": "pascal_near_proc_frame",
@@ -44,6 +53,7 @@
         "table_ip": "0099",
         "target_ip": "0149",
         "target_file_offset": 841,
+        "target_image_offset": 329,
         "ghidra_name": "jt_03_pascal_near",
         "tier": "B",
         "role": "pascal_near_proc_frame",
@@ -54,6 +64,7 @@
         "table_ip": "009C",
         "target_ip": "016F",
         "target_file_offset": 879,
+        "target_image_offset": 367,
         "ghidra_name": "jt_04_pascal_near",
         "tier": "B",
         "role": "pascal_near_proc_frame",
@@ -64,6 +75,7 @@
         "table_ip": "009F",
         "target_ip": "01AD",
         "target_file_offset": 941,
+        "target_image_offset": 429,
         "ghidra_name": "jt_05_pascal_near",
         "tier": "B",
         "role": "pascal_near_proc_frame",
@@ -74,6 +86,7 @@
         "table_ip": "00A2",
         "target_ip": "01D2",
         "target_file_offset": 978,
+        "target_image_offset": 466,
         "ghidra_name": "jt_06_pascal_near",
         "tier": "B",
         "role": "pascal_near_proc_frame",
@@ -84,6 +97,7 @@
         "table_ip": "00A5",
         "target_ip": "02B8",
         "target_file_offset": 1208,
+        "target_image_offset": 696,
         "ghidra_name": "jt_07_pascal_near",
         "tier": "B",
         "role": "pascal_near_proc_frame",
@@ -94,6 +108,7 @@
         "table_ip": "00A8",
         "target_ip": "0892",
         "target_file_offset": 2706,
+        "target_image_offset": 2194,
         "ghidra_name": "jt_08_pascal_near",
         "tier": "B",
         "role": "pascal_near_proc_frame",
@@ -104,6 +119,7 @@
         "table_ip": "00AB",
         "target_ip": "0332",
         "target_file_offset": 1330,
+        "target_image_offset": 818,
         "ghidra_name": "jt_09_game_or_rtl",
         "tier": "C",
         "role": "game_or_rtl_proc",
@@ -114,6 +130,7 @@
         "table_ip": "00AE",
         "target_ip": "04BB",
         "target_file_offset": 1723,
+        "target_image_offset": 1211,
         "ghidra_name": "jt_10_game_or_rtl",
         "tier": "C",
         "role": "game_or_rtl_proc",
@@ -124,6 +141,7 @@
         "table_ip": "00B1",
         "target_ip": "0B34",
         "target_file_offset": 3380,
+        "target_image_offset": 2868,
         "ghidra_name": "jt_11_pascal_near",
         "tier": "B",
         "role": "pascal_near_proc_frame",
@@ -134,6 +152,7 @@
         "table_ip": "00B4",
         "target_ip": "0BAF",
         "target_file_offset": 3503,
+        "target_image_offset": 2991,
         "ghidra_name": "jt_12_pascal_near",
         "tier": "B",
         "role": "pascal_near_proc_frame",
@@ -144,6 +163,7 @@
         "table_ip": "00B7",
         "target_ip": "0C05",
         "target_file_offset": 3589,
+        "target_image_offset": 3077,
         "ghidra_name": "jt_13_pascal_near",
         "tier": "B",
         "role": "pascal_near_proc_frame",
@@ -154,6 +174,7 @@
         "table_ip": "00BA",
         "target_ip": "0F89",
         "target_file_offset": 4489,
+        "target_image_offset": 3977,
         "ghidra_name": "jt_14_pascal_near",
         "tier": "B",
         "role": "pascal_near_proc_frame",
@@ -164,6 +185,7 @@
         "table_ip": "00BD",
         "target_ip": "1064",
         "target_file_offset": 4708,
+        "target_image_offset": 4196,
         "ghidra_name": "jt_15_pascal_near",
         "tier": "B",
         "role": "pascal_near_proc_frame",
@@ -174,6 +196,7 @@
         "table_ip": "00C0",
         "target_ip": "125B",
         "target_file_offset": 5211,
+        "target_image_offset": 4699,
         "ghidra_name": "jt_16_pascal_near",
         "tier": "B",
         "role": "pascal_near_proc_frame",
@@ -184,6 +207,7 @@
         "table_ip": "00C3",
         "target_ip": "140D",
         "target_file_offset": 5645,
+        "target_image_offset": 5133,
         "ghidra_name": "jt_17_pascal_near",
         "tier": "B",
         "role": "pascal_near_proc_frame",
@@ -194,6 +218,7 @@
         "table_ip": "00C6",
         "target_ip": "1467",
         "target_file_offset": 5735,
+        "target_image_offset": 5223,
         "ghidra_name": "jt_18_pascal_near",
         "tier": "B",
         "role": "pascal_near_proc_frame",
@@ -204,6 +229,7 @@
         "table_ip": "00C9",
         "target_ip": "165C",
         "target_file_offset": 6236,
+        "target_image_offset": 5724,
         "ghidra_name": "jt_19_pascal_near",
         "tier": "B",
         "role": "pascal_near_proc_frame",
@@ -214,6 +240,7 @@
         "table_ip": "00CC",
         "target_ip": "16DA",
         "target_file_offset": 6362,
+        "target_image_offset": 5850,
         "ghidra_name": "jt_20_pascal_near",
         "tier": "B",
         "role": "pascal_near_proc_frame",
@@ -224,6 +251,7 @@
         "table_ip": "00CF",
         "target_ip": "16FA",
         "target_file_offset": 6394,
+        "target_image_offset": 5882,
         "ghidra_name": "jt_21_pascal_near",
         "tier": "B",
         "role": "pascal_near_proc_frame",
@@ -234,6 +262,7 @@
         "table_ip": "00D2",
         "target_ip": "17B4",
         "target_file_offset": 6580,
+        "target_image_offset": 6068,
         "ghidra_name": "jt_22_pascal_near",
         "tier": "B",
         "role": "pascal_near_proc_frame",
@@ -267,15 +296,19 @@
       "table_ip": "0090",
       "target_ip": "1885",
       "file_offset": 6789,
+      "image_offset": 6277,
       "table_file_offset": 656,
+      "table_image_offset": 144,
       "prologue_hex": "e8374b",
       "role": "calls_further",
       "evidence": [
         "jump_table@IP0090h slot 0 E9 \u2192 IP 1885",
-        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table",
+        "Ghidra address = image_offset (file_offset - 0x200), NOT file_offset"
       ],
       "ghidra_name": "jt_00_calls_further",
-      "rtl_vs_game": "mixed"
+      "rtl_vs_game": "mixed",
+      "expect_hex": "e8374b"
     },
     {
       "id": "ICON.EXE:jt1",
@@ -286,15 +319,19 @@
       "table_ip": "0093",
       "target_ip": "00D5",
       "file_offset": 725,
+      "image_offset": 213,
       "table_file_offset": 659,
+      "table_image_offset": 147,
       "prologue_hex": "558bec5581ec",
       "role": "pascal_near_proc_frame",
       "evidence": [
         "jump_table@IP0090h slot 1 E9 \u2192 IP 00D5",
-        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table",
+        "Ghidra address = image_offset (file_offset - 0x200), NOT file_offset"
       ],
       "ghidra_name": "jt_01_pascal_near",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_hex": "558bec5581ec"
     },
     {
       "id": "ICON.EXE:jt2",
@@ -305,15 +342,19 @@
       "table_ip": "0096",
       "target_ip": "011A",
       "file_offset": 794,
+      "image_offset": 282,
       "table_file_offset": 662,
+      "table_image_offset": 150,
       "prologue_hex": "558bec5581ec",
       "role": "pascal_near_proc_frame",
       "evidence": [
         "jump_table@IP0090h slot 2 E9 \u2192 IP 011A",
-        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table",
+        "Ghidra address = image_offset (file_offset - 0x200), NOT file_offset"
       ],
       "ghidra_name": "jt_02_pascal_near",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_hex": "558bec5581ec"
     },
     {
       "id": "ICON.EXE:jt3",
@@ -324,15 +365,19 @@
       "table_ip": "0099",
       "target_ip": "0149",
       "file_offset": 841,
+      "image_offset": 329,
       "table_file_offset": 665,
+      "table_image_offset": 153,
       "prologue_hex": "558bec5581ec",
       "role": "pascal_near_proc_frame",
       "evidence": [
         "jump_table@IP0090h slot 3 E9 \u2192 IP 0149",
-        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table",
+        "Ghidra address = image_offset (file_offset - 0x200), NOT file_offset"
       ],
       "ghidra_name": "jt_03_pascal_near",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_hex": "558bec5581ec"
     },
     {
       "id": "ICON.EXE:jt4",
@@ -343,15 +388,19 @@
       "table_ip": "009C",
       "target_ip": "016F",
       "file_offset": 879,
+      "image_offset": 367,
       "table_file_offset": 668,
+      "table_image_offset": 156,
       "prologue_hex": "558bec5581ec",
       "role": "pascal_near_proc_frame",
       "evidence": [
         "jump_table@IP0090h slot 4 E9 \u2192 IP 016F",
-        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table",
+        "Ghidra address = image_offset (file_offset - 0x200), NOT file_offset"
       ],
       "ghidra_name": "jt_04_pascal_near",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_hex": "558bec5581ec"
     },
     {
       "id": "ICON.EXE:jt5",
@@ -362,15 +411,19 @@
       "table_ip": "009F",
       "target_ip": "01AD",
       "file_offset": 941,
+      "image_offset": 429,
       "table_file_offset": 671,
+      "table_image_offset": 159,
       "prologue_hex": "558bec5581ec",
       "role": "pascal_near_proc_frame",
       "evidence": [
         "jump_table@IP0090h slot 5 E9 \u2192 IP 01AD",
-        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table",
+        "Ghidra address = image_offset (file_offset - 0x200), NOT file_offset"
       ],
       "ghidra_name": "jt_05_pascal_near",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_hex": "558bec5581ec"
     },
     {
       "id": "ICON.EXE:jt6",
@@ -381,15 +434,19 @@
       "table_ip": "00A2",
       "target_ip": "01D2",
       "file_offset": 978,
+      "image_offset": 466,
       "table_file_offset": 674,
+      "table_image_offset": 162,
       "prologue_hex": "558bec5581ec",
       "role": "pascal_near_proc_frame",
       "evidence": [
         "jump_table@IP0090h slot 6 E9 \u2192 IP 01D2",
-        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table",
+        "Ghidra address = image_offset (file_offset - 0x200), NOT file_offset"
       ],
       "ghidra_name": "jt_06_pascal_near",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_hex": "558bec5581ec"
     },
     {
       "id": "ICON.EXE:jt7",
@@ -400,15 +457,19 @@
       "table_ip": "00A5",
       "target_ip": "02B8",
       "file_offset": 1208,
+      "image_offset": 696,
       "table_file_offset": 677,
+      "table_image_offset": 165,
       "prologue_hex": "558bec5581ec",
       "role": "pascal_near_proc_frame",
       "evidence": [
         "jump_table@IP0090h slot 7 E9 \u2192 IP 02B8",
-        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table",
+        "Ghidra address = image_offset (file_offset - 0x200), NOT file_offset"
       ],
       "ghidra_name": "jt_07_pascal_near",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_hex": "558bec5581ec"
     },
     {
       "id": "ICON.EXE:jt8",
@@ -419,15 +480,19 @@
       "table_ip": "00A8",
       "target_ip": "0892",
       "file_offset": 2706,
+      "image_offset": 2194,
       "table_file_offset": 680,
+      "table_image_offset": 168,
       "prologue_hex": "558bec5581ec",
       "role": "pascal_near_proc_frame",
       "evidence": [
         "jump_table@IP0090h slot 8 E9 \u2192 IP 0892",
-        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table",
+        "Ghidra address = image_offset (file_offset - 0x200), NOT file_offset"
       ],
       "ghidra_name": "jt_08_pascal_near",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_hex": "558bec5581ec"
     },
     {
       "id": "ICON.EXE:jt9",
@@ -438,15 +503,19 @@
       "table_ip": "00AB",
       "target_ip": "0332",
       "file_offset": 1330,
+      "image_offset": 818,
       "table_file_offset": 683,
+      "table_image_offset": 171,
       "prologue_hex": "558bc4ff76fe",
       "role": "game_or_rtl_proc",
       "evidence": [
         "jump_table@IP0090h slot 9 E9 \u2192 IP 0332",
-        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table",
+        "Ghidra address = image_offset (file_offset - 0x200), NOT file_offset"
       ],
       "ghidra_name": "jt_09_game_or_rtl",
-      "rtl_vs_game": "game_or_unknown"
+      "rtl_vs_game": "game_or_unknown",
+      "expect_hex": "558bc4ff76fe"
     },
     {
       "id": "ICON.EXE:jt10",
@@ -457,15 +526,19 @@
       "table_ip": "00AE",
       "target_ip": "04BB",
       "file_offset": 1723,
+      "image_offset": 1211,
       "table_file_offset": 686,
+      "table_image_offset": 174,
       "prologue_hex": "558bc4ff76fe",
       "role": "game_or_rtl_proc",
       "evidence": [
         "jump_table@IP0090h slot 10 E9 \u2192 IP 04BB",
-        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table",
+        "Ghidra address = image_offset (file_offset - 0x200), NOT file_offset"
       ],
       "ghidra_name": "jt_10_game_or_rtl",
-      "rtl_vs_game": "game_or_unknown"
+      "rtl_vs_game": "game_or_unknown",
+      "expect_hex": "558bc4ff76fe"
     },
     {
       "id": "ICON.EXE:jt11",
@@ -476,15 +549,19 @@
       "table_ip": "00B1",
       "target_ip": "0B34",
       "file_offset": 3380,
+      "image_offset": 2868,
       "table_file_offset": 689,
+      "table_image_offset": 177,
       "prologue_hex": "558bec5581ec",
       "role": "pascal_near_proc_frame",
       "evidence": [
         "jump_table@IP0090h slot 11 E9 \u2192 IP 0B34",
-        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table",
+        "Ghidra address = image_offset (file_offset - 0x200), NOT file_offset"
       ],
       "ghidra_name": "jt_11_pascal_near",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_hex": "558bec5581ec"
     },
     {
       "id": "ICON.EXE:jt12",
@@ -495,15 +572,19 @@
       "table_ip": "00B4",
       "target_ip": "0BAF",
       "file_offset": 3503,
+      "image_offset": 2991,
       "table_file_offset": 692,
+      "table_image_offset": 180,
       "prologue_hex": "558bec5581ec",
       "role": "pascal_near_proc_frame",
       "evidence": [
         "jump_table@IP0090h slot 12 E9 \u2192 IP 0BAF",
-        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table",
+        "Ghidra address = image_offset (file_offset - 0x200), NOT file_offset"
       ],
       "ghidra_name": "jt_12_pascal_near",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_hex": "558bec5581ec"
     },
     {
       "id": "ICON.EXE:jt13",
@@ -514,15 +595,19 @@
       "table_ip": "00B7",
       "target_ip": "0C05",
       "file_offset": 3589,
+      "image_offset": 3077,
       "table_file_offset": 695,
+      "table_image_offset": 183,
       "prologue_hex": "558bec5581ec",
       "role": "pascal_near_proc_frame",
       "evidence": [
         "jump_table@IP0090h slot 13 E9 \u2192 IP 0C05",
-        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table",
+        "Ghidra address = image_offset (file_offset - 0x200), NOT file_offset"
       ],
       "ghidra_name": "jt_13_pascal_near",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_hex": "558bec5581ec"
     },
     {
       "id": "ICON.EXE:jt14",
@@ -533,15 +618,19 @@
       "table_ip": "00BA",
       "target_ip": "0F89",
       "file_offset": 4489,
+      "image_offset": 3977,
       "table_file_offset": 698,
+      "table_image_offset": 186,
       "prologue_hex": "558bec5581ec",
       "role": "pascal_near_proc_frame",
       "evidence": [
         "jump_table@IP0090h slot 14 E9 \u2192 IP 0F89",
-        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table",
+        "Ghidra address = image_offset (file_offset - 0x200), NOT file_offset"
       ],
       "ghidra_name": "jt_14_pascal_near",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_hex": "558bec5581ec"
     },
     {
       "id": "ICON.EXE:jt15",
@@ -552,15 +641,19 @@
       "table_ip": "00BD",
       "target_ip": "1064",
       "file_offset": 4708,
+      "image_offset": 4196,
       "table_file_offset": 701,
+      "table_image_offset": 189,
       "prologue_hex": "558bec5581ec",
       "role": "pascal_near_proc_frame",
       "evidence": [
         "jump_table@IP0090h slot 15 E9 \u2192 IP 1064",
-        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table",
+        "Ghidra address = image_offset (file_offset - 0x200), NOT file_offset"
       ],
       "ghidra_name": "jt_15_pascal_near",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_hex": "558bec5581ec"
     },
     {
       "id": "ICON.EXE:jt16",
@@ -571,15 +664,19 @@
       "table_ip": "00C0",
       "target_ip": "125B",
       "file_offset": 5211,
+      "image_offset": 4699,
       "table_file_offset": 704,
+      "table_image_offset": 192,
       "prologue_hex": "558bec5581ec",
       "role": "pascal_near_proc_frame",
       "evidence": [
         "jump_table@IP0090h slot 16 E9 \u2192 IP 125B",
-        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table",
+        "Ghidra address = image_offset (file_offset - 0x200), NOT file_offset"
       ],
       "ghidra_name": "jt_16_pascal_near",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_hex": "558bec5581ec"
     },
     {
       "id": "ICON.EXE:jt17",
@@ -590,15 +687,19 @@
       "table_ip": "00C3",
       "target_ip": "140D",
       "file_offset": 5645,
+      "image_offset": 5133,
       "table_file_offset": 707,
+      "table_image_offset": 195,
       "prologue_hex": "558bec5581ec",
       "role": "pascal_near_proc_frame",
       "evidence": [
         "jump_table@IP0090h slot 17 E9 \u2192 IP 140D",
-        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table",
+        "Ghidra address = image_offset (file_offset - 0x200), NOT file_offset"
       ],
       "ghidra_name": "jt_17_pascal_near",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_hex": "558bec5581ec"
     },
     {
       "id": "ICON.EXE:jt18",
@@ -609,15 +710,19 @@
       "table_ip": "00C6",
       "target_ip": "1467",
       "file_offset": 5735,
+      "image_offset": 5223,
       "table_file_offset": 710,
+      "table_image_offset": 198,
       "prologue_hex": "558bec5581ec",
       "role": "pascal_near_proc_frame",
       "evidence": [
         "jump_table@IP0090h slot 18 E9 \u2192 IP 1467",
-        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table",
+        "Ghidra address = image_offset (file_offset - 0x200), NOT file_offset"
       ],
       "ghidra_name": "jt_18_pascal_near",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_hex": "558bec5581ec"
     },
     {
       "id": "ICON.EXE:jt19",
@@ -628,15 +733,19 @@
       "table_ip": "00C9",
       "target_ip": "165C",
       "file_offset": 6236,
+      "image_offset": 5724,
       "table_file_offset": 713,
+      "table_image_offset": 201,
       "prologue_hex": "558bec5581ec",
       "role": "pascal_near_proc_frame",
       "evidence": [
         "jump_table@IP0090h slot 19 E9 \u2192 IP 165C",
-        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table",
+        "Ghidra address = image_offset (file_offset - 0x200), NOT file_offset"
       ],
       "ghidra_name": "jt_19_pascal_near",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_hex": "558bec5581ec"
     },
     {
       "id": "ICON.EXE:jt20",
@@ -647,15 +756,19 @@
       "table_ip": "00CC",
       "target_ip": "16DA",
       "file_offset": 6362,
+      "image_offset": 5850,
       "table_file_offset": 716,
+      "table_image_offset": 204,
       "prologue_hex": "558bec5581ec",
       "role": "pascal_near_proc_frame",
       "evidence": [
         "jump_table@IP0090h slot 20 E9 \u2192 IP 16DA",
-        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table",
+        "Ghidra address = image_offset (file_offset - 0x200), NOT file_offset"
       ],
       "ghidra_name": "jt_20_pascal_near",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_hex": "558bec5581ec"
     },
     {
       "id": "ICON.EXE:jt21",
@@ -666,15 +779,19 @@
       "table_ip": "00CF",
       "target_ip": "16FA",
       "file_offset": 6394,
+      "image_offset": 5882,
       "table_file_offset": 719,
+      "table_image_offset": 207,
       "prologue_hex": "558bec5581ec",
       "role": "pascal_near_proc_frame",
       "evidence": [
         "jump_table@IP0090h slot 21 E9 \u2192 IP 16FA",
-        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table",
+        "Ghidra address = image_offset (file_offset - 0x200), NOT file_offset"
       ],
       "ghidra_name": "jt_21_pascal_near",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_hex": "558bec5581ec"
     },
     {
       "id": "ICON.EXE:jt22",
@@ -685,15 +802,19 @@
       "table_ip": "00D2",
       "target_ip": "17B4",
       "file_offset": 6580,
+      "image_offset": 6068,
       "table_file_offset": 722,
+      "table_image_offset": 210,
       "prologue_hex": "558bec5581ec",
       "role": "pascal_near_proc_frame",
       "evidence": [
         "jump_table@IP0090h slot 22 E9 \u2192 IP 17B4",
-        "analysis/fingerprint/mt_fingerprint_db.json#jump_table"
+        "analysis/fingerprint/mt_fingerprint_db.json#jump_table",
+        "Ghidra address = image_offset (file_offset - 0x200), NOT file_offset"
       ],
       "ghidra_name": "jt_22_pascal_near",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_hex": "558bec5581ec"
     },
     {
       "id": "ICON.EXE:fp0",
@@ -701,7 +822,7 @@
       "label": "pascal_mt_segment_table__0203",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "0003",
       "file_offset": 515,
       "image_offset": 3,
       "role": "pascal_mt_segment_table",
@@ -710,10 +831,12 @@
       "evidence": [
         "words 0C80,08B0,0090,0000 after CALL",
         "source_mt=INIPC.I86 segment sizes at CS+3..+9",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "pascal_mt_segment_table__0203",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "words 0C80,08B0,0090,0000 after CALL",
+      "expect_hex": "800cb0089000"
     },
     {
       "id": "ICON.EXE:fp1",
@@ -721,7 +844,7 @@
       "label": "pascal_mt_startup_call__0200",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "0000",
       "file_offset": 512,
       "image_offset": 0,
       "role": "pascal_mt_startup_call",
@@ -730,10 +853,12 @@
       "evidence": [
         "E8 rel16 \u2192 IP 652Bh",
         "source_mt=INIPC/PASLIB startup",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "pascal_mt_startup_call__0200",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "E8 rel16 \u2192 IP 652Bh",
+      "expect_hex": "e82865800cb0"
     },
     {
       "id": "ICON.EXE:fp2",
@@ -741,7 +866,7 @@
       "label": "startup_read_data_size_paras__67AF",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "65AF",
       "file_offset": 26543,
       "image_offset": 26031,
       "role": "startup_read_data_size_paras",
@@ -750,10 +875,12 @@
       "evidence": [
         "2ea10500",
         "source_mt=INIPC.I86 CS:WORD PTR [5]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_read_data_size_paras__67AF",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2ea10500",
+      "expect_hex": "2ea10500b104"
     },
     {
       "id": "ICON.EXE:fp3",
@@ -761,7 +888,7 @@
       "label": "startup_read_extra_size_paras__67BA",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "65BA",
       "file_offset": 26554,
       "image_offset": 26042,
       "role": "startup_read_extra_size_paras",
@@ -770,10 +897,12 @@
       "evidence": [
         "2ea10900",
         "source_mt=INIPC.I86 CS:WORD PTR [9]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_read_extra_size_paras__67BA",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2ea10900",
+      "expect_hex": "2ea109008bd8"
     },
     {
       "id": "ICON.EXE:fp4",
@@ -781,7 +910,7 @@
       "label": "startup_add_code_size__672D",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "652D",
       "file_offset": 26413,
       "image_offset": 25901,
       "role": "startup_add_code_size",
@@ -790,10 +919,12 @@
       "evidence": [
         "2e03060300",
         "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [3]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_add_code_size__672D",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2e03060300",
+      "expect_hex": "2e030603002e"
     },
     {
       "id": "ICON.EXE:fp5",
@@ -801,7 +932,7 @@
       "label": "startup_add_code_size__676A",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "656A",
       "file_offset": 26474,
       "image_offset": 25962,
       "role": "startup_add_code_size",
@@ -810,10 +941,12 @@
       "evidence": [
         "2e03060300",
         "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [3]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_add_code_size__676A",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2e03060300",
+      "expect_hex": "2e030603008e"
     },
     {
       "id": "ICON.EXE:fp6",
@@ -821,7 +954,7 @@
       "label": "startup_add_data_size__6732",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "6532",
       "file_offset": 26418,
       "image_offset": 25906,
       "role": "startup_add_data_size",
@@ -830,10 +963,12 @@
       "evidence": [
         "2e03060500",
         "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [5]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_add_data_size__6732",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2e03060500",
+      "expect_hex": "2e030605002e"
     },
     {
       "id": "ICON.EXE:fp7",
@@ -841,7 +976,7 @@
       "label": "startup_add_data_size__6787",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "6587",
       "file_offset": 26503,
       "image_offset": 25991,
       "role": "startup_add_data_size",
@@ -850,10 +985,12 @@
       "evidence": [
         "2e03060500",
         "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [5]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_add_data_size__6787",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2e03060500",
+      "expect_hex": "2e03060500a3"
     },
     {
       "id": "ICON.EXE:fp8",
@@ -861,7 +998,7 @@
       "label": "startup_add_stack_size__6737",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "6537",
       "file_offset": 26423,
       "image_offset": 25911,
       "role": "startup_add_stack_size",
@@ -870,10 +1007,12 @@
       "evidence": [
         "2e03060700",
         "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [7]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_add_stack_size__6737",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2e03060700",
+      "expect_hex": "2e030607002e"
     },
     {
       "id": "ICON.EXE:fp9",
@@ -881,7 +1020,7 @@
       "label": "dos_print_string__6760",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "6560",
       "file_offset": 26464,
       "image_offset": 25952,
       "role": "dos_print_string",
@@ -890,10 +1029,12 @@
       "evidence": [
         "b409cd21",
         "source_mt=INIPC OUTOFMEM / DOS print $",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "dos_print_string__6760",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "b409cd21",
+      "expect_hex": "b409cd2133c050cb8cc82e030603008e"
     },
     {
       "id": "ICON.EXE:fp10",
@@ -901,7 +1042,7 @@
       "label": "rtl_error_string__02EE",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "00EE",
       "file_offset": 750,
       "image_offset": 238,
       "role": "rtl_error_string",
@@ -910,10 +1051,12 @@
       "evidence": [
         "Pascal MT+ Error",
         "source_mt=PASLIB/runtime",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "rtl_error_string__02EE",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "Pascal MT+ Error",
+      "expect_hex": "50617363616c204d542b204572726f72"
     },
     {
       "id": "ICON.EXE:fp11",
@@ -921,7 +1064,7 @@
       "label": "game_version_string__17D4",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "15D4",
       "file_offset": 6100,
       "image_offset": 5588,
       "role": "game_version_string",
@@ -930,10 +1073,12 @@
       "evidence": [
         "ICON 1.1",
         "source_mt=game",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "game_version_string__17D4",
-      "rtl_vs_game": "game"
+      "rtl_vs_game": "game",
+      "expect_bytes_note": "ICON 1.1",
+      "expect_hex": "49434f4e20312e31e81267d0d87203e9"
     },
     {
       "id": "ICON.EXE:fp12",
@@ -941,7 +1086,7 @@
       "label": "overlay_chain_name__1ED0",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "1CD0",
       "file_offset": 7888,
       "image_offset": 7376,
       "role": "overlay_chain_name",
@@ -950,10 +1095,12 @@
       "evidence": [
         "icon0.ovl",
         "source_mt=game/overlay",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "overlay_chain_name__1ED0",
-      "rtl_vs_game": "game"
+      "rtl_vs_game": "game",
+      "expect_bytes_note": "icon0.ovl",
+      "expect_hex": "69636f6e302e6f766ce898661eb83a5a"
     },
     {
       "id": "ICON.EXE:fp13",
@@ -961,7 +1108,7 @@
       "label": "overlay_chain_name__1EED",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "1CED",
       "file_offset": 7917,
       "image_offset": 7405,
       "role": "overlay_chain_name",
@@ -970,10 +1117,12 @@
       "evidence": [
         "icon0.ovl",
         "source_mt=game/overlay",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "overlay_chain_name__1EED",
-      "rtl_vs_game": "game"
+      "rtl_vs_game": "game",
+      "expect_bytes_note": "icon0.ovl",
+      "expect_hex": "69636f6e302e6f766ce8cae31eb83e83"
     },
     {
       "id": "ICON.EXE:fp14",
@@ -981,7 +1130,7 @@
       "label": "cga_requirement__1ACC",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "18CC",
       "file_offset": 6860,
       "image_offset": 6348,
       "role": "cga_requirement",
@@ -990,10 +1139,12 @@
       "evidence": [
         "Color Graphics",
         "source_mt=game",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "cga_requirement__1ACC",
-      "rtl_vs_game": "game"
+      "rtl_vs_game": "game",
+      "expect_bytes_note": "Color Graphics",
+      "expect_hex": "436f6c6f72204772617068696373b8ff"
     },
     {
       "id": "ICON.EXE:fp15",
@@ -1001,7 +1152,7 @@
       "label": "rtl_oom__674B",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "654B",
       "file_offset": 26443,
       "image_offset": 25931,
       "role": "rtl_oom",
@@ -1010,10 +1161,12 @@
       "evidence": [
         "OUT OF MEMORY",
         "source_mt=INIPC.I86",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "rtl_oom__674B",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "OUT OF MEMORY",
+      "expect_hex": "4f5554204f46204d454d4f52590a0d24"
     },
     {
       "id": "ICON0.OVL:fp16",
@@ -1021,7 +1174,7 @@
       "label": "pascal_mt_segment_table__0203",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "0003",
       "file_offset": 515,
       "image_offset": 3,
       "role": "pascal_mt_segment_table",
@@ -1030,10 +1183,12 @@
       "evidence": [
         "words 0C80,08B0,0090,0000 after CALL",
         "source_mt=INIPC.I86 segment sizes at CS+3..+9",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "pascal_mt_segment_table__0203",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "words 0C80,08B0,0090,0000 after CALL",
+      "expect_hex": "800cb0089000"
     },
     {
       "id": "ICON0.OVL:fp17",
@@ -1041,7 +1196,7 @@
       "label": "pascal_mt_startup_call__0200",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "0000",
       "file_offset": 512,
       "image_offset": 0,
       "role": "pascal_mt_startup_call",
@@ -1050,10 +1205,12 @@
       "evidence": [
         "E8 rel16 \u2192 IP 4C6Dh",
         "source_mt=INIPC/PASLIB startup",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "pascal_mt_startup_call__0200",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "E8 rel16 \u2192 IP 4C6Dh",
+      "expect_hex": "e86a4c800cb0"
     },
     {
       "id": "ICON0.OVL:fp18",
@@ -1061,7 +1218,7 @@
       "label": "startup_read_data_size_paras__4EF1",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "4CF1",
       "file_offset": 20209,
       "image_offset": 19697,
       "role": "startup_read_data_size_paras",
@@ -1070,10 +1227,12 @@
       "evidence": [
         "2ea10500",
         "source_mt=INIPC.I86 CS:WORD PTR [5]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_read_data_size_paras__4EF1",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2ea10500",
+      "expect_hex": "2ea10500b104"
     },
     {
       "id": "ICON0.OVL:fp19",
@@ -1081,7 +1240,7 @@
       "label": "startup_read_extra_size_paras__4EFC",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "4CFC",
       "file_offset": 20220,
       "image_offset": 19708,
       "role": "startup_read_extra_size_paras",
@@ -1090,10 +1249,12 @@
       "evidence": [
         "2ea10900",
         "source_mt=INIPC.I86 CS:WORD PTR [9]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_read_extra_size_paras__4EFC",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2ea10900",
+      "expect_hex": "2ea109008bd8"
     },
     {
       "id": "ICON0.OVL:fp20",
@@ -1101,7 +1262,7 @@
       "label": "startup_add_code_size__4E6F",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "4C6F",
       "file_offset": 20079,
       "image_offset": 19567,
       "role": "startup_add_code_size",
@@ -1110,10 +1271,12 @@
       "evidence": [
         "2e03060300",
         "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [3]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_add_code_size__4E6F",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2e03060300",
+      "expect_hex": "2e030603002e"
     },
     {
       "id": "ICON0.OVL:fp21",
@@ -1121,7 +1284,7 @@
       "label": "startup_add_code_size__4EAC",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "4CAC",
       "file_offset": 20140,
       "image_offset": 19628,
       "role": "startup_add_code_size",
@@ -1130,10 +1293,12 @@
       "evidence": [
         "2e03060300",
         "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [3]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_add_code_size__4EAC",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2e03060300",
+      "expect_hex": "2e030603008e"
     },
     {
       "id": "ICON0.OVL:fp22",
@@ -1141,7 +1306,7 @@
       "label": "startup_add_data_size__4E74",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "4C74",
       "file_offset": 20084,
       "image_offset": 19572,
       "role": "startup_add_data_size",
@@ -1150,10 +1315,12 @@
       "evidence": [
         "2e03060500",
         "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [5]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_add_data_size__4E74",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2e03060500",
+      "expect_hex": "2e030605002e"
     },
     {
       "id": "ICON0.OVL:fp23",
@@ -1161,7 +1328,7 @@
       "label": "startup_add_data_size__4EC9",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "4CC9",
       "file_offset": 20169,
       "image_offset": 19657,
       "role": "startup_add_data_size",
@@ -1170,10 +1337,12 @@
       "evidence": [
         "2e03060500",
         "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [5]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_add_data_size__4EC9",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2e03060500",
+      "expect_hex": "2e03060500a3"
     },
     {
       "id": "ICON0.OVL:fp24",
@@ -1181,7 +1350,7 @@
       "label": "startup_add_stack_size__4E79",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "4C79",
       "file_offset": 20089,
       "image_offset": 19577,
       "role": "startup_add_stack_size",
@@ -1190,10 +1359,12 @@
       "evidence": [
         "2e03060700",
         "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [7]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_add_stack_size__4E79",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2e03060700",
+      "expect_hex": "2e030607002e"
     },
     {
       "id": "ICON0.OVL:fp25",
@@ -1201,7 +1372,7 @@
       "label": "dos_print_string__4EA2",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "4CA2",
       "file_offset": 20130,
       "image_offset": 19618,
       "role": "dos_print_string",
@@ -1210,10 +1381,12 @@
       "evidence": [
         "b409cd21",
         "source_mt=INIPC OUTOFMEM / DOS print $",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "dos_print_string__4EA2",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "b409cd21",
+      "expect_hex": "b409cd2133c050cb8cc82e030603008e"
     },
     {
       "id": "ICON0.OVL:fp26",
@@ -1221,7 +1394,7 @@
       "label": "rtl_error_string__02F4",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "00F4",
       "file_offset": 756,
       "image_offset": 244,
       "role": "rtl_error_string",
@@ -1230,10 +1403,12 @@
       "evidence": [
         "Pascal MT+ Error",
         "source_mt=PASLIB/runtime",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "rtl_error_string__02F4",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "Pascal MT+ Error",
+      "expect_hex": "50617363616c204d542b204572726f72"
     },
     {
       "id": "ICON0.OVL:fp27",
@@ -1241,7 +1416,7 @@
       "label": "overlay_chain_name__20E6",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "1EE6",
       "file_offset": 8422,
       "image_offset": 7910,
       "role": "overlay_chain_name",
@@ -1250,10 +1425,12 @@
       "evidence": [
         "icon1.ovl",
         "source_mt=game/overlay",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "overlay_chain_name__20E6",
-      "rtl_vs_game": "game"
+      "rtl_vs_game": "game",
+      "expect_bytes_note": "icon1.ovl",
+      "expect_hex": "69636f6e312e6f766ce8ce551eb83a5a"
     },
     {
       "id": "ICON0.OVL:fp28",
@@ -1261,7 +1438,7 @@
       "label": "overlay_chain_name__2103",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "1F03",
       "file_offset": 8451,
       "image_offset": 7939,
       "role": "overlay_chain_name",
@@ -1270,10 +1447,12 @@
       "evidence": [
         "icon1.ovl",
         "source_mt=game/overlay",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "overlay_chain_name__2103",
-      "rtl_vs_game": "game"
+      "rtl_vs_game": "game",
+      "expect_bytes_note": "icon1.ovl",
+      "expect_hex": "69636f6e312e6f766ce8b1e11eb83e83"
     },
     {
       "id": "ICON0.OVL:fp29",
@@ -1281,7 +1460,7 @@
       "label": "rtl_oom__4E8D",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "4C8D",
       "file_offset": 20109,
       "image_offset": 19597,
       "role": "rtl_oom",
@@ -1290,10 +1469,12 @@
       "evidence": [
         "OUT OF MEMORY",
         "source_mt=INIPC.I86",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "rtl_oom__4E8D",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "OUT OF MEMORY",
+      "expect_hex": "4f5554204f46204d454d4f52590a0d24"
     },
     {
       "id": "ICON1.OVL:fp30",
@@ -1301,7 +1482,7 @@
       "label": "pascal_mt_segment_table__0203",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "0003",
       "file_offset": 515,
       "image_offset": 3,
       "role": "pascal_mt_segment_table",
@@ -1310,10 +1491,12 @@
       "evidence": [
         "words 0C80,08B0,0090,0000 after CALL",
         "source_mt=INIPC.I86 segment sizes at CS+3..+9",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "pascal_mt_segment_table__0203",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "words 0C80,08B0,0090,0000 after CALL",
+      "expect_hex": "800cb0089000"
     },
     {
       "id": "ICON1.OVL:fp31",
@@ -1321,7 +1504,7 @@
       "label": "pascal_mt_startup_call__0200",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "0000",
       "file_offset": 512,
       "image_offset": 0,
       "role": "pascal_mt_startup_call",
@@ -1330,10 +1513,12 @@
       "evidence": [
         "E8 rel16 \u2192 IP A085h",
         "source_mt=INIPC/PASLIB startup",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "pascal_mt_startup_call__0200",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "E8 rel16 \u2192 IP A085h",
+      "expect_hex": "e882a0800cb0"
     },
     {
       "id": "ICON1.OVL:fp32",
@@ -1341,7 +1526,7 @@
       "label": "startup_read_data_size_paras__A309",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "A109",
       "file_offset": 41737,
       "image_offset": 41225,
       "role": "startup_read_data_size_paras",
@@ -1350,10 +1535,12 @@
       "evidence": [
         "2ea10500",
         "source_mt=INIPC.I86 CS:WORD PTR [5]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_read_data_size_paras__A309",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2ea10500",
+      "expect_hex": "2ea10500b104"
     },
     {
       "id": "ICON1.OVL:fp33",
@@ -1361,7 +1548,7 @@
       "label": "startup_read_extra_size_paras__A314",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "A114",
       "file_offset": 41748,
       "image_offset": 41236,
       "role": "startup_read_extra_size_paras",
@@ -1370,10 +1557,12 @@
       "evidence": [
         "2ea10900",
         "source_mt=INIPC.I86 CS:WORD PTR [9]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_read_extra_size_paras__A314",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2ea10900",
+      "expect_hex": "2ea109008bd8"
     },
     {
       "id": "ICON1.OVL:fp34",
@@ -1381,7 +1570,7 @@
       "label": "startup_add_code_size__A287",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "A087",
       "file_offset": 41607,
       "image_offset": 41095,
       "role": "startup_add_code_size",
@@ -1390,10 +1579,12 @@
       "evidence": [
         "2e03060300",
         "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [3]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_add_code_size__A287",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2e03060300",
+      "expect_hex": "2e030603002e"
     },
     {
       "id": "ICON1.OVL:fp35",
@@ -1401,7 +1592,7 @@
       "label": "startup_add_code_size__A2C4",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "A0C4",
       "file_offset": 41668,
       "image_offset": 41156,
       "role": "startup_add_code_size",
@@ -1410,10 +1601,12 @@
       "evidence": [
         "2e03060300",
         "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [3]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_add_code_size__A2C4",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2e03060300",
+      "expect_hex": "2e030603008e"
     },
     {
       "id": "ICON1.OVL:fp36",
@@ -1421,7 +1614,7 @@
       "label": "startup_add_data_size__A28C",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "A08C",
       "file_offset": 41612,
       "image_offset": 41100,
       "role": "startup_add_data_size",
@@ -1430,10 +1623,12 @@
       "evidence": [
         "2e03060500",
         "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [5]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_add_data_size__A28C",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2e03060500",
+      "expect_hex": "2e030605002e"
     },
     {
       "id": "ICON1.OVL:fp37",
@@ -1441,7 +1636,7 @@
       "label": "startup_add_data_size__A2E1",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "A0E1",
       "file_offset": 41697,
       "image_offset": 41185,
       "role": "startup_add_data_size",
@@ -1450,10 +1645,12 @@
       "evidence": [
         "2e03060500",
         "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [5]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_add_data_size__A2E1",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2e03060500",
+      "expect_hex": "2e03060500a3"
     },
     {
       "id": "ICON1.OVL:fp38",
@@ -1461,7 +1658,7 @@
       "label": "startup_add_stack_size__A291",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "A091",
       "file_offset": 41617,
       "image_offset": 41105,
       "role": "startup_add_stack_size",
@@ -1470,10 +1667,12 @@
       "evidence": [
         "2e03060700",
         "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [7]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_add_stack_size__A291",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2e03060700",
+      "expect_hex": "2e030607002e"
     },
     {
       "id": "ICON1.OVL:fp39",
@@ -1481,7 +1680,7 @@
       "label": "dos_print_string__A2BA",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "A0BA",
       "file_offset": 41658,
       "image_offset": 41146,
       "role": "dos_print_string",
@@ -1490,10 +1689,12 @@
       "evidence": [
         "b409cd21",
         "source_mt=INIPC OUTOFMEM / DOS print $",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "dos_print_string__A2BA",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "b409cd21",
+      "expect_hex": "b409cd2133c050cb8cc82e030603008e"
     },
     {
       "id": "ICON1.OVL:fp40",
@@ -1501,7 +1702,7 @@
       "label": "rtl_error_string__0306",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "0106",
       "file_offset": 774,
       "image_offset": 262,
       "role": "rtl_error_string",
@@ -1510,10 +1711,12 @@
       "evidence": [
         "Pascal MT+ Error",
         "source_mt=PASLIB/runtime",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "rtl_error_string__0306",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "Pascal MT+ Error",
+      "expect_hex": "50617363616c204d542b204572726f72"
     },
     {
       "id": "ICON1.OVL:fp41",
@@ -1521,7 +1724,7 @@
       "label": "overlay_chain_name__282F",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "262F",
       "file_offset": 10287,
       "image_offset": 9775,
       "role": "overlay_chain_name",
@@ -1530,10 +1733,12 @@
       "evidence": [
         "icon0.ovl",
         "source_mt=game/overlay",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "overlay_chain_name__282F",
-      "rtl_vs_game": "game"
+      "rtl_vs_game": "game",
+      "expect_bytes_note": "icon0.ovl",
+      "expect_hex": "69636f6e302e6f766ce8839b1eb83a5a"
     },
     {
       "id": "ICON1.OVL:fp42",
@@ -1541,7 +1746,7 @@
       "label": "overlay_chain_name__2812",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "2612",
       "file_offset": 10258,
       "image_offset": 9746,
       "role": "overlay_chain_name",
@@ -1550,10 +1755,12 @@
       "evidence": [
         "icon2.ovl",
         "source_mt=game/overlay",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "overlay_chain_name__2812",
-      "rtl_vs_game": "game"
+      "rtl_vs_game": "game",
+      "expect_bytes_note": "icon2.ovl",
+      "expect_hex": "69636f6e322e6f766ce8a09be91a001e"
     },
     {
       "id": "ICON1.OVL:fp43",
@@ -1561,7 +1768,7 @@
       "label": "overlay_chain_name__284C",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "264C",
       "file_offset": 10316,
       "image_offset": 9804,
       "role": "overlay_chain_name",
@@ -1570,10 +1777,12 @@
       "evidence": [
         "icon2.ovl",
         "source_mt=game/overlay",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "overlay_chain_name__284C",
-      "rtl_vs_game": "game"
+      "rtl_vs_game": "game",
+      "expect_bytes_note": "icon2.ovl",
+      "expect_hex": "69636f6e322e6f766ce87ada1eb83e83"
     },
     {
       "id": "ICON1.OVL:fp44",
@@ -1581,7 +1790,7 @@
       "label": "overlay_chain_name__293C",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "273C",
       "file_offset": 10556,
       "image_offset": 10044,
       "role": "overlay_chain_name",
@@ -1590,10 +1799,12 @@
       "evidence": [
         "icon2.ovl",
         "source_mt=game/overlay",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "overlay_chain_name__293C",
-      "rtl_vs_game": "game"
+      "rtl_vs_game": "game",
+      "expect_bytes_note": "icon2.ovl",
+      "expect_hex": "69636f6e322e6f766ce8769a1eb83a5a"
     },
     {
       "id": "ICON1.OVL:fp45",
@@ -1601,7 +1812,7 @@
       "label": "overlay_chain_name__2959",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "2759",
       "file_offset": 10585,
       "image_offset": 10073,
       "role": "overlay_chain_name",
@@ -1610,10 +1821,12 @@
       "evidence": [
         "icon2.ovl",
         "source_mt=game/overlay",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "overlay_chain_name__2959",
-      "rtl_vs_game": "game"
+      "rtl_vs_game": "game",
+      "expect_bytes_note": "icon2.ovl",
+      "expect_hex": "69636f6e322e6f766ce86dd91eb83e83"
     },
     {
       "id": "ICON1.OVL:fp46",
@@ -1621,7 +1834,7 @@
       "label": "rtl_oom__A2A5",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "A0A5",
       "file_offset": 41637,
       "image_offset": 41125,
       "role": "rtl_oom",
@@ -1630,10 +1843,12 @@
       "evidence": [
         "OUT OF MEMORY",
         "source_mt=INIPC.I86",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "rtl_oom__A2A5",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "OUT OF MEMORY",
+      "expect_hex": "4f5554204f46204d454d4f52590a0d24"
     },
     {
       "id": "ICON2.OVL:fp47",
@@ -1641,7 +1856,7 @@
       "label": "pascal_mt_segment_table__0203",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "0003",
       "file_offset": 515,
       "image_offset": 3,
       "role": "pascal_mt_segment_table",
@@ -1650,10 +1865,12 @@
       "evidence": [
         "words 0C80,08B0,0090,0000 after CALL",
         "source_mt=INIPC.I86 segment sizes at CS+3..+9",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "pascal_mt_segment_table__0203",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "words 0C80,08B0,0090,0000 after CALL",
+      "expect_hex": "800cb0089000"
     },
     {
       "id": "ICON2.OVL:fp48",
@@ -1661,7 +1878,7 @@
       "label": "pascal_mt_startup_call__0200",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "0000",
       "file_offset": 512,
       "image_offset": 0,
       "role": "pascal_mt_startup_call",
@@ -1670,10 +1887,12 @@
       "evidence": [
         "E8 rel16 \u2192 IP 36BBh",
         "source_mt=INIPC/PASLIB startup",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "pascal_mt_startup_call__0200",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "E8 rel16 \u2192 IP 36BBh",
+      "expect_hex": "e8b836800cb0"
     },
     {
       "id": "ICON2.OVL:fp49",
@@ -1681,7 +1900,7 @@
       "label": "startup_read_data_size_paras__393F",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "373F",
       "file_offset": 14655,
       "image_offset": 14143,
       "role": "startup_read_data_size_paras",
@@ -1690,10 +1909,12 @@
       "evidence": [
         "2ea10500",
         "source_mt=INIPC.I86 CS:WORD PTR [5]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_read_data_size_paras__393F",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2ea10500",
+      "expect_hex": "2ea10500b104"
     },
     {
       "id": "ICON2.OVL:fp50",
@@ -1701,7 +1922,7 @@
       "label": "startup_read_extra_size_paras__394A",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "374A",
       "file_offset": 14666,
       "image_offset": 14154,
       "role": "startup_read_extra_size_paras",
@@ -1710,10 +1931,12 @@
       "evidence": [
         "2ea10900",
         "source_mt=INIPC.I86 CS:WORD PTR [9]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_read_extra_size_paras__394A",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2ea10900",
+      "expect_hex": "2ea109008bd8"
     },
     {
       "id": "ICON2.OVL:fp51",
@@ -1721,7 +1944,7 @@
       "label": "startup_add_code_size__38BD",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "36BD",
       "file_offset": 14525,
       "image_offset": 14013,
       "role": "startup_add_code_size",
@@ -1730,10 +1953,12 @@
       "evidence": [
         "2e03060300",
         "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [3]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_add_code_size__38BD",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2e03060300",
+      "expect_hex": "2e030603002e"
     },
     {
       "id": "ICON2.OVL:fp52",
@@ -1741,7 +1966,7 @@
       "label": "startup_add_code_size__38FA",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "36FA",
       "file_offset": 14586,
       "image_offset": 14074,
       "role": "startup_add_code_size",
@@ -1750,10 +1975,12 @@
       "evidence": [
         "2e03060300",
         "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [3]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_add_code_size__38FA",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2e03060300",
+      "expect_hex": "2e030603008e"
     },
     {
       "id": "ICON2.OVL:fp53",
@@ -1761,7 +1988,7 @@
       "label": "startup_add_data_size__38C2",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "36C2",
       "file_offset": 14530,
       "image_offset": 14018,
       "role": "startup_add_data_size",
@@ -1770,10 +1997,12 @@
       "evidence": [
         "2e03060500",
         "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [5]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_add_data_size__38C2",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2e03060500",
+      "expect_hex": "2e030605002e"
     },
     {
       "id": "ICON2.OVL:fp54",
@@ -1781,7 +2010,7 @@
       "label": "startup_add_data_size__3917",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "3717",
       "file_offset": 14615,
       "image_offset": 14103,
       "role": "startup_add_data_size",
@@ -1790,10 +2019,12 @@
       "evidence": [
         "2e03060500",
         "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [5]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_add_data_size__3917",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2e03060500",
+      "expect_hex": "2e03060500a3"
     },
     {
       "id": "ICON2.OVL:fp55",
@@ -1801,7 +2032,7 @@
       "label": "startup_add_stack_size__38C7",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "36C7",
       "file_offset": 14535,
       "image_offset": 14023,
       "role": "startup_add_stack_size",
@@ -1810,10 +2041,12 @@
       "evidence": [
         "2e03060700",
         "source_mt=INIPC.I86 ADD AX,CS:WORD PTR [7]",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "startup_add_stack_size__38C7",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "2e03060700",
+      "expect_hex": "2e030607002e"
     },
     {
       "id": "ICON2.OVL:fp56",
@@ -1821,7 +2054,7 @@
       "label": "dos_print_string__38F0",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "36F0",
       "file_offset": 14576,
       "image_offset": 14064,
       "role": "dos_print_string",
@@ -1830,10 +2063,12 @@
       "evidence": [
         "b409cd21",
         "source_mt=INIPC OUTOFMEM / DOS print $",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "dos_print_string__38F0",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "b409cd21",
+      "expect_hex": "b409cd2133c050cb8cc82e030603008e"
     },
     {
       "id": "ICON2.OVL:fp57",
@@ -1841,7 +2076,7 @@
       "label": "rtl_error_string__02DC",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "00DC",
       "file_offset": 732,
       "image_offset": 220,
       "role": "rtl_error_string",
@@ -1850,10 +2085,12 @@
       "evidence": [
         "Pascal MT+ Error",
         "source_mt=PASLIB/runtime",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "rtl_error_string__02DC",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "Pascal MT+ Error",
+      "expect_hex": "50617363616c204d542b204572726f72"
     },
     {
       "id": "ICON2.OVL:fp58",
@@ -1861,7 +2098,7 @@
       "label": "game_version_string__0AC6",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "08C6",
       "file_offset": 2758,
       "image_offset": 2246,
       "role": "game_version_string",
@@ -1870,10 +2107,12 @@
       "evidence": [
         "ICON 1.1",
         "source_mt=game",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "game_version_string__0AC6",
-      "rtl_vs_game": "game"
+      "rtl_vs_game": "game",
+      "expect_bytes_note": "ICON 1.1",
+      "expect_hex": "49434f4e20312e31b8500050e8be30c7"
     },
     {
       "id": "ICON2.OVL:fp59",
@@ -1881,7 +2120,7 @@
       "label": "rtl_oom__38DB",
       "kind": "fingerprint_site",
       "tier": "A",
-      "target_ip": null,
+      "target_ip": "36DB",
       "file_offset": 14555,
       "image_offset": 14043,
       "role": "rtl_oom",
@@ -1890,10 +2129,12 @@
       "evidence": [
         "OUT OF MEMORY",
         "source_mt=INIPC.I86",
-        "analysis/fingerprint/mt_fingerprint_db.json#matches"
+        "Ghidra address = image_offset (file_offset - 0x200)"
       ],
       "ghidra_name": "rtl_oom__38DB",
-      "rtl_vs_game": "rtl"
+      "rtl_vs_game": "rtl",
+      "expect_bytes_note": "OUT OF MEMORY",
+      "expect_hex": "4f5554204f46204d454d4f52590a0d24"
     }
   ],
   "chain_model": {
@@ -1907,5 +2148,5 @@
     "icon_exe_startup_ip": "652B",
     "icon_exe_startup_file": "0x672B"
   },
-  "ghidra_import_notes": "Apply ghidra_name at file_offset (or target_ip for jump slots) in project analysis/ghidra/icon_project. Labels are stable RE names, not original Pascal symbols."
+  "ghidra_import_notes": "Apply ghidra_name at image_offset (load image / IP), NEVER raw file_offset. file_offset = image_offset + 0x200 for post-header bytes."
 }
