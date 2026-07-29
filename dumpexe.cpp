@@ -7,7 +7,7 @@
 
 /// Print version information to stdout
 static inline void print_version() {
-    std::cout << "dumpexe 1.2 — 16-bit MS-DOS Binary Analyzer & Single-Pass Disassembler\n"
+    std::cout << "dumpexe 1.3 — 16-bit MS-DOS Binary Analyzer & Multi-Pass Listing\n"
                  "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n"
                  "License: GPLv2 | Commercial (contact author)\n"
                  "Built with Capstone disassembly support: yes\n";
@@ -157,9 +157,14 @@ int main(int argc, char* argv[]) {
                 print_strings_report(strs);
         }
 
-        if (human && (opts.showDisasm || opts.showAll)) {
-            disassemble(fileData, sizes.entryPointFileOffset,
-                        static_cast<uint16_t>(header.cs), header.ip, opts);
+        if ((opts.showDisasm || opts.showAll) && !opts.jsonOut) {
+            // Multi-pass listing on full load image (real IPs / func_* labels).
+            // No separate --listing: -d/-a *is* the annotated listing.
+            size_t cfg_file_off = 0, cfg_len = 0;
+            uint16_t cs_seg = 0;
+            mz_cfg_window(header, sizes, cfg_file_off, cfg_len, cs_seg, opts);
+            listing_run(fileData, cfg_file_off, cfg_len, header.ip, cs_seg, opts,
+                        opts.filename);
         }
 
         // CFG: human --cfg, Graphviz --cfg-dot, or always under --json (scripting)

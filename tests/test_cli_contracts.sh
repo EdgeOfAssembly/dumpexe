@@ -51,6 +51,49 @@ if [[ -f "$ICON" ]]; then
   check icon_json bash -c "$BIN --json '$ICON' 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d[\"tool\"]==\"dumpexe\"; assert d[\"pascal_mt\"][\"detected\"] is True; assert len(d[\"pascal_mt\"][\"jump_table\"])==23; assert d[\"cfg\"][\"blocks\"]>0'"
   # --cfg-dot Graphviz
   check icon_cfg_dot bash -c "DOT=\$(mktemp /tmp/dumpexe-cfg-XXXXXX.dot) && $BIN --cfg-dot=\"\$DOT\" '$ICON' >/dev/null 2>&1 && grep -q 'digraph cfg' \"\$DOT\" && grep -q 'n0000' \"\$DOT\" && rm -f \"\$DOT\""
+  # Multi-pass listing is -d (no --listing flag); default .asm write
+  check help_no_listing_flag bash -c "! $BIN -h 2>&1 | grep -q -- '--listing'"
+  check help_mentions_no_asm_file bash -c "$BIN -h 2>&1 | grep -q -- '--no-asm-file'"
+  check bare_no_multipass bash -c "! $BIN '$ICON' 2>/dev/null | grep -q 'Multi-pass assembly listing'"
+  # Work in temp dir so default ICON.asm does not dirty the game tree
+  check icon_listing_multipass bash -c '
+    set -e
+    TD=$(mktemp -d /tmp/dumpexe-list-XXXXXX)
+    cp -f "'"$ICON"'" "$TD/ICON.EXE"
+    "'"$BIN"'" -d --no-asm-file "$TD/ICON.EXE" >"$TD/out.txt" 2>/dev/null
+    grep -q "Multi-pass assembly listing" "$TD/out.txt"
+    grep -qE "func_[0-9A-Fa-f]{4}:" "$TD/out.txt"
+    grep -qE "call[[:space:]]+func_" "$TD/out.txt"
+    grep -qE "jmp[[:space:]]+func_" "$TD/out.txt"
+    grep -qE "INT |; INT" "$TD/out.txt"
+    rm -rf "$TD"
+  '
+  check icon_asm_default_write bash -c '
+    set -e
+    TD=$(mktemp -d /tmp/dumpexe-list-XXXXXX)
+    cp -f "'"$ICON"'" "$TD/ICON.EXE"
+    "'"$BIN"'" -d "$TD/ICON.EXE" >/dev/null 2>"$TD/err.txt"
+    test -f "$TD/ICON.asm"
+    grep -qE "func_[0-9A-Fa-f]{4}:" "$TD/ICON.asm"
+    rm -rf "$TD"
+  '
+  check icon_asm_no_file bash -c '
+    set -e
+    TD=$(mktemp -d /tmp/dumpexe-list-XXXXXX)
+    cp -f "'"$ICON"'" "$TD/ICON.EXE"
+    "'"$BIN"'" -d --no-asm-file "$TD/ICON.EXE" >/dev/null 2>/dev/null
+    test ! -f "$TD/ICON.asm"
+    rm -rf "$TD"
+  '
+  check icon_asm_output_override bash -c '
+    set -e
+    TD=$(mktemp -d /tmp/dumpexe-list-XXXXXX)
+    cp -f "'"$ICON"'" "$TD/ICON.EXE"
+    "'"$BIN"'" -d -o "$TD/out.asm" "$TD/ICON.EXE" >/dev/null 2>/dev/null
+    test -f "$TD/out.asm"
+    grep -qE "func_" "$TD/out.asm"
+    rm -rf "$TD"
+  '
 else
   echo "SKIP icon tests (no ICON.EXE)"
 fi
