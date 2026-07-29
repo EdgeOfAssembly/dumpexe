@@ -21,6 +21,7 @@
 //   com.h          — MS-DOS .COM file format constants
 //   com_analysis.h — MS-DOS .COM file analysis functions
 //   strings.h      — Pascal length-prefixed / CALL-inline + ASCIIZ (--strings)
+//   pascal_mt.h    — Pascal MT+86 3.1.1 detect/annotate (default on; --no-pascal-mt)
 
 #ifndef DUMPEXE_H
 #define DUMPEXE_H
@@ -38,5 +39,6 @@
 #include "com.h"
 #include "com_analysis.h"
 #include "strings.h"
+#include "pascal_mt.h"
 
 #endif // DUMPEXE_H

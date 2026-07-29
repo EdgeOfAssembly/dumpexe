@@ -5,7 +5,11 @@
 # Capstone disassembly support is MANDATORY.
 # Install it before building: sudo apt-get install libcapstone-dev
 
-CXX = g++
+# Prefer g++-15+ for <format> when present (host gcc may stay 12 for CUDA).
+CXX ?= g++
+ifneq ($(shell command -v g++-15 2>/dev/null),)
+CXX := g++-15
+endif
 CXXFLAGS = -static -static-libstdc++ -no-pie -Wl,--build-id=none -std=c++23 -Wall -Wextra -O2
 
 # Capstone is a hard requirement for compiling — checked only when building,
@@ -23,7 +27,7 @@ CAPSTONE_LIBS   := $(shell pkg-config --libs capstone 2>/dev/null)
 
 all: dumpexe
 
-HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h cfg.h analysis.h sim.h sys.h sys_analysis.h com.h com_analysis.h strings.h
+HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h cfg.h analysis.h sim.h sys.h sys_analysis.h com.h com_analysis.h strings.h pascal_mt.h
 
 dumpexe: dumpexe.cpp $(HEADERS)
 	$(CXX) $(CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe dumpexe.cpp $(CAPSTONE_LIBS)

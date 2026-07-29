@@ -7,7 +7,7 @@
 
 /// Print version information to stdout
 static inline void print_version() {
-    std::cout << "dumpexe 1.0 — 16-bit MS-DOS Binary Analyzer & Single-Pass Disassembler\n"
+    std::cout << "dumpexe 1.1 — 16-bit MS-DOS Binary Analyzer & Single-Pass Disassembler\n"
                  "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n"
                  "License: GPLv2 | Commercial (contact author)\n"
                  "Built with Capstone disassembly support: yes\n";
@@ -90,10 +90,16 @@ int main(int argc, char* argv[]) {
         ExeSizes sizes = calculate_sizes(header, fileSize);
         print_header_info(opts, header, sizes);
 
+        // Pascal MT+ 3.1.1: default ON (disable with --no-pascal-mt)
+        dump_pascal_mt(opts, fileData,
+                       static_cast<size_t>(sizes.headerSizeBytes),
+                       static_cast<size_t>(sizes.loadImageSize),
+                       static_cast<size_t>(header.ip));
+
         std::vector<RelocEntry> relocs;
         dump_relocations(opts, header, fileData, sizes, relocs);
         dump_hex(opts, fileData, sizes);
-        // Pascal MT+ length-prefixed / CALL-inline + ASCIIZ (also via -a)
+        // Pascal length-prefixed / CALL-inline + ASCIIZ (opt-in --strings / -a)
         dump_strings(opts, fileData, sizes.headerSizeBytes,
                      static_cast<size_t>(sizes.loadImageSize));
 
