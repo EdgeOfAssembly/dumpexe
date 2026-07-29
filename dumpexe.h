@@ -20,6 +20,7 @@
 //   sys_analysis.h — DOS device driver analysis functions
 //   com.h          — MS-DOS .COM file format constants
 //   com_analysis.h — MS-DOS .COM file analysis functions
+//   strings.h      — Pascal length-prefixed / CALL-inline + ASCIIZ (--strings)
 
 #ifndef DUMPEXE_H
 #define DUMPEXE_H
@@ -36,5 +37,6 @@
 #include "sys_analysis.h"
 #include "com.h"
 #include "com_analysis.h"
+#include "strings.h"
 
 #endif // DUMPEXE_H

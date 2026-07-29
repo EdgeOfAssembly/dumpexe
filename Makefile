@@ -1,4 +1,5 @@
 # Makefile for dumpexe - MS-DOS MZ EXE Analyzer & Disassembler
+# Note: needs libstdc++ with <format> (g++-13+). CUDA host stays gcc-12 via gcc-config.
 # Author: EdgeOfAssembly <haxbox2000@gmail.com>
 #
 # Capstone disassembly support is MANDATORY.
@@ -22,7 +23,7 @@ CAPSTONE_LIBS   := $(shell pkg-config --libs capstone 2>/dev/null)
 
 all: dumpexe
 
-HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h cfg.h analysis.h sim.h sys.h sys_analysis.h com.h com_analysis.h
+HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h cfg.h analysis.h sim.h sys.h sys_analysis.h com.h com_analysis.h strings.h
 
 dumpexe: dumpexe.cpp $(HEADERS)
 	$(CXX) $(CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe dumpexe.cpp $(CAPSTONE_LIBS)
@@ -41,3 +42,12 @@ install: dumpexe
 
 clean:
 	rm -f dumpexe *.o int_db.h
+
+.PHONY: test tests verify
+test: dumpexe
+	@bash tests/test_cli_contracts.sh
+
+tests: test
+
+verify: test
+	@echo "formal: not run (no CBMC harness for dumpexe yet)"
