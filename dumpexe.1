@@ -103,6 +103,39 @@ Does not imply a full human CFG dump unless
 .B \-\-cfg
 is also given. Render with e.g.
 .BR "dot -Tpng FILE -o cfg.png" .
+.TP
+.BR \-d ", " \-\-disassemble
+Emit a
+.B multi-pass
+annotated assembly listing (not a single Capstone stream only):
+provisional
+.B func_<IP>
+labels, INT annotations, near
+.B call
+/
+.B jmp
+targets rewritten to labels, blank lines after procedure regions.
+There is
+.B no
+.B \-\-listing
+flag; this
+.I is
+the listing mode.
+Also writes
+.I <stem>.asm
+next to the input by default.
+.TP
+.BR \-o ", " \-\-output " PATH"
+Override the listing output path (default:
+.IR <stem>.asm ).
+Use
+.B \-
+for stdout only (still prints listing on stdout in human mode).
+.TP
+.B \-\-no-asm-file
+Do not write an
+.B .asm
+file (default when disassembling is to write one).
 
 .SS Simulation Options
 .TP

@@ -78,6 +78,8 @@ struct Options {
     bool comForceNoPsp = false;     ///< --no-psp
     bool jsonOut = false;           ///< --json  machine-readable report on stdout (opt-in)
     std::string cfgDotPath;         ///< --cfg-dot=FILE  Graphviz DOT export (opt-in)
+    bool writeAsmFile = true;       ///< write <stem>.asm on -d/-a (default ON)
+    std::string outputPath;         ///< -o/--output single path for .asm (optional)
 
     // --- Simulation controls ---
     /// Max instructions to execute (0 = default: 1_000_000, or 64 if --trace
@@ -353,6 +355,21 @@ struct Options {
             } else if (arg == "--json") {
                 // Opt-in machine-readable report (default OFF → enable-only switch)
                 jsonOut = true;
+            } else if (arg == "--no-asm-file") {
+                // Default ON when disassembling: only provide disable switch
+                writeAsmFile = false;
+            } else if (arg == "-o" || arg == "--output") {
+                if (i + 1 >= argc) {
+                    std::cerr << "Error: " << arg << " requires a path\n";
+                    return false;
+                }
+                outputPath = argv[++i];
+            } else if (arg.starts_with("--output=")) {
+                outputPath = std::string(arg.substr(9));
+                if (outputPath.empty()) {
+                    std::cerr << "Error: --output= requires a path\n";
+                    return false;
+                }
             } else if (arg == "--cfg") {
                 showCfg = true;
             } else if (arg.starts_with("--cfg-dot=")) {
@@ -530,7 +547,10 @@ static inline void show_usage(const char* progname) {
         "  -v, --version       Show version information and exit\n"
         "  -r, --relocation    Show relocation table (with padding) [EXE only]\n"
         "  -x, --hexdump       Show full hex+ASCII dump from entry point to EOF\n"
-        "  -d, --disassemble   Show disassembly from entry point to EOF\n"
+        "  -d, --disassemble   Multi-pass annotated listing (func_* labels, INT notes,\n"
+        "                      call/jmp→labels); also writes <stem>.asm by default\n"
+        "  -o, --output PATH   Listing output file (default: <stem>.asm); use - for stdout only\n"
+        "  --no-asm-file       Do not write .asm file (listing still on stdout unless --json)\n"
         "  --cfg               Build/print static CFG + INT/string xref annotations\n"
         "  --cfg-interesting   Only print interesting-block summary/detail (no full dump)\n"
         "  --cfg-no-insns      CFG edges/tags only (no per-block disassembly)\n"
