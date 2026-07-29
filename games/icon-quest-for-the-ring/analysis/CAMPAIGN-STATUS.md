@@ -38,3 +38,12 @@
 - `analysis/dumpexe/{ICON,ICON0,ICON1,ICON2}/full.txt` + `subs/`
 - `analysis/INVENTORY.md`
 - `analysis/DUMPEXE-GAP-ANALYSIS.md` (explore agent)
+
+## 2026-07-30 continue
+- [x] FEATURE v1: `--strings` (Pascal CALL-inline + length-prefixed + ASCIIZ)
+- [x] `make test` CLI contracts (8/8)
+- [x] Pushed `de94e6e` to origin/main
+- [x] String dumps for all 4 MZ images
+- [ ] Jump table @ 0090h map
+- [ ] Ghidra project
+- [ ] DOSBox live smoke
