@@ -70,12 +70,14 @@ struct Options {
     bool showAll = false;           ///< -a, --all
     bool showStrings = false;       ///< --strings  Pascal + ASCIIZ string table (opt-in)
     bool pascalMt = true;           ///< Pascal MT+ 3.1.1 detect/annotate (default ON)
-    bool showCfg = false;           ///< --cfg  static control-flow graph
+    bool showCfg = false;           ///< --cfg  static control-flow graph (human dump)
     bool simulate = false;          ///< --simulate
     bool noIntAnnot = false;        ///< -n, --no-int-annotations
     uint16_t loadBase = 0x1000;     ///< --base=XXXX (default: 1000h)
     bool comForcePsp   = false;     ///< --psp
     bool comForceNoPsp = false;     ///< --no-psp
+    bool jsonOut = false;           ///< --json  machine-readable report on stdout (opt-in)
+    std::string cfgDotPath;         ///< --cfg-dot=FILE  Graphviz DOT export (opt-in)
 
     // --- Simulation controls ---
     /// Max instructions to execute (0 = default: 1_000_000, or 64 if --trace
@@ -348,8 +350,18 @@ struct Options {
             } else if (arg == "--no-pascal-mt" || arg == "--no-pascal-mt+") {
                 // Default ON: only provide disable switch (cli-design sane defaults)
                 pascalMt = false;
+            } else if (arg == "--json") {
+                // Opt-in machine-readable report (default OFF → enable-only switch)
+                jsonOut = true;
             } else if (arg == "--cfg") {
                 showCfg = true;
+            } else if (arg.starts_with("--cfg-dot=")) {
+                cfgDotPath = std::string(arg.substr(10));
+                if (cfgDotPath.empty()) {
+                    std::cerr << "Error: --cfg-dot= requires a path\n";
+                    return false;
+                }
+                // DOT export builds CFG; human dump only if --cfg also set
             } else if (arg == "--cfg-no-insns") {
                 cfgNoInsns = true;
                 showCfg = true;
@@ -531,6 +543,8 @@ static inline void show_usage(const char* progname) {
         "  -a, --all           Show all sections (reloc + hex + disasm + strings)\n"
         "  --strings           Extract Pascal length-prefixed + CALL-inline + ASCIIZ strings\n"
         "  --no-pascal-mt      Disable Pascal MT+ 3.1.1 detect/annotate (default: on)\n"
+        "  --json              Machine-readable JSON report on stdout (default: off)\n"
+        "  --cfg-dot=FILE      Write Graphviz DOT of CFG to FILE (default: off)\n"
         "  -n, --no-int-annotations  Suppress INT annotation comments in disassembly\n"
         "  --simulate          Enable DOS load simulation / execution engine\n"
         "  --base=XXXX         Set load image segment (hex, default: 1000h)\n"

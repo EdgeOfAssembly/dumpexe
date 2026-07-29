@@ -28,13 +28,14 @@ Living roadmap for the DOS RE toolkit and ICON preservation work.
 ## Medium-term
 
 - [ ] Sim edge-coverage overlay on CFG (“this edge taken in run”)
-- [ ] `--strings` standalone string dumper with file offsets
+- [x] `--strings` standalone string dumper with file offsets
 - [ ] Better COM simulation parity with EXE engine
 - [ ] ICON: document jump-table @ `0090h` slot → procedure names
 
 ## Last / polish
 
-- [ ] **Graphviz export** (`--cfg-dot=FILE.dot`) — pretty CFG rendering, cluster by segment/overlay, color interesting nodes (INT21/FCB/strings). Keep as **last** visualization feature after analysis quality is solid.
+- [x] **Graphviz export** (`--cfg-dot=FILE.dot`) — colored nodes (entry/interesting/table/call), edge kinds
+- [x] **Machine-readable** (`--json`) — header, Pascal MT+, strings, CFG summary/edges
 - [ ] Interactive TUI walker (optional)
 
 ## ICON preservation end goals

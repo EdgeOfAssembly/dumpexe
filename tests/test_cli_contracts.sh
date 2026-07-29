@@ -45,6 +45,12 @@ if [[ -f "$ICON" ]]; then
   check icon_pascal bash -c "$BIN --strings '$ICON' 2>&1 | grep -q 'Pascal MT+'"
   check icon_strings_section bash -c "$BIN --strings '$ICON' 2>&1 | grep -q '=== Strings'"
   check icon_mz bash -c "$BIN '$ICON' 2>&1 | grep -qE 'MZ|DOS File Size'"
+  # --json machine-readable (opt-in)
+  check help_mentions_json bash -c "$BIN -h 2>&1 | grep -q -- '--json'"
+  check help_mentions_cfg_dot bash -c "$BIN -h 2>&1 | grep -q -- '--cfg-dot'"
+  check icon_json bash -c "$BIN --json '$ICON' 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d[\"tool\"]==\"dumpexe\"; assert d[\"pascal_mt\"][\"detected\"] is True; assert len(d[\"pascal_mt\"][\"jump_table\"])==23; assert d[\"cfg\"][\"blocks\"]>0'"
+  # --cfg-dot Graphviz
+  check icon_cfg_dot bash -c "DOT=\$(mktemp /tmp/dumpexe-cfg-XXXXXX.dot) && $BIN --cfg-dot=\"\$DOT\" '$ICON' >/dev/null 2>&1 && grep -q 'digraph cfg' \"\$DOT\" && grep -q 'n0000' \"\$DOT\" && rm -f \"\$DOT\""
 else
   echo "SKIP icon tests (no ICON.EXE)"
 fi

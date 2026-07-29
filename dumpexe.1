@@ -88,6 +88,21 @@ Disable Pascal MT+86 3.1.1 detection and annotation.
 When signatures match, dumpexe prints compiler ID, entry CALL + segment table,
 near-JMP procedure vector table, and INIPC/PASLIB fingerprint hits.
 Only a disable switch is provided (sane-defaults CLI policy).
+.TP
+.B \-\-json
+Emit a machine-readable JSON report on stdout (default: off).
+Includes MZ header, Pascal MT+ report, strings, and CFG summary.
+Human text sections are suppressed. Combine with
+.B \-\-cfg-dot
+to also write a Graphviz file (path recorded in JSON).
+.TP
+.B \-\-cfg-dot=FILE
+Write a Graphviz DOT digraph of the static CFG to FILE (default: off).
+Nodes are colored by role (entry, interesting, jump-table, call target).
+Does not imply a full human CFG dump unless
+.B \-\-cfg
+is also given. Render with e.g.
+.BR "dot -Tpng FILE -o cfg.png" .
 
 .SS Simulation Options
 .TP

@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstring>
 #include <format>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <queue>
@@ -1691,26 +1692,243 @@ static inline void cfg_print(const CfgGraph& g, const Options& opts) {
         std::cout << std::format("Jump-table slots identified: {}\n", n_tab);
 }
 
-/// Convenience: build+print CFG for a loaded MZ image region.
-static inline void cfg_analyze_image(const std::vector<uint8_t>& fileData,
-                                     size_t image_file_off,
-                                     size_t image_len,
-                                     uint16_t entry_ip,
-                                     uint16_t cs_seg,
-                                     const Options& opts) {
-    if (image_file_off >= fileData.size()) {
-        std::cout << "\nCFG: image offset outside file.\n";
-        return;
-    }
-    size_t len = std::min(image_len, fileData.size() - image_file_off);
-    std::vector<uint8_t> image(fileData.begin() + static_cast<std::ptrdiff_t>(image_file_off),
-                               fileData.begin() + static_cast<std::ptrdiff_t>(image_file_off + len));
+//=============================================================================
+// Graphviz DOT export (--cfg-dot=FILE)
+//=============================================================================
 
-    // Build budget is independent of print limit (--cfg-max only affects dump).
+static inline std::string cfg_dot_escape(std::string_view s)
+{
+    std::string o;
+    o.reserve(s.size() + 8);
+    for (char c : s)
+    {
+        if (c == '\\' || c == '"')
+        {
+            o.push_back('\\');
+            o.push_back(c);
+        }
+        else if (c == '\n' || c == '\r')
+            o += "\\n";
+        else if (static_cast<unsigned char>(c) < 32)
+            continue;
+        else
+            o.push_back(c);
+    }
+    return o;
+}
+
+static inline const char* cfg_dot_edge_color(CfgEdgeKind k)
+{
+    switch (k)
+    {
+    case CfgEdgeKind::FallThrough: return "#666666";
+    case CfgEdgeKind::Jump:        return "#1a5276";
+    case CfgEdgeKind::CondTrue:    return "#196f3d";
+    case CfgEdgeKind::CondFalse:   return "#b7950b";
+    case CfgEdgeKind::Call:        return "#6c3483";
+    case CfgEdgeKind::Ret:         return "#922b21";
+    case CfgEdgeKind::Table:       return "#b9770e";
+    }
+    return "#000000";
+}
+
+static inline std::string cfg_dot_node_fill(const CfgBlock& b)
+{
+    if (b.is_entry)
+        return "#abebc6"; // green — entry
+    if (b.is_table_entry)
+        return "#d7bde2"; // purple — jump-table slot
+    if (b.is_interesting)
+        return "#f5cba7"; // orange — INT/string/tags
+    if (b.is_call_target)
+        return "#aed6f1"; // blue — call target
+    return "#f8f9f9";
+}
+
+/// Write Graphviz digraph for CFG. Returns false on I/O error.
+static inline bool cfg_write_dot(const CfgGraph& g,
+                                 const std::string& path,
+                                 const Options& opts)
+{
+    std::ofstream out(path);
+    if (!out)
+    {
+        std::cerr << "Error: cannot write CFG DOT to '" << path << "'\n";
+        return false;
+    }
+
+    out << "// dumpexe CFG — Graphviz digraph\n";
+    out << "// CS=" << std::format("{:04X}h", g.cs_seg)
+        << " blocks=" << g.blocks.size()
+        << " edges=" << g.n_edges << "\n";
+    out << "digraph cfg {\n";
+    out << "  graph [rankdir=TB, fontsize=10, fontname=\"Helvetica\","
+           " label=\"dumpexe CFG  CS="
+        << std::format("{:04X}h", g.cs_seg)
+        << "  blocks=" << g.blocks.size()
+        << "  edges=" << g.n_edges << "\","
+           " labelloc=t];\n";
+    out << "  node  [shape=box, style=\"rounded,filled\", fontname=\"Courier\","
+           " fontsize=9];\n";
+    out << "  edge  [fontname=\"Helvetica\", fontsize=8];\n\n";
+
+    // Legend (subgraph)
+    out << "  subgraph cluster_legend {\n";
+    out << "    label=\"legend\"; style=dashed; color=gray;\n";
+    out << "    leg_entry [label=\"entry\", fillcolor=\"#abebc6\"];\n";
+    out << "    leg_int   [label=\"interesting\", fillcolor=\"#f5cba7\"];\n";
+    out << "    leg_tab   [label=\"jmp-table\", fillcolor=\"#d7bde2\"];\n";
+    out << "    leg_call  [label=\"call-tgt\", fillcolor=\"#aed6f1\"];\n";
+    out << "    leg_entry -> leg_int -> leg_tab -> leg_call [style=invis];\n";
+    out << "  }\n\n";
+
+    const size_t max_nodes = opts.cfgMaxBlocks ? opts.cfgMaxBlocks : 500;
+    std::vector<const CfgBlock*> order;
+    order.reserve(g.blocks.size());
+    for (const auto& kv : g.blocks)
+        order.push_back(&kv.second);
+    std::sort(order.begin(), order.end(),
+              [](const CfgBlock* a, const CfgBlock* b)
+              { return a->start_ip < b->start_ip; });
+
+    // Prefer interesting + entry when truncating
+    std::set<uint16_t> emit;
+    for (const CfgBlock* bp : order)
+    {
+        if (bp->is_entry || bp->is_interesting || bp->is_table_entry)
+            emit.insert(bp->start_ip);
+    }
+    for (const CfgBlock* bp : order)
+    {
+        if (emit.size() >= max_nodes)
+            break;
+        emit.insert(bp->start_ip);
+    }
+
+    for (const CfgBlock* bp : order)
+    {
+        if (!emit.count(bp->start_ip))
+            continue;
+        const CfgBlock& b = *bp;
+        std::string label = std::format("{:04X}", b.start_ip);
+        if (b.is_entry)
+            label += "\\nENTRY";
+        if (!b.tags.empty())
+        {
+            label += "\\n";
+            for (size_t i = 0; i < b.tags.size() && i < 4; ++i)
+            {
+                if (i)
+                    label += ", ";
+                label += cfg_dot_escape(b.tags[i]);
+            }
+            if (b.tags.size() > 4)
+                label += std::format(" +{}", b.tags.size() - 4);
+        }
+        if (!opts.cfgNoInsns && !b.insns.empty())
+        {
+            size_t n = opts.cfgInsnsPerBlock ? opts.cfgInsnsPerBlock : 12;
+            if (n > 6)
+                n = 6; // keep DOT readable
+            for (size_t i = 0; i < b.insns.size() && i < n; ++i)
+                label += "\\n" + cfg_dot_escape(b.insns[i].text);
+            if (b.insns.size() > n)
+                label += "\\n…";
+        }
+        out << std::format("  n{:04X} [label=\"{}\", fillcolor=\"{}\"];\n",
+                           b.start_ip, label, cfg_dot_node_fill(b));
+    }
+    out << "\n";
+
+    size_t edges_out = 0;
+    for (const CfgBlock* bp : order)
+    {
+        if (!emit.count(bp->start_ip))
+            continue;
+        for (const CfgEdge& e : bp->outs)
+        {
+            if (!e.has_target)
+            {
+                // ret / unknown: dangling note node optional — skip
+                continue;
+            }
+            if (!emit.count(e.to_ip) && !g.blocks.count(e.to_ip))
+                continue;
+            // If target not emitted but exists, still draw if both ends in emit
+            if (!emit.count(e.to_ip))
+                continue;
+            out << std::format(
+                "  n{:04X} -> n{:04X} [label=\"{}\", color=\"{}\"];\n",
+                bp->start_ip, e.to_ip, cfg_edge_name(e.kind),
+                cfg_dot_edge_color(e.kind));
+            ++edges_out;
+        }
+    }
+
+    out << "}\n";
+    out.flush();
+    if (!out)
+    {
+        std::cerr << "Error: failed writing CFG DOT '" << path << "'\n";
+        return false;
+    }
+    if (!opts.jsonOut)
+    {
+        std::cerr << std::format(
+            "CFG DOT: wrote {} ({} nodes emitted, {} edges, graph has {} blocks)\n",
+            path, emit.size(), edges_out, g.blocks.size());
+    }
+    return true;
+}
+
+/// Build + annotate CFG for a loaded image region (no print).
+static inline CfgGraph cfg_build_annotated(const std::vector<uint8_t>& fileData,
+                                           size_t image_file_off,
+                                           size_t image_len,
+                                           uint16_t entry_ip,
+                                           uint16_t cs_seg,
+                                           const Options& opts)
+{
+    CfgGraph empty;
+    if (image_file_off >= fileData.size())
+        return empty;
+    size_t len = std::min(image_len, fileData.size() - image_file_off);
+    std::vector<uint8_t> image(
+        fileData.begin() + static_cast<std::ptrdiff_t>(image_file_off),
+        fileData.begin() + static_cast<std::ptrdiff_t>(image_file_off + len));
+
     CfgGraph g = cfg_build(image, entry_ip, cs_seg, image_file_off,
                            opts.cfgFollowCalls, 20000);
     cfg_annotate(g, image);
-    cfg_print(g, opts);
+    return g;
+}
+
+/// Convenience: build, optional DOT export, optional human print.
+static inline CfgGraph cfg_analyze_image(const std::vector<uint8_t>& fileData,
+                                         size_t image_file_off,
+                                         size_t image_len,
+                                         uint16_t entry_ip,
+                                         uint16_t cs_seg,
+                                         const Options& opts)
+{
+    if (image_file_off >= fileData.size())
+    {
+        if (!opts.jsonOut)
+            std::cout << "\nCFG: image offset outside file.\n";
+        return {};
+    }
+
+    CfgGraph g = cfg_build_annotated(fileData, image_file_off, image_len,
+                                     entry_ip, cs_seg, opts);
+
+    if (!opts.cfgDotPath.empty())
+        cfg_write_dot(g, opts.cfgDotPath, opts);
+
+    // Human CFG dump when --cfg (or cfg-* that set showCfg), not in pure JSON mode
+    if (opts.showCfg && !opts.jsonOut)
+        cfg_print(g, opts);
+
+    return g;
 }
 
 #endif // CFG_H

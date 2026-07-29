@@ -7,7 +7,7 @@
 
 /// Print version information to stdout
 static inline void print_version() {
-    std::cout << "dumpexe 1.1 — 16-bit MS-DOS Binary Analyzer & Single-Pass Disassembler\n"
+    std::cout << "dumpexe 1.2 — 16-bit MS-DOS Binary Analyzer & Single-Pass Disassembler\n"
                  "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n"
                  "License: GPLv2 | Commercial (contact author)\n"
                  "Built with Capstone disassembly support: yes\n";
@@ -41,6 +41,27 @@ static inline bool read_entire_file(const std::string& filename,
     return true;
 }
 
+/// Shared MZ image window for CFG (CS-relative).
+static inline void mz_cfg_window(const MZHeader& header,
+                                 const ExeSizes& sizes,
+                                 size_t& cfg_file_off,
+                                 size_t& cfg_len,
+                                 uint16_t& cs_seg,
+                                 const Options& opts)
+{
+    const size_t img_off = sizes.headerSizeBytes;
+    const size_t img_len = (sizes.loadImageSize > 0)
+        ? static_cast<size_t>(sizes.loadImageSize)
+        : 0;
+    cs_seg = static_cast<uint16_t>(
+        opts.loadBase + static_cast<uint16_t>(header.cs));
+    size_t cs_base_in_image = 0;
+    if (header.cs > 0)
+        cs_base_in_image = static_cast<size_t>(static_cast<uint16_t>(header.cs)) * 16u;
+    cfg_file_off = img_off + cs_base_in_image;
+    cfg_len = (img_len > cs_base_in_image) ? img_len - cs_base_in_image : 0;
+}
+
 int main(int argc, char* argv[]) {
     Options opts;
     if (!opts.parse(argc, argv)) { show_usage(argv[0]); return 1; }
@@ -59,13 +80,10 @@ int main(int argc, char* argv[]) {
     if (!read_entire_file(opts.filename, fileData, fileSize)) return 1;
 
     if (fileData.empty()) {
-        // Even a 1-byte .COM is theoretically valid; only reject empty files.
         std::cerr << "Error: File is empty and cannot be a valid DOS binary\n";
         return 1;
     }
 
-    // Content-based format detection.
-    // Read up to 4 bytes for signature matching; pad with zeroes for short files.
     const uint16_t sig16 = static_cast<uint16_t>(fileData[0]) |
                            (fileData.size() >= 2
                                 ? static_cast<uint16_t>(fileData[1]) << 8
@@ -78,7 +96,6 @@ int main(int argc, char* argv[]) {
         : 0u;
 
     if (sig16 == MZ_SIGNATURE) {
-        // --- MZ EXE path ---
         if (fileData.size() < sizeof(MZHeader)) {
             std::cerr << "Error: File is too small to contain a valid MZ header\n";
             return 1;
@@ -88,60 +105,123 @@ int main(int argc, char* argv[]) {
         if (!validate_header(header, fileSize)) return 1;
 
         ExeSizes sizes = calculate_sizes(header, fileSize);
-        print_header_info(opts, header, sizes);
+        const bool human = !opts.jsonOut;
 
-        // Pascal MT+ 3.1.1: default ON (disable with --no-pascal-mt)
-        dump_pascal_mt(opts, fileData,
-                       static_cast<size_t>(sizes.headerSizeBytes),
-                       static_cast<size_t>(sizes.loadImageSize),
-                       static_cast<size_t>(header.ip));
+        if (human)
+            print_header_info(opts, header, sizes);
+
+        // Pascal MT+ (default ON)
+        PascalMtReport mt_rep{};
+        if (opts.pascalMt)
+        {
+            mt_rep = pascal_mt_analyze(
+                fileData,
+                static_cast<size_t>(sizes.headerSizeBytes),
+                static_cast<size_t>(sizes.loadImageSize),
+                static_cast<size_t>(header.ip));
+            if (human)
+                pascal_mt_print_report(mt_rep);
+        }
 
         std::vector<RelocEntry> relocs;
-        dump_relocations(opts, header, fileData, sizes, relocs);
-        dump_hex(opts, fileData, sizes);
-        // Pascal length-prefixed / CALL-inline + ASCIIZ (opt-in --strings / -a)
-        dump_strings(opts, fileData, sizes.headerSizeBytes,
-                     static_cast<size_t>(sizes.loadImageSize));
+        if (human)
+        {
+            dump_relocations(opts, header, fileData, sizes, relocs);
+            dump_hex(opts, fileData, sizes);
+        }
+        else if (opts.showReloc || opts.showAll)
+        {
+            // Still load relocs if requested for future JSON; skip for now
+            dump_relocations(opts, header, fileData, sizes, relocs);
+        }
 
-        if (opts.showDisasm || opts.showAll) {
+        std::vector<ExtractedString> strs;
+        if (opts.showStrings || opts.showAll || opts.jsonOut)
+        {
+            const size_t img_off = static_cast<size_t>(sizes.headerSizeBytes);
+            size_t img_len = static_cast<size_t>(sizes.loadImageSize);
+            if (img_len == 0 || img_off + img_len > fileData.size())
+                img_len = fileData.size() > img_off ? fileData.size() - img_off : 0;
+            std::vector<uint8_t> image(
+                fileData.begin() + static_cast<std::ptrdiff_t>(img_off),
+                fileData.begin() + static_cast<std::ptrdiff_t>(img_off + img_len));
+            extract_strings(image, strs, 4);
+            // Fix file offsets: extract_strings uses image-relative as file_off
+            for (auto& s : strs)
+            {
+                s.file_off += img_off;
+                if (s.len_byte_off)
+                    s.len_byte_off += img_off;
+            }
+            if (human && (opts.showStrings || opts.showAll))
+                print_strings_report(strs);
+        }
+
+        if (human && (opts.showDisasm || opts.showAll)) {
             disassemble(fileData, sizes.entryPointFileOffset,
                         static_cast<uint16_t>(header.cs), header.ip, opts);
         }
 
-        if (opts.showCfg) {
-            // Image bytes at CS-relative IP 0: header + cs*16 within load image.
-            // For typical CS=0 entry, file offset == header size.
-            const size_t img_off = sizes.headerSizeBytes;
-            const size_t img_len = (sizes.loadImageSize > 0)
-                ? static_cast<size_t>(sizes.loadImageSize)
-                : (fileData.size() > img_off ? fileData.size() - img_off : 0);
-            const uint16_t cs_seg = static_cast<uint16_t>(
-                opts.loadBase + static_cast<uint16_t>(header.cs));
-            // Entry IP is header.ip; image[0] is offset 0 of load image, so
-            // instruction at CS:IP is at image offset cs*16+ip — but Capstone
-            // CFG uses IP within the CS segment where image[0] maps to the
-            // start of the load image when header.cs==0 (ICON). When header.cs
-            // != 0, pass a sub-window starting at cs*16.
-            size_t cs_base_in_image = 0;
-            if (header.cs > 0)
-                cs_base_in_image = static_cast<size_t>(static_cast<uint16_t>(header.cs)) * 16u;
-            size_t cfg_file_off = img_off + cs_base_in_image;
-            size_t cfg_len = (img_len > cs_base_in_image) ? img_len - cs_base_in_image : 0;
-            cfg_analyze_image(fileData, cfg_file_off, cfg_len,
-                              header.ip, cs_seg, opts);
+        // CFG: human --cfg, Graphviz --cfg-dot, or always under --json (scripting)
+        CfgGraph cfg_g{};
+        bool cfg_ran = false;
+        if (opts.showCfg || !opts.cfgDotPath.empty() || opts.jsonOut)
+        {
+            size_t cfg_file_off = 0, cfg_len = 0;
+            uint16_t cs_seg = 0;
+            mz_cfg_window(header, sizes, cfg_file_off, cfg_len, cs_seg, opts);
+            Options cfg_opts = opts;
+            if (opts.jsonOut && !opts.showCfg)
+                cfg_opts.showCfg = false; // DOT/JSON only — no human CFG dump
+            cfg_g = cfg_analyze_image(fileData, cfg_file_off, cfg_len,
+                                      header.ip, cs_seg, cfg_opts);
+            cfg_ran = true;
         }
 
-        run_simulation(opts, header, fileData, relocs, sizes);
+        if (opts.simulate)
+            run_simulation(opts, header, fileData, relocs, sizes);
+
+        if (opts.jsonOut)
+        {
+            JsonReport rep;
+            rep.set_mz(opts.filename, header, sizes, fileSize);
+            if (opts.pascalMt)
+            {
+                rep.pascal_mt = std::move(mt_rep);
+                rep.pascal_mt_ran = true;
+            }
+            rep.strings = std::move(strs);
+            rep.strings_ran = true;
+            if (cfg_ran)
+            {
+                rep.cfg = std::move(cfg_g);
+                rep.cfg_ran = true;
+                rep.cfg_dot_path = opts.cfgDotPath;
+            }
+            rep.print(std::cout);
+        }
 
     } else if (sig32 == 0xFFFFFFFF) {
-        // --- DOS device driver (.SYS) path ---
-        analyze_sys(opts, fileData, fileSize);
+        if (opts.jsonOut) {
+            JsonReport rep;
+            rep.file = opts.filename;
+            rep.format = "sys";
+            rep.print(std::cout);
+        } else {
+            analyze_sys(opts, fileData, fileSize);
+        }
 
     } else {
-        // --- .COM path (fallback for any unrecognized flat DOS binary) ---
-        analyze_com(opts, fileData, fileSize);
+        if (opts.jsonOut) {
+            JsonReport rep;
+            rep.file = opts.filename;
+            rep.format = "com";
+            rep.file_size = static_cast<uint32_t>(fileSize);
+            rep.print(std::cout);
+        } else {
+            analyze_com(opts, fileData, fileSize);
+        }
     }
 
     return 0;
 }
-

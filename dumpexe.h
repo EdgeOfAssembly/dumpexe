@@ -22,6 +22,7 @@
 //   com_analysis.h — MS-DOS .COM file analysis functions
 //   strings.h      — Pascal length-prefixed / CALL-inline + ASCIIZ (--strings)
 //   pascal_mt.h    — Pascal MT+86 3.1.1 detect/annotate (default on; --no-pascal-mt)
+//   json_report.h  — Machine-readable --json report
 
 #ifndef DUMPEXE_H
 #define DUMPEXE_H
@@ -40,5 +41,6 @@
 #include "com_analysis.h"
 #include "strings.h"
 #include "pascal_mt.h"
+#include "json_report.h"
 
 #endif // DUMPEXE_H
