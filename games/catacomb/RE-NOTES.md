@@ -36,3 +36,6 @@ If sound fails on another machine, undefine `{$DEFINE SOUNDS}` / stub SPKLIB.
 ## Binary shape (rebuild)
 - Size ~136992, header 0x400, ~248 relocs, CS:IP 0000:4285
 - RTL: `Runtime error ` string; many `55 89 E5` frames; far CALLs at entry
+
+## Export
+- `dumpexe -d` → Turbo Pascal–oriented `.asm` (not .PAS): `.MODEL LARGE`, PROC/ENDP, byte-exact `db` with disasm comments.

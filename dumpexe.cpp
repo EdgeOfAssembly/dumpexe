@@ -7,7 +7,7 @@
 
 /// Print version information to stdout
 static inline void print_version() {
-    std::cout << "dumpexe 1.7 — 16-bit MS-DOS Binary Analyzer (TP5.5 + JWASM + MT+)\n"
+    std::cout << "dumpexe 1.8 — 16-bit MS-DOS Binary Analyzer (TP/JWASM/MT+ export)\n"
                  "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n"
                  "License: GPLv2 | Commercial (contact author)\n"
                  "Built with Capstone disassembly support: yes\n";
@@ -199,10 +199,11 @@ int main(int argc, char* argv[]) {
             size_t cfg_file_off = 0, cfg_len = 0;
             uint16_t cs_seg = 0;
             mz_cfg_window(header, sizes, cfg_file_off, cfg_len, cs_seg, opts);
-            // JWASM-identified → assemblable .asm (JWASM 1.8); else human listing
+            // TP → Turbo Pascal export; JWASM → JWASM export; else human listing
             listing_run(fileData, cfg_file_off, cfg_len,
                         mz_entry_image_ip(header), cs_seg, opts, opts.filename,
-                        opts.toolchainDetect ? &tc_rep : nullptr);
+                        opts.toolchainDetect ? &tc_rep : nullptr,
+                        opts.toolchainDetect ? &tp_rep : nullptr);
         }
 
         // CFG: human --cfg, Graphviz --cfg-dot, or always under --json (scripting)

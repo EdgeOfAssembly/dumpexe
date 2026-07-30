@@ -130,6 +130,16 @@ if [[ -f "$CAT" ]]; then
   check cat_tp55 bash -c "$BIN '$CAT' 2>&1 | grep -q 'Turbo Pascal 5.5'"
   check cat_no_jwasm bash -c "! $BIN '$CAT' 2>&1 | grep -q 'JWASM 1.8'"
   check cat_product bash -c "$BIN '$CAT' 2>&1 | grep -q 'Catacomb'"
+  check cat_tp_export bash -c "
+    TD=\$(mktemp -d /tmp/dumpexe-tp-XXXXXX)
+    cp -f '$CAT' "\$TD/c.exe"
+    $BIN -d --no-asm-file -o "\$TD/o.asm" "\$TD/c.exe" >/dev/null 2>&1
+    grep -q 'Turbo Pascal export' "\$TD/o.asm"
+    grep -q '.MODEL LARGE' "\$TD/o.asm"
+    grep -q 'PROC' "\$TD/o.asm"
+    grep -q '\[TP near frame\]' "\$TD/o.asm"
+    rm -rf "\$TD"
+  "
 else
   echo "SKIP catacomb tests"
 fi
