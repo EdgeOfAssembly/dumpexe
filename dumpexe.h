@@ -41,6 +41,7 @@
 #include "com_analysis.h"
 #include "strings.h"
 #include "pascal_mt.h"
+#include "turbo_pascal.h"
 #include "toolchain.h"
 #include "symbols.h"
 #include "json_report.h"

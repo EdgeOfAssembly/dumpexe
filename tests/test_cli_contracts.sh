@@ -124,6 +124,16 @@ else
   echo "SKIP cutemouse tests"
 fi
 
+# Catacomb / Turbo Pascal 5.5
+CAT="$ROOT/games/catacomb/bin/CATACOMB.EXE"
+if [[ -f "$CAT" ]]; then
+  check cat_tp55 bash -c "$BIN '$CAT' 2>&1 | grep -q 'Turbo Pascal 5.5'"
+  check cat_no_jwasm bash -c "! $BIN '$CAT' 2>&1 | grep -q 'JWASM 1.8'"
+  check cat_product bash -c "$BIN '$CAT' 2>&1 | grep -q 'Catacomb'"
+else
+  echo "SKIP catacomb tests"
+fi
+
 echo "---"
 echo "passed=$pass failed=$fail"
 [[ "$fail" -eq 0 ]]

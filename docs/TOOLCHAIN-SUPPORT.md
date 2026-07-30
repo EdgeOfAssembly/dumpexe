@@ -132,3 +132,15 @@ CuteMouse/JWASM 1.80: **L1–L2 solid**, **L3 in progress** (JWASM export path),
 | `toolchain.h` | COM-in-EXE, JWASM 1.8, CuteMouse |
 | `listing.h` | Multi-pass listing + JWASM export |
 | `/mnt/re-tools/jwasm/` | Durable tool backup |
+
+## Case study: Catacomb → Turbo Pascal 5.5
+
+| Step | Result |
+|------|--------|
+| Package | `/tmp/Catacomb` sources + `/usr/share/games/TP5.5` |
+| Build | `MAKECAT.BAT`: TASM catasm/soundlib + `tpc -b catacomb` |
+| DOSBox | mount C games, D Catacomb; PATH includes TP5.5 + TASM\BIN |
+| Proof | `CATACOMB.EXE` produced (~137 KB) |
+| dumpexe | **Turbo Pascal 5.5** auto @ ~97%; product Catacomb |
+| Fixture | `games/catacomb/` |
+| Note | Fixed false JWASM from 0xFC-only heuristic on TP EXEs |

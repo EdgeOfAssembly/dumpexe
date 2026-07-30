@@ -254,15 +254,8 @@ static inline ToolchainReport toolchain_analyze(const std::vector<uint8_t>& file
         rep.toolchain = "COM-in-EXE wrapper (com2exe or equivalent); assembler TBD";
         rep.jwasm_tasm_hint = true;
     }
-    else if (rep.fc_pad_runs >= 8)
-    {
-        rep.detected = true;
-        rep.confidence = 0.55;
-        rep.assembler = "JWASM";
-        rep.assembler_version = "1.x (weak)";
-        rep.jwasm_tasm_hint = true;
-        rep.toolchain = "JWASM-like even padding (weak; confirm with rebuild)";
-    }
+    // NOTE: do NOT claim JWASM from 0xFC padding alone — Turbo Pascal EXEs
+    // often contain many 0xFC bytes and false-positive (see Catacomb/TP5.5).
 
     return rep;
 }

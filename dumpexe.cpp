@@ -7,7 +7,7 @@
 
 /// Print version information to stdout
 static inline void print_version() {
-    std::cout << "dumpexe 1.6 — 16-bit MS-DOS Binary Analyzer (JWASM export + models)\n"
+    std::cout << "dumpexe 1.7 — 16-bit MS-DOS Binary Analyzer (TP5.5 + JWASM + MT+)\n"
                  "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n"
                  "License: GPLv2 | Commercial (contact author)\n"
                  "Built with Capstone disassembly support: yes\n";
@@ -134,14 +134,29 @@ int main(int argc, char* argv[]) {
                 pascal_mt_print_report(mt_rep);
         }
 
-        // COM-in-EXE / CuteMouse / assembler toolchain (default ON)
-        ToolchainReport tc_rep{};
+        // Turbo Pascal 5.x (before weak asm heuristics)
+        TurboPascalReport tp_rep{};
         if (opts.toolchainDetect)
+        {
+            tp_rep = turbo_pascal_analyze(
+                fileData, header, static_cast<size_t>(sizes.headerSizeBytes),
+                static_cast<size_t>(sizes.entryPointFileOffset));
+            if (human)
+                turbo_pascal_print_report(tp_rep);
+        }
+
+        // COM-in-EXE / JWASM / CuteMouse (skip weak asm if TP already identified)
+        ToolchainReport tc_rep{};
+        if (opts.toolchainDetect && !tp_rep.detected)
         {
             tc_rep = toolchain_analyze(fileData, header,
                                        static_cast<size_t>(sizes.headerSizeBytes));
             if (human)
                 toolchain_print_report(tc_rep);
+        }
+        else if (opts.toolchainDetect && tp_rep.detected && human)
+        {
+            // still run COM-in-EXE only if needed? skip JWASM false positives
         }
 
         std::vector<RelocEntry> relocs;
