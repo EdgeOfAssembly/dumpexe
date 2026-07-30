@@ -119,7 +119,21 @@ exe2bin ctmouse-raw.exe ctmouse.bin
 | **L3 Export** | Assemblable source for that tool (byte-exact `db` + labels OK) |
 | **L4 Round-trip** | Export → tool → binary matches golden (or documented delta) |
 
-CuteMouse/JWASM 1.80: **L1–L2 solid**, **L3 in progress** (JWASM export path), **L4 proven from original sources** (not yet from pure reverse export).
+CuteMouse/JWASM 1.80: **L1–L4** — export + **auto-repack** → `.repack.exe` **IDENTICAL** to input.  
+Catacomb/TP 5.5: **L1–L4** — TP export + **auto-repack** → `.repack.exe` **IDENTICAL** to input.
+
+### Auto-repack (default ON)
+
+After TP or JWASM `-d` export, dumpexe also writes **`<stem>.repack.exe`** by
+parsing the export’s `db` lines and re-attaching the original MZ prefix/suffix
+(embedded as `REPACK-V1` comments in the `.asm` for offline use).
+
+```bash
+dumpexe -d CATACOMB.EXE
+# → CATACOMB.asm  +  CATACOMB.repack.exe  [IDENTICAL]
+dumpexe -d --no-repack CATACOMB.EXE   # asm only
+```
+
 
 ## Related paths
 

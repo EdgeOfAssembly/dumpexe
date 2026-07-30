@@ -7,7 +7,7 @@
 
 /// Print version information to stdout
 static inline void print_version() {
-    std::cout << "dumpexe 1.8 — 16-bit MS-DOS Binary Analyzer (TP/JWASM/MT+ export)\n"
+    std::cout << "dumpexe 1.9 — 16-bit MS-DOS Binary Analyzer (export + auto-repack)\n"
                  "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n"
                  "License: GPLv2 | Commercial (contact author)\n"
                  "Built with Capstone disassembly support: yes\n";
