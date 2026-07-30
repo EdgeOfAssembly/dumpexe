@@ -137,9 +137,19 @@ if [[ -f "$CAT" ]]; then
     grep -q 'Turbo Pascal export' "\$TD/o.asm"
     grep -q '.MODEL LARGE' "\$TD/o.asm"
     grep -q 'PROC' "\$TD/o.asm"
-    grep -q '\[TP near frame\]' "\$TD/o.asm"
+    grep -q 'REPACK-V1' "\$TD/o.asm"
     rm -rf "\$TD"
   "
+  check cat_repack_identical bash -c "
+    TD=\$(mktemp -d /tmp/dumpexe-repack-XXXXXX)
+    cp -f '$CAT' "\$TD/CATACOMB.EXE"
+    $BIN -d "\$TD/CATACOMB.EXE" >/dev/null 2>"\$TD/err"
+    test -f "\$TD/CATACOMB.repack.exe"
+    cmp -s "\$TD/CATACOMB.EXE" "\$TD/CATACOMB.repack.exe"
+    grep -q 'IDENTICAL to input' "\$TD/err"
+    rm -rf "\$TD"
+  "
+  check help_no_repack bash -c "$BIN -h 2>&1 | grep -q -- '--no-repack'"
 else
   echo "SKIP catacomb tests"
 fi
