@@ -1,19 +1,26 @@
 # dumpexe
 
-**16-bit MS-DOS Binary Analyzer & Single-Pass Disassembler**
+**16-bit MS-DOS Binary Analyzer & Multi-Pass Listing**
 
-A comprehensive command-line utility for analyzing MS-DOS 16-bit binary files: MZ EXE executables, plain `.COM` programs, and device driver (`.SYS`) files. Provides TDUMP-style header analysis, relocation table display, hex dumps with zero-compression, x86-16 disassembly using Capstone, and DOS load simulation with register tracking.
+A comprehensive command-line utility for analyzing MS-DOS 16-bit binary files: MZ EXE executables, plain `.COM` programs, and device driver (`.SYS`) files. Provides TDUMP-style header analysis, relocation tables, hex dumps, Capstone x86-16 disassembly, multi-pass listings, toolchain fingerprints (Pascal MT+, JWASM 1.8, COM-in-EXE), Graphviz CFG, JSON reports, and DOS load simulation.
 
 ## Features
 
-- **MZ EXE Analysis**: Full header decode, relocation table, entry point, memory requirements
-- **COM File Analysis**: Flat-binary analysis with automatic PSP heuristic detection
-- **Device Driver Analysis**: DOS `.SYS` driver header decode (character and block devices)
-- **Relocation Table**: Shows all relocation entries with file locations and linear offsets
-- **Hex+ASCII Dumps**: Canonical `hexdump -C` format with zero-compression (repeated lines shown as `*`)
-- **x86-16 Disassembly**: Static code analysis from entry point to EOF using Capstone
-- **DOS Load Simulation**: Dynamic analysis simulating DOS loading with register state tracking
-- **Cross-Platform**: Analyze DOS binaries on Linux/Unix systems
+- **MZ EXE / COM / SYS**: Header decode, relocations, entry, memory requirements
+- **Multi-pass listing** (`-d`): `func_*` labels, INT notes, call/jmp rewrite; default write `<stem>.asm`
+- **Toolchain detect** (default on): Pascal MT+ 3.1.1; JWASM 1.80 / COM-in-EXE / CuteMouse
+- **JWASM export**: When JWASM is detected, `-d` emits JWASM-oriented assemblable layout (`.model`; **.COM / COM-in-EXE always tiny**)
+- **CFG / Graphviz**: `--cfg`, `--cfg-dot=FILE`
+- **JSON**: `--json` machine-readable report
+- **Symbol maps**: auto `<stem>.sym`/`.map` or `--map=FILE`
+- **Era tools**: versioned assemblers under `bin/jwasm/` (see `docs/TOOLCHAIN-SUPPORT.md`)
+- **Cross-Platform**: Analyze DOS binaries on Linux/Unix
+
+## Adding a new compiler/assembler
+
+See **[docs/TOOLCHAIN-SUPPORT.md](docs/TOOLCHAIN-SUPPORT.md)** — ground-truth workflow:
+
+binary + sources → pin tool version → rebuild proof → fingerprint in dumpexe → tests + commit.
 
 ## Building
 

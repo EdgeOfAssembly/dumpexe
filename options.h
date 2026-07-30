@@ -83,6 +83,11 @@ struct Options {
     bool toolchainDetect = true;    ///< COM-in-EXE / CuteMouse / etc. (default ON)
     bool autoMap = true;            ///< auto-load <stem>.sym/.map (default ON)
     std::string mapPath;            ///< --map=FILE explicit symbol map
+    /// Memory model for JWASM export (cli-design).
+    /// Rules: pure .COM and COM-in-EXE → always **tiny** (≤64K, no exceptions).
+    /// Otherwise default **small** if unknown; override with --model=.
+    std::string memModel = "small";
+    bool memModelUserSet = false;
 
     // --- Simulation controls ---
     /// Max instructions to execute (0 = default: 1_000_000, or 64 if --trace
@@ -371,6 +376,19 @@ struct Options {
                     std::cerr << "Error: --map= requires a path\n";
                     return false;
                 }
+            } else if (arg.starts_with("--model=")) {
+                // Default small when unknown; COM/.COM always tiny (not overridable).
+                std::string m(arg.substr(8));
+                for (char& c : m)
+                    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                if (m != "tiny" && m != "small" && m != "medium" && m != "compact" &&
+                    m != "large" && m != "huge")
+                {
+                    std::cerr << "Error: --model= must be tiny|small|medium|compact|large|huge\n";
+                    return false;
+                }
+                memModel = std::move(m);
+                memModelUserSet = true;
             } else if (arg == "-o" || arg == "--output") {
                 if (i + 1 >= argc) {
                     std::cerr << "Error: " << arg << " requires a path\n";
@@ -579,6 +597,8 @@ static inline void show_usage(const char* progname) {
         "  --no-toolchain      Disable JWASM 1.8 / COM-in-EXE / CuteMouse detect (default: on)\n"
         "  --map=FILE          Load symbol map for listing (IP name); disables need for auto\n"
         "  --no-map            Do not auto-load <stem>.sym / <stem>.map (default: auto on)\n"
+        "  --model=M           Memory model for JWASM export: tiny|small|medium|compact|large|huge\n"
+        "                      (default: small if unknown; .COM / COM-in-EXE always tiny)\n"
         "  --json              Machine-readable JSON report on stdout (default: off)\n"
         "  --cfg-dot=FILE      Write Graphviz DOT of CFG to FILE (default: off)\n"
         "  -n, --no-int-annotations  Suppress INT annotation comments in disassembly\n"
