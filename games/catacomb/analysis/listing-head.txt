@@ -1,0 +1,30 @@
+; dumpexe multi-pass listing (not single-stream Capstone only)
+; source: /tmp/grok-goal-c8d573d7f31d/implementer/blind-catacomb/subject.exe
+; CS=1000h  entry=4285h  blocks=1872  symbols=266
+; labels: func_<IP> (+ names from --map / <stem>.sym when present)
+; call/jmp/jcc near targets rewritten to labels when known
+; blank line after procedure regions ending in ret/retf/iret
+;
+
+func_000E:                ; call target
+    000E  55                push     bp
+    000F  89E5              mov      bp, sp
+    0011  31C0              xor      ax, ax
+    0013  9A44020920        lcall    0x2009, 0x244
+    0018  A04102            mov      al, byte ptr [0x241]
+    001B  3C00              cmp      al, 0
+    001D  750E              jne      0x1002d
+    001F  FF7608            push     word ptr [bp + 8]
+    0022  FF7606            push     word ptr [bp + 6]
+    0025  FF7604            push     word ptr [bp + 4]
+    0028  E86949            call     func_4994
+    002B  EB22              jmp      func_004F
+    002D  3C01              cmp      al, 1
+    002F  750E              jne      0x1003f
+    0031  FF7608            push     word ptr [bp + 8]
+    0034  FF7606            push     word ptr [bp + 6]
+    0037  FF7604            push     word ptr [bp + 4]
+    003A  E8C849            call     func_4A05
+    003D  EB10              jmp      func_004F
+    003F  3C02              cmp      al, 2
+    0041  750C              jne      func_004F

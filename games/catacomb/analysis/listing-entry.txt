@@ -1,0 +1,36 @@
+    4246  A3F891            mov      word ptr [0x91f8], ax
+    4249  89EC              mov      sp, bp
+    424B  5D                pop      bp
+    424C  C3                ret      
+func_4285:                ; entry
+    4285  9A00000920        lcall    0x2009, 0
+    428A  9A0000F11F        lcall    0x1ff1, 0
+    428F  9A27067E1F        lcall    0x1f7e, 0x627
+    4294  9A00007D17        lcall    0x177d, 0
+    4299  9A00001B17        lcall    0x171b, 0
+    429E  9A05001717        lcall    0x1717, 5
+    42A3  9A00006011        lcall    0x1160, 0
+    42A8  9A0000F305        lcall    0x5f3, 0
+    42AD  55                push     bp
+    42AE  89E5              mov      bp, sp
+    42B0  83EC02            sub      sp, 2
+    42B3  E8F4FB            call     func_3EAA
+    42B6  BFC27B            mov      di, 0x7bc2
+    42B9  1E                push     ds
+    42BA  57                push     di
+    42BB  B80008            mov      ax, 0x800
+    42BE  50                push     ax
+    42BF  B063              mov      al, 0x63
+    42C1  50                push     ax
+    42C2  9A26100920        lcall    0x2009, 0x1026
+    42C7  C606427C00        mov      byte ptr [0x7c42], 0
+    42CC  A1EF91            mov      ax, word ptr [0x91ef]
+    42CF  051400            add      ax, 0x14
+    42D2  8946FE            mov      word ptr [bp - 2], ax
+    42D5  A1EF91            mov      ax, word ptr [0x91ef]
+    42D8  3B46FE            cmp      ax, word ptr [bp - 2]
+    42DB  7F1A              jg       0x142f7
+    42DD  A31C92            mov      word ptr [0x921c], ax
+    42E0  EB04              jmp      func_42E6
+    42E2  FF061C92          inc      word ptr [0x921c]
+func_42E6:
