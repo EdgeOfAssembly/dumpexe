@@ -36,6 +36,7 @@
 #include "symbols.h"
 #include "toolchain.h"
 #include "turbo_pascal.h"
+#include "repack.h"
 
 //=============================================================================
 // Paths
@@ -917,12 +918,15 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
         const bool com = tc && tc->com_in_exe;
         out_text = listing_emit_turbo_pascal(g, image, entry_ip, opts, source_name, *tp,
                                              com, n_procs, n_insns, ext);
+        // Embed MZ prefix/suffix so .asm alone can rebuild the EXE later
+        out_text = repack_embed_meta(fileData, image_file_off, len) + out_text;
     }
     else if (want_jwasm)
     {
         kind_out = ListingExportKind::Jwasm;
         out_text = listing_emit_jwasm(g, image, entry_ip, opts, source_name, *tc,
                                       n_procs, n_insns, ext);
+        out_text = repack_embed_meta(fileData, image_file_off, len) + out_text;
     }
     else
     {
@@ -999,7 +1003,7 @@ static inline void listing_deliver(const Options& opts,
 }
 
 /**
- * @brief Run multi-pass listing / JWASM / Turbo Pascal export.
+ * @brief Run multi-pass listing / JWASM / Turbo Pascal export (+ auto repack).
  */
 static inline void listing_run(const std::vector<uint8_t>& fileData,
                                size_t image_file_off,
@@ -1022,6 +1026,18 @@ static inline void listing_run(const std::vector<uint8_t>& fileData,
         return;
     }
     listing_deliver(opts, input_path, text, n_procs, n_insns, kind);
+
+    // Default ON: after TP/JWASM export, write runnable <stem>.repack.exe
+    if (kind == ListingExportKind::TurboPascal || kind == ListingExportKind::Jwasm)
+    {
+        std::string written;
+        if (!repack_auto(opts, input_path, fileData, image_file_off, image_len, text,
+                         written) &&
+            opts.writeRepack)
+        {
+            std::cerr << "repack: failed\n";
+        }
+    }
 }
 
 /**

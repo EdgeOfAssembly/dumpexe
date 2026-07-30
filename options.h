@@ -88,6 +88,9 @@ struct Options {
     /// Otherwise default **small** if unknown; override with --model=.
     std::string memModel = "small";
     bool memModelUserSet = false;
+    /// After TP/JWASM export, also write <stem>.repack.exe (default ON)
+    bool writeRepack = true;
+    std::string repackOutputPath; ///< optional override path for repack EXE
 
     // --- Simulation controls ---
     /// Max instructions to execute (0 = default: 1_000_000, or 64 if --trace
@@ -366,6 +369,16 @@ struct Options {
             } else if (arg == "--no-asm-file") {
                 // Default ON when disassembling: only provide disable switch
                 writeAsmFile = false;
+            } else if (arg == "--no-repack") {
+                // Default ON after TP/JWASM export: rebuild runnable EXE from listing
+                writeRepack = false;
+            } else if (arg.starts_with("--repack-output=")) {
+                repackOutputPath = std::string(arg.substr(16));
+                if (repackOutputPath.empty()) {
+                    std::cerr << "Error: --repack-output= requires a path\n";
+                    return false;
+                }
+                writeRepack = true;
             } else if (arg == "--no-toolchain") {
                 toolchainDetect = false;
             } else if (arg == "--no-map") {
@@ -582,6 +595,8 @@ static inline void show_usage(const char* progname) {
         "                      call/jmp→labels); also writes <stem>.asm by default\n"
         "  -o, --output PATH   Listing output file (default: <stem>.asm); use - for stdout only\n"
         "  --no-asm-file       Do not write .asm file (listing still on stdout unless --json)\n"
+        "  --no-repack         Do not write <stem>.repack.exe after TP/JWASM export (default: on)\n"
+        "  --repack-output=P   Override repack EXE path (implies repack on)\n"
         "  --cfg               Build/print static CFG + INT/string xref annotations\n"
         "  --cfg-interesting   Only print interesting-block summary/detail (no full dump)\n"
         "  --cfg-no-insns      CFG edges/tags only (no per-block disassembly)\n"
