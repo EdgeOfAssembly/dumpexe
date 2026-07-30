@@ -81,15 +81,37 @@ static inline TurboPascalReport turbo_pascal_analyze(const std::vector<uint8_t>&
     TurboPascalReport rep;
     size_t off = 0;
 
-    // Classic Borland Pascal runtime message (TP5/BP7 family)
+    // Classic Borland Pascal runtime message (TP5/BP7 family; from TURBO.TPL)
     const bool has_rte =
         tp_find(fileData, "Runtime error ", off);
     if (has_rte)
     {
         rep.runtime_error_off = off;
         rep.evidence.push_back(
-            std::format("\"Runtime error \" at file 0x{:X} (Borland Pascal RTL)", off));
+            std::format("\"Runtime error \" at file 0x{:X} (Borland Pascal RTL / TURBO.TPL)",
+                        off));
     }
+
+    // System unit globals often linked by name into the data segment (TPL catalog)
+    static const char* kTplHints[] = {
+        "EXITPROC", "ERRORADDR", "HEAPORG", "HEAPPTR", "STACKLIMIT",
+        "IORESULT", "FILEMODE", "PREFIXSEG", "RANDSEED", "TEST8087",
+    };
+    int tpl_hits = 0;
+    for (const char* h : kTplHints)
+    {
+        size_t ho = 0;
+        if (tp_find(fileData, h, ho))
+        {
+            ++tpl_hits;
+            if (tpl_hits <= 4)
+                rep.evidence.push_back(
+                    std::format("TPL global \"{}\" at file 0x{:X}", h, ho));
+        }
+    }
+    if (tpl_hits > 4)
+        rep.evidence.push_back(
+            std::format("… +{} more TURBO.TPL System globals", tpl_hits - 4));
 
     // Near frames: TP often 55 89 E5; also 55 8B EC
     const uint8_t f1[] = {0x55, 0x89, 0xE5};
@@ -126,6 +148,10 @@ static inline TurboPascalReport turbo_pascal_analyze(const std::vector<uint8_t>&
     double score = 0;
     if (has_rte)
         score += 3.0;
+    if (tpl_hits >= 3)
+        score += 1.0;
+    else if (tpl_hits >= 1)
+        score += 0.4;
     if (rep.frame_5589e5 >= 20)
         score += 1.5;
     if (rep.frame_558bec >= 10)
