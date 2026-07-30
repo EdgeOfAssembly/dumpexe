@@ -133,6 +133,17 @@ CuteMouse/JWASM 1.80: **L1–L2 solid**, **L3 in progress** (JWASM export path),
 | `listing.h` | Multi-pass listing + JWASM export |
 | `/mnt/re-tools/jwasm/` | Durable tool backup |
 
+## TP 5.5 product tree (`/usr/share/games/TP5.5`)
+
+Not compiler source — **distribution**: `TPC.EXE`/`TURBO.EXE`, `TURBO.TPL` RTL,
+demos (`.PAS`/`.ASM`/`.OBJ`), BGI, docs. Useful for:
+
+- Rebuild games with **exact** TPC 5.5  
+- RTL string/global fingerprints (`Runtime error `, `EXITPROC`, heap/overlay)  
+- OOP method naming in asm: `Type@Method`, `@Self` at `[BP+6]`, FAR methods  
+
+See `games/tp55-re/RE-NOTES.md`.
+
 ## Case study: Catacomb → Turbo Pascal 5.5
 
 | Step | Result |
