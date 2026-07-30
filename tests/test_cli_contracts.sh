@@ -110,6 +110,16 @@ if [[ -f "$CTM" ]]; then
   check ctm_sym_start bash -c "$BIN -d --no-asm-file '$CTM' 2>/dev/null | grep -qE '^start:'"
   check help_no_toolchain bash -c "$BIN -h 2>&1 | grep -q -- '--no-toolchain'"
   check help_map bash -c "$BIN -h 2>&1 | grep -q -- '--map='"
+  check help_model bash -c "$BIN -h 2>&1 | grep -q -- '--model='"
+  # COM-in-EXE always tiny even if user passes --model=small
+  check ctm_model_tiny_forced bash -c "
+    TD=\$(mktemp -d /tmp/dumpexe-model-XXXXXX)
+    cp -f '$CTM' \"\$TD/c.exe\"
+    $BIN -d --model=small --no-asm-file -o \"\$TD/o.asm\" \"\$TD/c.exe\" >/dev/null 2>&1
+    grep -q 'forced: .COM / COM-in-EXE' \"\$TD/o.asm\"
+    grep -q '.model tiny' \"\$TD/o.asm\"
+    rm -rf \"\$TD\"
+  "
 else
   echo "SKIP cutemouse tests"
 fi

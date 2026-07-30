@@ -34,6 +34,7 @@
 #include "int_annotate.h"
 #include "options.h"
 #include "symbols.h"
+#include "toolchain.h"
 
 //=============================================================================
 // Paths
@@ -356,6 +357,257 @@ static inline std::string listing_emit_text(const CfgGraph& g,
 }
 
 //=============================================================================
+// JWASM / MASM assemblable export (when toolchain is JWASM)
+//=============================================================================
+
+/// Capstone / 0x… → MASM-ish operand text for JWASM 1.8.
+static inline std::string listing_masm_ops(std::string ops)
+{
+    // 0xAB → 0ABh (leading 0 if starts with A–F)
+    std::string out;
+    out.reserve(ops.size() + 8);
+    for (size_t i = 0; i < ops.size();)
+    {
+        if (i + 2 < ops.size() && ops[i] == '0' &&
+            (ops[i + 1] == 'x' || ops[i + 1] == 'X'))
+        {
+            size_t j = i + 2;
+            while (j < ops.size() && std::isxdigit(static_cast<unsigned char>(ops[j])))
+                ++j;
+            std::string hex = ops.substr(i + 2, j - (i + 2));
+            for (char& c : hex)
+                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            if (!hex.empty() && hex[0] >= 'A' && hex[0] <= 'F')
+                out.push_back('0');
+            out += hex;
+            out.push_back('h');
+            i = j;
+            continue;
+        }
+        out.push_back(ops[i]);
+        ++i;
+    }
+    // strip spaces around + - in brackets lightly
+    return out;
+}
+
+static inline std::string listing_masm_mnem(std::string m)
+{
+    for (char& c : m)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (m == "popaw")
+        return "popa";
+    if (m == "pushaw")
+        return "pusha";
+    if (m == "retn")
+        return "ret";
+    if (m == "retf" || m == "retfq")
+        return "retf";
+    if (m == "callw")
+        return "call";
+    if (m == "jmpw")
+        return "jmp";
+    return m;
+}
+
+/**
+ * @brief Emit JWASM 1.8-assemblable tiny-model source covering the full image.
+ *
+ * Policy: if dumpexe identifies JWASM, the .asm product must be compilable
+ * with bin/jwasm/jwasm-1.8.exe (not a hex dump listing).
+ */
+static inline std::string listing_emit_jwasm(const CfgGraph& g,
+                                            const std::vector<uint8_t>& image,
+                                            uint16_t entry_ip,
+                                            const Options& opts,
+                                            const std::string& source_name,
+                                            const ToolchainReport& tc,
+                                            size_t& n_procs,
+                                            size_t& n_insns,
+                                            const SymbolMap* external)
+{
+    std::map<uint16_t, std::string> sym;
+    std::set<uint16_t> proc_starts;
+    listing_collect_symbols(g, entry_ip, sym, proc_starts, external);
+    n_procs = proc_starts.size();
+    n_insns = 0;
+
+    // Index instructions by IP (first wins)
+    std::map<uint16_t, CfgInsn> at;
+    std::map<uint16_t, const CfgBlock*> blk_at;
+    for (const auto& kv : g.blocks)
+    {
+        const CfgBlock& b = kv.second;
+        for (const auto& in : b.insns)
+        {
+            if (!at.count(in.ip))
+            {
+                at[in.ip] = in;
+                blk_at[in.ip] = &b;
+            }
+        }
+    }
+
+    std::ostringstream out;
+    // Memory model policy:
+    //   • pure .COM or COM-in-EXE → always tiny (≤64KB single segment; no exceptions)
+    //   • else if --model= set → user value
+    //   • else → small (default when unknown)
+    const bool is_com_image = tc.com_in_exe; // COM-wrapped MZ; pure COM sets this too via caller
+    std::string model;
+    std::string model_why;
+    if (is_com_image)
+    {
+        model = "tiny";
+        model_why = " (forced: .COM / COM-in-EXE ≤64K — no exceptions)";
+        if (opts.memModelUserSet && opts.memModel != "tiny")
+            model_why += " [--model= ignored for COM]";
+    }
+    else if (opts.memModelUserSet)
+    {
+        model = opts.memModel;
+        model_why = " (--model=)";
+    }
+    else
+    {
+        model = "small";
+        model_why = " (default when unknown)";
+    }
+
+    out << "; dumpexe JWASM-export — assemblable with JWASM 1.80\n";
+    out << std::format("; source binary: {}\n", source_name);
+    out << std::format("; toolchain: {} {}\n", tc.assembler, tc.assembler_version);
+    out << std::format("; memory model: {}{}\n", model, model_why);
+    out << "; assemble: wine bin/jwasm/jwasm-1.8.exe -Fo out.obj this.asm\n";
+    out << ";   (model is in the source via .model — do not also pass -mt/-ms)\n";
+    out << "; layout: full load image as db + labels (byte-exact; disasm in comments)\n";
+    if (external && !external->source_path.empty())
+        out << std::format("; symbols: {}\n", external->source_path);
+    out << ";\n";
+    out << std::format(".model {}\n", model);
+    out << ".code\n";
+    // .COM / COM-in-EXE: image[0] is first COM byte at runtime org 100h
+    if (model == "tiny")
+        out << "org 100h\n";
+    else
+        out << "org 0\n";
+    out << "\n";
+
+    const size_t img_sz = image.size();
+    auto emit_label = [&](uint16_t ip)
+    {
+        if (!sym.count(ip) && !proc_starts.count(ip))
+            return;
+        const std::string name =
+            sym.count(ip) ? sym[ip] : listing_symbol_name(ip);
+        out << name << ":";
+        if (ip == entry_ip)
+            out << "\t\t; entry";
+        out << "\n";
+    };
+
+    auto emit_db_run = [&](size_t from, size_t to, std::string_view comment)
+    {
+        if (from >= to || from >= img_sz)
+            return;
+        if (to > img_sz)
+            to = img_sz;
+        for (size_t i = from; i < to;)
+        {
+            out << "\tdb\t";
+            size_t line_end = std::min(to, i + 12);
+            for (size_t j = i; j < line_end; ++j)
+            {
+                if (j > i)
+                    out << ", ";
+                // MASM: hex constants need leading digit
+                out << std::format("0{:02X}h", image[j]);
+            }
+            if (i == from && !comment.empty())
+                out << "\t; " << comment;
+            out << "\n";
+            i = line_end;
+        }
+    };
+
+    /*
+     * Byte-exact export: emit the full image as db with labels + disasm comments.
+     * Capstone→MASM text is not reliable enough for JWASM 1.8 (CPU level, PTR
+     * sizes, popa/pusha, …). Raw bytes always assemble and preserve layout;
+     * comments keep the listing readable. Rebuild: jwasm -mt → link → com2exe.
+     */
+    size_t ip = 0;
+    while (ip < img_sz)
+    {
+        const uint16_t uip = static_cast<uint16_t>(ip & 0xFFFF);
+        emit_label(uip);
+
+        auto it = at.find(uip);
+        if (it != at.end() && it->second.size > 0 &&
+            ip + it->second.size <= img_sz)
+        {
+            const CfgInsn& in = it->second;
+            bool match = true;
+            for (uint8_t k = 0; k < in.size; ++k)
+            {
+                if (image[ip + k] != in.bytes[k])
+                {
+                    match = false;
+                    break;
+                }
+            }
+            std::string comment;
+            if (match)
+            {
+                std::string mnem = in.text;
+                std::string ops;
+                size_t sp = in.text.find(' ');
+                if (sp != std::string::npos)
+                {
+                    mnem = in.text.substr(0, sp);
+                    ops = in.text.substr(sp + 1);
+                }
+                std::string mlow = listing_masm_mnem(mnem);
+                const CfgBlock* bp = blk_at.count(uip) ? blk_at[uip] : nullptr;
+                std::string rops = ops;
+                if (bp)
+                    rops = listing_rewrite_ops(mlow, ops, *bp, sym);
+                rops = listing_masm_ops(rops);
+                comment = rops.empty() ? mlow : (mlow + " " + rops);
+                ++n_insns;
+                emit_db_run(ip, ip + in.size, comment);
+                ip += in.size;
+            }
+            else
+            {
+                emit_db_run(ip, ip + 1, {});
+                ++ip;
+            }
+            continue;
+        }
+
+        size_t run_end = ip + 1;
+        while (run_end < img_sz)
+        {
+            const uint16_t u = static_cast<uint16_t>(run_end & 0xFFFF);
+            if (at.count(u) || sym.count(u) || proc_starts.count(u))
+                break;
+            ++run_end;
+        }
+        emit_db_run(ip, run_end, {});
+        ip = run_end;
+    }
+
+    // Entry symbol for END
+    std::string entry_name =
+        sym.count(entry_ip) ? sym[entry_ip] : listing_symbol_name(entry_ip);
+    out << "\nend " << entry_name << "\n";
+    out << std::format("; end JWASM-export: {} insns, {} labels, image {} bytes\n",
+                       n_insns, n_procs, img_sz);
+    return out.str();
+}
+
+//=============================================================================
 // Public API
 //=============================================================================
 
@@ -372,7 +624,8 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
                                     const std::string& source_name,
                                     std::string& out_text,
                                     size_t& n_procs,
-                                    size_t& n_insns)
+                                    size_t& n_insns,
+                                    const ToolchainReport* tc = nullptr)
 {
     out_text.clear();
     n_procs = 0;
@@ -395,32 +648,52 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
 
     SymbolMap sm = symbols_load_for_input(opts, source_name);
     const SymbolMap* ext = sm.count ? &sm : nullptr;
-    out_text =
-        listing_emit_text(g, entry_ip, opts, source_name, n_procs, n_insns, ext);
+
+    std::vector<uint8_t> image(
+        fileData.begin() + static_cast<std::ptrdiff_t>(image_file_off),
+        fileData.begin() + static_cast<std::ptrdiff_t>(image_file_off + len));
+
+    // Product rule: JWASM-identified binaries → assemblable JWASM source.
+    const bool want_jwasm =
+        tc && (tc->jwasm_1_8 || tc->assembler == "JWASM" ||
+               (tc->com_in_exe && tc->jwasm_tasm_hint));
+
+    if (want_jwasm)
+    {
+        out_text = listing_emit_jwasm(g, image, entry_ip, opts, source_name, *tc,
+                                      n_procs, n_insns, ext);
+    }
+    else
+    {
+        out_text =
+            listing_emit_text(g, entry_ip, opts, source_name, n_procs, n_insns, ext);
+    }
     return true;
 }
 
-/// Write listing to stdout (human) and/or default/override .asm file.
+/// Write listing to stdout and/or default/override .asm file.
 static inline void listing_deliver(const Options& opts,
                                    const std::string& input_path,
                                    const std::string& text,
                                    size_t n_procs,
-                                   size_t n_insns)
+                                   size_t n_insns,
+                                   bool jwasm_export)
 {
     if (text.empty())
         return;
 
-    // Human stdout (not in --json mode)
     if (!opts.jsonOut)
     {
-        std::cout << "\n=== Multi-pass assembly listing ===\n";
+        if (jwasm_export)
+            std::cout << "\n=== JWASM-assemblable export ===\n";
+        else
+            std::cout << "\n=== Multi-pass assembly listing ===\n";
         std::cout << text;
         if (!text.empty() && text.back() != '\n')
             std::cout << "\n";
     }
 
     // File product: default <stem>.asm when writeAsmFile; always honor explicit -o
-    // (--no-asm-file only suppresses the *default* path, not an explicit -o).
     const bool want_file =
         !opts.outputPath.empty() || opts.writeAsmFile;
     if (want_file)
@@ -435,7 +708,6 @@ static inline void listing_deliver(const Options& opts,
                 n_insns);
             return;
         }
-        // --no-asm-file with no -o: skip
         if (opts.outputPath.empty() && !opts.writeAsmFile)
             return;
         std::ofstream f(path);
@@ -446,13 +718,19 @@ static inline void listing_deliver(const Options& opts,
         }
         f << text;
         f.flush();
-        std::cerr << std::format("listing: wrote {} ({} procs, {} insns)\n", path,
-                                 n_procs, n_insns);
+        if (jwasm_export)
+            std::cerr << std::format(
+                "listing: wrote JWASM-assemblable {} ({} procs, {} insns)\n"
+                "         assemble: wine bin/jwasm/jwasm-1.8.exe -Fo out.obj {}\n",
+                path, n_procs, n_insns, path);
+        else
+            std::cerr << std::format("listing: wrote {} ({} procs, {} insns)\n", path,
+                                     n_procs, n_insns);
     }
 }
 
 /**
- * @brief Run multi-pass listing for MZ/COM-style image and deliver outputs.
+ * @brief Run multi-pass listing / JWASM export for MZ/COM-style image.
  */
 static inline void listing_run(const std::vector<uint8_t>& fileData,
                                size_t image_file_off,
@@ -460,18 +738,22 @@ static inline void listing_run(const std::vector<uint8_t>& fileData,
                                uint16_t entry_ip,
                                uint16_t cs_seg,
                                const Options& opts,
-                               const std::string& input_path)
+                               const std::string& input_path,
+                               const ToolchainReport* tc = nullptr)
 {
     std::string text;
     size_t n_procs = 0, n_insns = 0;
     if (!listing_generate(fileData, image_file_off, image_len, entry_ip, cs_seg, opts,
-                          input_path, text, n_procs, n_insns))
+                          input_path, text, n_procs, n_insns, tc))
     {
         if (!opts.jsonOut)
             std::cout << "\nListing: image offset outside file or empty.\n";
         return;
     }
-    listing_deliver(opts, input_path, text, n_procs, n_insns);
+    const bool jwasm_export =
+        tc && (tc->jwasm_1_8 || tc->assembler == "JWASM" ||
+               (tc->com_in_exe && tc->jwasm_tasm_hint));
+    listing_deliver(opts, input_path, text, n_procs, n_insns, jwasm_export);
 }
 
 /**
