@@ -35,6 +35,7 @@
 #include "options.h"
 #include "symbols.h"
 #include "toolchain.h"
+#include "turbo_pascal.h"
 
 //=============================================================================
 // Paths
@@ -608,8 +609,256 @@ static inline std::string listing_emit_jwasm(const CfgGraph& g,
 }
 
 //=============================================================================
+// Turbo Pascal–oriented export (when TP 5.x detected)
+//=============================================================================
+
+/**
+ * @brief TASM-oriented reconstruction of a Turbo Pascal load image.
+ *
+ * Not a .PAS source (TPC compiles Pascal). Emits:
+ *   - .MODEL LARGE|SMALL|… (COM → always tiny)
+ *   - PROC/ENDP around Pascal frames where detected
+ *   - byte-exact db with Capstone comments (TASM can assemble the bytes)
+ *   - far-call density notes for unit linkage
+ *
+ * Assemble sketch: tasm /ml export.asm  (object is RE aid; full EXE still from TPC)
+ */
+static inline std::string listing_emit_turbo_pascal(const CfgGraph& g,
+                                                    const std::vector<uint8_t>& image,
+                                                    uint16_t entry_ip,
+                                                    const Options& opts,
+                                                    const std::string& source_name,
+                                                    const TurboPascalReport& tp,
+                                                    bool com_in_exe,
+                                                    size_t& n_procs,
+                                                    size_t& n_insns,
+                                                    const SymbolMap* external)
+{
+    std::map<uint16_t, std::string> sym;
+    std::set<uint16_t> proc_starts;
+    listing_collect_symbols(g, entry_ip, sym, proc_starts, external);
+    n_procs = proc_starts.size();
+    n_insns = 0;
+
+    std::map<uint16_t, CfgInsn> at;
+    for (const auto& kv : g.blocks)
+        for (const auto& in : kv.second.insns)
+            if (!at.count(in.ip))
+                at[in.ip] = in;
+
+    // Model: COM → tiny always; else --model=; else LARGE if far-heavy TP, else small
+    std::string model;
+    std::string model_why;
+    if (com_in_exe)
+    {
+        model = "tiny";
+        model_why = " (forced: .COM / COM-in-EXE ≤64K)";
+    }
+    else if (opts.memModelUserSet)
+    {
+        model = opts.memModel;
+        model_why = " (--model=)";
+    }
+    else if (tp.far_calls_entry >= 4 || tp.frame_5589e5 + tp.frame_558bec >= 40)
+    {
+        model = "large"; // typical TP program with units / far calls
+        model_why = " (auto: TP far-call / dense frames → large)";
+    }
+    else
+    {
+        model = "small";
+        model_why = " (default when unknown)";
+    }
+
+    std::ostringstream out;
+    out << "; dumpexe Turbo Pascal export — TASM-oriented load-image reconstruction\n";
+    out << "; NOT a .PAS file (TPC compiles Pascal source; this is RE assembly)\n";
+    out << std::format("; source binary: {}\n", source_name);
+    out << std::format("; compiler: {} {}\n", tp.compiler, tp.version);
+    if (!tp.product.empty())
+        out << std::format("; product: {}\n", tp.product);
+    out << std::format("; toolchain: {}\n", tp.toolchain);
+    out << std::format("; memory model: {}{}\n", model, model_why);
+    out << "; frames: 55 89 E5 (TP near) / 55 8B EC; RTL \"Runtime error \"\n";
+    out << "; assemble (bytes): tasm /ml this.asm   →  this.obj\n";
+    out << "; original rebuild: TPC 5.5 + TASM {$L} units (see MAKECAT.BAT)\n";
+    if (external && !external->source_path.empty())
+        out << std::format("; symbols: {}\n", external->source_path);
+    out << ";\n";
+
+    // TASM: .MODEL TPASCAL is for TP-linked units; full EXE image uses LARGE/SMALL.
+    if (model == "tiny")
+        out << ".MODEL TINY\n";
+    else if (model == "small")
+        out << ".MODEL SMALL\n";
+    else if (model == "medium")
+        out << ".MODEL MEDIUM\n";
+    else if (model == "compact")
+        out << ".MODEL COMPACT\n";
+    else if (model == "huge")
+        out << ".MODEL HUGE\n";
+    else
+        out << ".MODEL LARGE\n";
+    out << ".CODE\n";
+    if (model == "tiny")
+        out << "org 100h\n";
+    else
+        out << "org 0\n";
+    out << "\n";
+
+    const size_t img_sz = image.size();
+    auto emit_db_run = [&](size_t from, size_t to, std::string_view comment)
+    {
+        if (from >= to || from >= img_sz)
+            return;
+        if (to > img_sz)
+            to = img_sz;
+        for (size_t i = from; i < to;)
+        {
+            out << "\tdb\t";
+            size_t line_end = std::min(to, i + 12);
+            for (size_t j = i; j < line_end; ++j)
+            {
+                if (j > i)
+                    out << ", ";
+                out << std::format("0{:02X}h", image[j]);
+            }
+            if (i == from && !comment.empty())
+                out << "\t; " << comment;
+            out << "\n";
+            i = line_end;
+        }
+    };
+
+    size_t ip = 0;
+    bool in_proc = false;
+    std::string cur_proc;
+    auto close_proc = [&]()
+    {
+        if (in_proc)
+        {
+            out << cur_proc << "\tENDP\n\n";
+            in_proc = false;
+            cur_proc.clear();
+        }
+    };
+
+    while (ip < img_sz)
+    {
+        const uint16_t uip = static_cast<uint16_t>(ip & 0xFFFF);
+
+        // New procedure label
+        if (sym.count(uip) || proc_starts.count(uip))
+        {
+            close_proc();
+            const std::string name =
+                sym.count(uip) ? sym[uip] : listing_symbol_name(uip);
+            cur_proc = name;
+            out << name;
+            if (uip == entry_ip)
+                out << "\tPROC\tFAR\t; program entry (CS:IP)";
+            else
+            {
+                // Heuristic: Pascal near frame at start → NEAR PROC
+                bool near_fr = false;
+                if (ip + 3 <= img_sz)
+                {
+                    if (image[ip] == 0x55 && image[ip + 1] == 0x89 &&
+                        image[ip + 2] == 0xE5)
+                        near_fr = true;
+                    if (image[ip] == 0x55 && image[ip + 1] == 0x8B &&
+                        image[ip + 2] == 0xEC)
+                        near_fr = true;
+                }
+                if (near_fr)
+                    out << "\tPROC\tNEAR\t; Pascal frame";
+                else
+                    out << "\tPROC\tNEAR";
+            }
+            out << "\n";
+            in_proc = true;
+        }
+
+        auto it = at.find(uip);
+        if (it != at.end() && it->second.size > 0 &&
+            ip + it->second.size <= img_sz)
+        {
+            const CfgInsn& in = it->second;
+            bool match = true;
+            for (uint8_t k = 0; k < in.size; ++k)
+                if (image[ip + k] != in.bytes[k])
+                {
+                    match = false;
+                    break;
+                }
+            std::string comment;
+            if (match)
+            {
+                std::string mnem = in.text;
+                std::string ops;
+                size_t sp = in.text.find(' ');
+                if (sp != std::string::npos)
+                {
+                    mnem = in.text.substr(0, sp);
+                    ops = in.text.substr(sp + 1);
+                }
+                std::string mlow = listing_masm_mnem(mnem);
+                std::string rops = listing_masm_ops(ops);
+                comment = rops.empty() ? mlow : (mlow + " " + rops);
+                // Tag Pascal frame / far call
+                if (in.size >= 3 && in.bytes[0] == 0x55 && in.bytes[1] == 0x89 &&
+                    in.bytes[2] == 0xE5)
+                    comment += "  [TP near frame]";
+                if (in.bytes[0] == 0x9A)
+                    comment += "  [far call / unit]";
+                if (in.bytes[0] == 0xCB)
+                    comment += "  [retf]";
+                if (in.bytes[0] == 0xC2 || in.bytes[0] == 0xC3)
+                    comment += "  [ret]";
+                ++n_insns;
+                emit_db_run(ip, ip + in.size, comment);
+                ip += in.size;
+            }
+            else
+            {
+                emit_db_run(ip, ip + 1, {});
+                ++ip;
+            }
+            continue;
+        }
+
+        size_t run_end = ip + 1;
+        while (run_end < img_sz)
+        {
+            const uint16_t u = static_cast<uint16_t>(run_end & 0xFFFF);
+            if (at.count(u) || sym.count(u) || proc_starts.count(u))
+                break;
+            ++run_end;
+        }
+        emit_db_run(ip, run_end, {});
+        ip = run_end;
+    }
+    close_proc();
+
+    std::string entry_name =
+        sym.count(entry_ip) ? sym[entry_ip] : listing_symbol_name(entry_ip);
+    out << "\n\tEND\t" << entry_name << "\n";
+    out << std::format(
+        "; end Turbo Pascal export: {} insns, {} labels, image {} bytes\n", n_insns,
+        n_procs, img_sz);
+    return out.str();
+}
+
+//=============================================================================
 // Public API
 //=============================================================================
+
+enum class ListingExportKind
+{
+    Human,
+    Jwasm,
+    TurboPascal
+};
 
 /**
  * @brief Build multi-pass listing text for a CS-relative image.
@@ -625,11 +874,14 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
                                     std::string& out_text,
                                     size_t& n_procs,
                                     size_t& n_insns,
-                                    const ToolchainReport* tc = nullptr)
+                                    ListingExportKind& kind_out,
+                                    const ToolchainReport* tc = nullptr,
+                                    const TurboPascalReport* tp = nullptr)
 {
     out_text.clear();
     n_procs = 0;
     n_insns = 0;
+    kind_out = ListingExportKind::Human;
     if (image_file_off >= fileData.size())
         return false;
     size_t len = std::min(image_len, fileData.size() - image_file_off);
@@ -637,7 +889,7 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
         return false;
 
     Options cfg_opts = opts;
-    cfg_opts.showCfg = false; // never human CFG dump from listing
+    cfg_opts.showCfg = false;
     CfgGraph g = cfg_build_annotated(fileData, image_file_off, len, entry_ip, cs_seg,
                                      cfg_opts);
     if (g.blocks.empty())
@@ -653,18 +905,28 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
         fileData.begin() + static_cast<std::ptrdiff_t>(image_file_off),
         fileData.begin() + static_cast<std::ptrdiff_t>(image_file_off + len));
 
-    // Product rule: JWASM-identified binaries → assemblable JWASM source.
+    const bool want_tp = tp && tp->detected;
     const bool want_jwasm =
-        tc && (tc->jwasm_1_8 || tc->assembler == "JWASM" ||
-               (tc->com_in_exe && tc->jwasm_tasm_hint));
+        !want_tp && tc &&
+        (tc->jwasm_1_8 || tc->assembler == "JWASM" ||
+         (tc->com_in_exe && tc->jwasm_tasm_hint));
 
-    if (want_jwasm)
+    if (want_tp)
     {
+        kind_out = ListingExportKind::TurboPascal;
+        const bool com = tc && tc->com_in_exe;
+        out_text = listing_emit_turbo_pascal(g, image, entry_ip, opts, source_name, *tp,
+                                             com, n_procs, n_insns, ext);
+    }
+    else if (want_jwasm)
+    {
+        kind_out = ListingExportKind::Jwasm;
         out_text = listing_emit_jwasm(g, image, entry_ip, opts, source_name, *tc,
                                       n_procs, n_insns, ext);
     }
     else
     {
+        kind_out = ListingExportKind::Human;
         out_text =
             listing_emit_text(g, entry_ip, opts, source_name, n_procs, n_insns, ext);
     }
@@ -677,15 +939,17 @@ static inline void listing_deliver(const Options& opts,
                                    const std::string& text,
                                    size_t n_procs,
                                    size_t n_insns,
-                                   bool jwasm_export)
+                                   ListingExportKind kind)
 {
     if (text.empty())
         return;
 
     if (!opts.jsonOut)
     {
-        if (jwasm_export)
+        if (kind == ListingExportKind::Jwasm)
             std::cout << "\n=== JWASM-assemblable export ===\n";
+        else if (kind == ListingExportKind::TurboPascal)
+            std::cout << "\n=== Turbo Pascal–oriented export (TASM bytes) ===\n";
         else
             std::cout << "\n=== Multi-pass assembly listing ===\n";
         std::cout << text;
@@ -693,7 +957,6 @@ static inline void listing_deliver(const Options& opts,
             std::cout << "\n";
     }
 
-    // File product: default <stem>.asm when writeAsmFile; always honor explicit -o
     const bool want_file =
         !opts.outputPath.empty() || opts.writeAsmFile;
     if (want_file)
@@ -718,10 +981,16 @@ static inline void listing_deliver(const Options& opts,
         }
         f << text;
         f.flush();
-        if (jwasm_export)
+        if (kind == ListingExportKind::Jwasm)
             std::cerr << std::format(
                 "listing: wrote JWASM-assemblable {} ({} procs, {} insns)\n"
                 "         assemble: wine bin/jwasm/jwasm-1.8.exe -Fo out.obj {}\n",
+                path, n_procs, n_insns, path);
+        else if (kind == ListingExportKind::TurboPascal)
+            std::cerr << std::format(
+                "listing: wrote Turbo Pascal export {} ({} procs, {} insns)\n"
+                "         TASM bytes: tasm /ml {}\n"
+                "         original build: TPC 5.5 + TASM {{$L}} units\n",
                 path, n_procs, n_insns, path);
         else
             std::cerr << std::format("listing: wrote {} ({} procs, {} insns)\n", path,
@@ -730,7 +999,7 @@ static inline void listing_deliver(const Options& opts,
 }
 
 /**
- * @brief Run multi-pass listing / JWASM export for MZ/COM-style image.
+ * @brief Run multi-pass listing / JWASM / Turbo Pascal export.
  */
 static inline void listing_run(const std::vector<uint8_t>& fileData,
                                size_t image_file_off,
@@ -739,21 +1008,20 @@ static inline void listing_run(const std::vector<uint8_t>& fileData,
                                uint16_t cs_seg,
                                const Options& opts,
                                const std::string& input_path,
-                               const ToolchainReport* tc = nullptr)
+                               const ToolchainReport* tc = nullptr,
+                               const TurboPascalReport* tp = nullptr)
 {
     std::string text;
     size_t n_procs = 0, n_insns = 0;
+    ListingExportKind kind = ListingExportKind::Human;
     if (!listing_generate(fileData, image_file_off, image_len, entry_ip, cs_seg, opts,
-                          input_path, text, n_procs, n_insns, tc))
+                          input_path, text, n_procs, n_insns, kind, tc, tp))
     {
         if (!opts.jsonOut)
             std::cout << "\nListing: image offset outside file or empty.\n";
         return;
     }
-    const bool jwasm_export =
-        tc && (tc->jwasm_1_8 || tc->assembler == "JWASM" ||
-               (tc->com_in_exe && tc->jwasm_tasm_hint));
-    listing_deliver(opts, input_path, text, n_procs, n_insns, jwasm_export);
+    listing_deliver(opts, input_path, text, n_procs, n_insns, kind);
 }
 
 /**

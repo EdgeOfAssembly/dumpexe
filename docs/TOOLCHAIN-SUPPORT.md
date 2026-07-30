@@ -143,4 +143,5 @@ CuteMouse/JWASM 1.80: **L1–L2 solid**, **L3 in progress** (JWASM export path),
 | Proof | `CATACOMB.EXE` produced (~137 KB) |
 | dumpexe | **Turbo Pascal 5.5** auto @ ~97%; product Catacomb |
 | Fixture | `games/catacomb/` |
+| Export | `-d` → **Turbo Pascal–oriented** TASM byte export (`.MODEL LARGE`, PROC/ENDP, `db` + comments) |
 | Note | Fixed false JWASM from 0xFC-only heuristic on TP EXEs |
