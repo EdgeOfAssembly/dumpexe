@@ -1,6 +1,6 @@
 .TH DUMPEXE 1 "March 2026" "RetroCodeMess" "User Commands"
 .SH NAME
-dumpexe \- MS-DOS binary analyzer: MZ EXE, .COM, and device driver (.SYS)
+dumpexe \- MS-DOS / Win16 binary analyzer: MZ EXE, NE, .COM, and .SYS
 .SH SYNOPSIS
 .B dumpexe
 .RB [ \-h | \-\-help ]
@@ -13,8 +13,8 @@ dumpexe \- MS-DOS binary analyzer: MZ EXE, .COM, and device driver (.SYS)
 .I file
 .SH DESCRIPTION
 .B dumpexe
-is a comprehensive utility for analyzing MS-DOS 16-bit binary files.
-It supports three file formats — MZ EXE executables, plain .COM programs,
+is a comprehensive utility for analyzing 16-bit MS-DOS and Windows 3.x binaries.
+It supports MZ EXE, Windows 3.x NE (New Executable), plain .COM programs,
 and DOS device driver (.SYS) files — and provides TDUMP-style output with
 multiple analysis modes:
 .IP \(bu 2
@@ -27,6 +27,8 @@ Hex+ASCII dumps with zero-compression (like hexdump -C)
 x86-16 disassembly using Capstone (static code analysis)
 .IP \(bu 2
 DOS load simulation with register tracking (dynamic execution trace)
+.IP \(bu 2
+NE header, segment table, imports, and resource table (Win16)
 .PP
 The file format is detected automatically from the file content:
 .RS
@@ -34,7 +36,16 @@ The file format is detected automatically from the file content:
 .B MZ EXE
 \(em first two bytes are
 .B 4Dh 5Ah
-('MZ')
+('MZ'); pure DOS load image (no NE at e_lfanew)
+.IP \(bu 2
+.B NE EXE (Windows 3.x / Win16)
+\(em MZ stub with
+.B e_lfanew
+at offset 3Ch pointing to
+.B 4Eh 45h
+('NE'). Dumps segments, imports, resources;
+.B \-d
+disassembles the entry code segment.
 .IP \(bu 2
 .B .SYS device driver
 \(em first four bytes are
