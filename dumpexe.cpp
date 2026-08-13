@@ -7,7 +7,7 @@
 
 /// Print version information to stdout
 static inline void print_version() {
-    std::cout << "dumpexe 2.0 — 16-bit MS-DOS + Win16 NE Binary Analyzer\n"
+    std::cout << "dumpexe 2.1 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
                  "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n"
                  "License: GPLv2 | Commercial (contact author)\n"
                  "Built with Capstone disassembly support: yes\n";
@@ -129,6 +129,24 @@ int main(int argc, char* argv[]) {
         if (human)
             print_header_info(opts, header, sizes);
 
+        // DOS extender / DPMI (default ON) — may switch Capstone to 32-bit
+        DosExtenderReport dext_rep{};
+        if (opts.dosExtenderDetect)
+        {
+            dext_rep = dos_extender_analyze(fileData, header);
+            if (human)
+                dos_extender_print_report(dext_rep);
+            // Auto bits: 32 when extender says so, unless user forced --bits=
+            if (opts.x86Bits == 0 && dext_rep.detected && dext_rep.x86_bits == 32)
+                opts.x86Bits = 32;
+            else if (opts.x86Bits == 0)
+                opts.x86Bits = 16;
+        }
+        else if (opts.x86Bits == 0)
+        {
+            opts.x86Bits = 16;
+        }
+
         // Pascal MT+ (default ON)
         PascalMtReport mt_rep{};
         if (opts.pascalMt)
@@ -202,16 +220,23 @@ int main(int argc, char* argv[]) {
         }
 
         if ((opts.showDisasm || opts.showAll) && !opts.jsonOut) {
-            // Multi-pass listing on full load image (real IPs / func_* labels).
-            // No separate --listing: -d/-a *is* the annotated listing.
-            size_t cfg_file_off = 0, cfg_len = 0;
-            uint16_t cs_seg = 0;
-            mz_cfg_window(header, sizes, cfg_file_off, cfg_len, cs_seg, opts);
-            // TP → Turbo Pascal export; JWASM → JWASM export; else human listing
-            listing_run(fileData, cfg_file_off, cfg_len,
-                        mz_entry_image_ip(header), cs_seg, opts, opts.filename,
-                        opts.toolchainDetect ? &tc_rep : nullptr,
-                        opts.toolchainDetect ? &tp_rep : nullptr);
+            if (opts.x86Bits == 32 && dext_rep.detected &&
+                dext_rep.payload_len > 0)
+            {
+                // 32-bit extender payload: linear Capstone CS_MODE_32
+                dos_extender_disasm_payload(fileData, dext_rep, opts);
+            }
+            else
+            {
+                // Multi-pass 16-bit listing on full load image.
+                size_t cfg_file_off = 0, cfg_len = 0;
+                uint16_t cs_seg = 0;
+                mz_cfg_window(header, sizes, cfg_file_off, cfg_len, cs_seg, opts);
+                listing_run(fileData, cfg_file_off, cfg_len,
+                            mz_entry_image_ip(header), cs_seg, opts, opts.filename,
+                            opts.toolchainDetect ? &tc_rep : nullptr,
+                            opts.toolchainDetect ? &tp_rep : nullptr);
+            }
         }
 
         // CFG: human --cfg, Graphviz --cfg-dot, or always under --json (scripting)
@@ -231,7 +256,18 @@ int main(int argc, char* argv[]) {
         }
 
         if (opts.simulate)
-            run_simulation(opts, header, fileData, relocs, sizes);
+        {
+            if (opts.x86Bits == 32 ||
+                (dext_rep.detected && dext_rep.x86_bits == 32))
+            {
+                std::cerr << "Note: --simulate is real-mode 16-bit only; "
+                             "32-bit DOS extender simulation is not implemented.\n";
+            }
+            else
+            {
+                run_simulation(opts, header, fileData, relocs, sizes);
+            }
+        }
 
         if (opts.jsonOut)
         {

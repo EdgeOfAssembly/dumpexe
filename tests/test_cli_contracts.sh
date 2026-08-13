@@ -170,6 +170,27 @@ else
   echo "SKIP simlife NE tests"
 fi
 
+# DOS extender / DPMI (SimLife Huffman; no bare DS false positive)
+SML="$ROOT/games/simlife-dos/SML.EXE"
+if [[ -f "$SML" ]]; then
+  check help_mentions_dos_extender bash -c "$BIN -h 2>&1 | grep -q -- '--no-dos-extender'"
+  check help_mentions_bits bash -c "$BIN -h 2>&1 | grep -q -- '--bits='"
+  check sml_huffman bash -c "$BIN '$SML' 2>&1 | grep -q 'Doug Huffman'"
+  check sml_bits32 bash -c "$BIN '$SML' 2>&1 | grep -q '32-bit payload'"
+  check sml_nested_mz bash -c "$BIN '$SML' 2>&1 | grep -q 'nested MZ'"
+  check sml_not_dos4g bash -c "! $BIN '$SML' 2>&1 | grep -q 'DOS/4G'"
+  check sml_disasm32 bash -c "$BIN -d --no-asm-file '$SML' 2>&1 | grep -q '32-bit disassembly'"
+  check sml_disasm_has_insn bash -c "$BIN -d --no-asm-file '$SML' 2>&1 | grep -qE 'jmp|mov|call|push'"
+  check sml_no_extender_flag bash -c "! $BIN --no-dos-extender '$SML' 2>&1 | grep -q 'DOS extender / DPMI'"
+else
+  echo "SKIP simlife DOS extender tests"
+fi
+
+DOOM2="/home/wizard/dos/DOOM2.EXE"
+if [[ -f "$DOOM2" ]]; then
+  check doom_dos4g bash -c "$BIN '$DOOM2' 2>&1 | grep -qE 'DOS/4G|DOS/32A|LE/LX'"
+fi
+
 echo "---"
 echo "passed=$pass failed=$fail"
 [[ "$fail" -eq 0 ]]
