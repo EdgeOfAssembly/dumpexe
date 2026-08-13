@@ -154,6 +154,22 @@ else
   echo "SKIP catacomb tests"
 fi
 
+# Windows 3.x NE (SimLife fixture)
+NE_EXE="$ROOT/games/simlife-win3x/SIMLIFEW.EXE"
+if [[ -f "$NE_EXE" ]]; then
+  check help_mentions_ne bash -c "$BIN -h 2>&1 | grep -q 'NE EXE'"
+  check ne_header bash -c "$BIN '$NE_EXE' 2>&1 | grep -q 'New Executable (NE)'"
+  check ne_windows bash -c "$BIN '$NE_EXE' 2>&1 | grep -q 'Target OS.*Windows'"
+  check ne_module bash -c "$BIN '$NE_EXE' 2>&1 | grep -q 'Module name.*SIMLIFE'"
+  check ne_segments bash -c "$BIN '$NE_EXE' 2>&1 | grep -q 'Segment table (15'"
+  check ne_imports bash -c "$BIN '$NE_EXE' 2>&1 | grep -q 'KERNEL'"
+  check ne_resources bash -c "$BIN '$NE_EXE' 2>&1 | grep -q 'GROUP_CURSOR'"
+  check ne_json bash -c "$BIN --json '$NE_EXE' 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d[\"format\"]==\"ne\"; assert d[\"module\"]==\"SIMLIFE\"; assert d[\"cseg\"]==15; assert d[\"exetyp\"]==2'"
+  check ne_not_plain_mz bash -c "! $BIN '$NE_EXE' 2>&1 | grep -q 'Program Entry Point'"
+else
+  echo "SKIP simlife NE tests"
+fi
+
 echo "---"
 echo "passed=$pass failed=$fail"
 [[ "$fail" -eq 0 ]]

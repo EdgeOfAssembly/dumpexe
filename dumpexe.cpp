@@ -1,13 +1,13 @@
-// dumpexe.cpp - MS-DOS binary analyzer: MZ EXE, .COM, and device driver (.SYS)
+// dumpexe.cpp - MS-DOS / Win16 binary analyzer: MZ EXE, NE, .COM, .SYS
 // Author: EdgeOfAssembly <haxbox2000@gmail.com>
 // License: GPLv2 | Commercial (contact author)
-// Target: 16-bit MS-DOS binaries (MZ EXE, plain .COM, and device drivers)
+// Target: 16-bit MS-DOS binaries and Windows 3.x NE (New Executable)
 
 #include "dumpexe.h"
 
 /// Print version information to stdout
 static inline void print_version() {
-    std::cout << "dumpexe 1.9 — 16-bit MS-DOS Binary Analyzer (export + auto-repack)\n"
+    std::cout << "dumpexe 2.0 — 16-bit MS-DOS + Win16 NE Binary Analyzer\n"
                  "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n"
                  "License: GPLv2 | Commercial (contact author)\n"
                  "Built with Capstone disassembly support: yes\n";
@@ -111,6 +111,14 @@ int main(int argc, char* argv[]) {
             std::cerr << "Error: File is too small to contain a valid MZ header\n";
             return 1;
         }
+
+        // Win 3.x NE: MZ stub + e_lfanew → "NE" (before plain MZ path)
+        {
+            uint32_t e_lfanew = 0;
+            if (ne_probe(fileData, e_lfanew))
+                return analyze_ne(opts, fileData, fileSize);
+        }
+
         MZHeader header;
         std::memcpy(&header, fileData.data(), sizeof(header));
         if (!validate_header(header, fileSize)) return 1;

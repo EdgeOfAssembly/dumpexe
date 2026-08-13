@@ -20,6 +20,8 @@
 //   sys_analysis.h — DOS device driver analysis functions
 //   com.h          — MS-DOS .COM file format constants
 //   com_analysis.h — MS-DOS .COM file analysis functions
+//   ne.h           — Windows 3.x NE (New Executable) structures
+//   ne_analysis.h  — NE detect / header / segment / resource / disasm
 //   strings.h      — Pascal length-prefixed / CALL-inline + ASCIIZ (--strings)
 //   pascal_mt.h    — Pascal MT+86 3.1.1 detect/annotate (default on; --no-pascal-mt)
 //   json_report.h  — Machine-readable --json report
@@ -39,6 +41,8 @@
 #include "sys_analysis.h"
 #include "com.h"
 #include "com_analysis.h"
+#include "ne.h"
+#include "ne_analysis.h"
 #include "strings.h"
 #include "pascal_mt.h"
 #include "turbo_pascal.h"
