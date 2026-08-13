@@ -1,9 +1,12 @@
-# Makefile for dumpexe - MS-DOS MZ EXE Analyzer & Disassembler
+# Makefile for dumpexe - MS-DOS MZ / Win16 NE Analyzer & Disassembler
 # Note: needs libstdc++ with <format> (g++-13+). CUDA host stays gcc-12 via gcc-config.
 # Author: EdgeOfAssembly <haxbox2000@gmail.com>
 #
 # Capstone disassembly support is MANDATORY.
 # Install it before building: sudo apt-get install libcapstone-dev
+#
+# Default: silent parallel-friendly flags when invoked as
+#   make -s V=0 -j$(nproc)
 
 # Prefer g++-15+ for <format> when present (host gcc may stay 12 for CUDA).
 CXX ?= g++
@@ -27,7 +30,7 @@ CAPSTONE_LIBS   := $(shell pkg-config --libs capstone 2>/dev/null)
 
 all: dumpexe
 
-HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h listing.h cfg.h analysis.h sim.h sys.h sys_analysis.h com.h com_analysis.h strings.h pascal_mt.h turbo_pascal.h toolchain.h symbols.h repack.h json_report.h
+HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h listing.h cfg.h analysis.h sim.h sys.h sys_analysis.h com.h com_analysis.h ne.h ne_analysis.h strings.h pascal_mt.h turbo_pascal.h toolchain.h symbols.h repack.h json_report.h
 
 dumpexe: dumpexe.cpp $(HEADERS)
 	$(CXX) $(CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe dumpexe.cpp $(CAPSTONE_LIBS)

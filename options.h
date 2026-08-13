@@ -584,7 +584,7 @@ struct Options {
 /// Print usage information
 static inline void show_usage(const char* progname) {
     std::cout << std::format(
-        "dumpexe - MS-DOS binary analyzer: MZ EXE, .COM, and device driver (.SYS)\n\n"
+        "dumpexe - MS-DOS / Win16 binary analyzer: MZ EXE, NE, .COM, .SYS\n\n"
         "Usage: {} [options] <file>\n\n"
         "Options:\n"
         "  -h, --help          Show this help message and exit\n"
@@ -638,7 +638,8 @@ static inline void show_usage(const char* progname) {
         "  --dump=seg:off:len  Hex-dump memory on each breakpoint hit\n"
         "                        seg = hex or cs|ds|es|ss  (len hex, default 40h)\n\n"
         "Supported file formats (detected from file content):\n"
-        "  MZ EXE   — first two bytes are 'MZ' (0x5A4D)\n"
+        "  MZ EXE   — first two bytes are 'MZ' (0x5A4D); pure DOS image\n"
+        "  NE EXE   — MZ stub with e_lfanew → 'NE' (Windows 3.x / Win16)\n"
         "  .SYS     — first four bytes are FFFFFFFFh (DOS device driver)\n"
         "  .COM     — all other files (fallback); PSP presence auto-detected\n\n"
         "Examples:\n"
