@@ -43,6 +43,7 @@
 #include "com_analysis.h"
 #include "ne.h"
 #include "ne_analysis.h"
+#include "dos_extender.h"
 #include "strings.h"
 #include "pascal_mt.h"
 #include "turbo_pascal.h"

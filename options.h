@@ -81,6 +81,10 @@ struct Options {
     bool writeAsmFile = true;       ///< write <stem>.asm on -d/-a (default ON)
     std::string outputPath;         ///< -o/--output single path for .asm (optional)
     bool toolchainDetect = true;    ///< COM-in-EXE / CuteMouse / etc. (default ON)
+    bool dosExtenderDetect = true;  ///< DOS extender / DPMI detect (default ON; --no-dos-extender)
+    /// Capstone x86 width: 16 (real-mode default) or 32 (DOS extender payload).
+    /// 0 = auto (16, or 32 when extender detected). Override: --bits=16|32
+    int x86Bits = 0;
     bool autoMap = true;            ///< auto-load <stem>.sym/.map (default ON)
     std::string mapPath;            ///< --map=FILE explicit symbol map
     /// Memory model for JWASM export (cli-design).
@@ -381,6 +385,19 @@ struct Options {
                 writeRepack = true;
             } else if (arg == "--no-toolchain") {
                 toolchainDetect = false;
+            } else if (arg == "--no-dos-extender") {
+                dosExtenderDetect = false;
+            } else if (arg.starts_with("--bits=")) {
+                const std::string_view v = arg.substr(7);
+                if (v == "16")
+                    x86Bits = 16;
+                else if (v == "32")
+                    x86Bits = 32;
+                else
+                {
+                    std::cerr << "Error: --bits= requires 16 or 32\n";
+                    return false;
+                }
             } else if (arg == "--no-map") {
                 autoMap = false;
             } else if (arg.starts_with("--map=")) {
@@ -610,6 +627,8 @@ static inline void show_usage(const char* progname) {
         "  --strings           Extract Pascal length-prefixed + CALL-inline + ASCIIZ strings\n"
         "  --no-pascal-mt      Disable Pascal MT+ 3.1.1 detect/annotate (default: on)\n"
         "  --no-toolchain      Disable JWASM 1.8 / COM-in-EXE / CuteMouse detect (default: on)\n"
+        "  --no-dos-extender   Disable DOS extender / DPMI stub detect (default: on)\n"
+        "  --bits=16|32        Force Capstone x86 width (default: auto; 32 if extender)\n"
         "  --map=FILE          Load symbol map for listing (IP name); disables need for auto\n"
         "  --no-map            Do not auto-load <stem>.sym / <stem>.map (default: auto on)\n"
         "  --model=M           Memory model for JWASM export: tiny|small|medium|compact|large|huge\n"
