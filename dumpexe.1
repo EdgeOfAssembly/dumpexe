@@ -153,7 +153,9 @@ file (default when disassembling is to write one).
 .B \-\-simulate
 Enable DOS load simulation mode. This performs
 .B dynamic analysis
-by simulating how DOS loads and starts the program. Shows:
+by simulating how DOS loads and starts the program.
+Guest file I/O stays inside the simulator and does not read or write the host.
+Shows:
 .RS
 .IP \(bu 2
 Initial CPU register state (CS, IP, SS, SP, DS, ES, FLAGS, etc.)
@@ -269,7 +271,9 @@ are annotated with descriptions from the Ralf Brown Interrupt List (RBIL) databa
 
 .SS Simulation (--simulate)
 .B Dynamic execution trace
-that simulates DOS loading and program startup:
+that simulates DOS loading and program startup.
+Guest file create, open, read, and write stay inside the simulator and do not
+read or write the host filesystem:
 
 .B Initial Register State:
 .RS
