@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for dumpexe 2.4 report/header bugs.
+# Regression tests for dumpexe 2.5 report/header bugs.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="${DUMPEXE_BIN:-$ROOT/dumpexe}"
@@ -97,6 +97,53 @@ struct.pack_into("<H", ne_ok, 0x22, 64)
 struct.pack_into("<H", ne_ok, 0x26, 72)  # restab -> terminating 0
 ok_blob = bytes(ne_ok) + bytes(8) + b"\x00"
 (td / "ne_ok.exe").write_bytes(mz_prefix(0x40 + len(ok_blob), 0x40) + ok_blob)
+
+def write_ne(name, align=0, sector=0, resource=None, module=b"", description=b""):
+    """MZ stub plus one NE segment. align is the uint16 at NE offset 0x32."""
+    seg = struct.pack("<4H", sector, 16, 0, 16)
+    cursor = 64 + len(seg)
+    rsrctab = 0
+    res_bytes = b""
+    if resource is not None:
+        rsrctab = cursor
+        ashift, roff, rlen = resource
+        res_bytes = struct.pack("<H", ashift)
+        res_bytes += struct.pack("<HHI", 0x800A, 1, 0)
+        res_bytes += struct.pack("<6H", roff, rlen, 0, 0x8001, 0, 0)
+        res_bytes += struct.pack("<H", 0)
+        cursor += len(res_bytes)
+    restab = cursor
+    if module:
+        resident = bytes([len(module)]) + module + struct.pack("<H", 0) + b"\x00"
+    else:
+        resident = b"\x00"
+    cursor += len(resident)
+    nrestab = 0
+    nr = b""
+    if description:
+        nrestab = 0x40 + cursor
+        nr = bytes([len(description)]) + description
+    ne_img = bytearray(64)
+    ne_img[0:2] = b"NE"
+    struct.pack_into("<H", ne_img, 0x1C, 1)
+    struct.pack_into("<H", ne_img, 0x22, 64)
+    struct.pack_into("<H", ne_img, 0x24, rsrctab)
+    struct.pack_into("<H", ne_img, 0x26, restab)
+    struct.pack_into("<I", ne_img, 0x2C, nrestab)
+    struct.pack_into("<H", ne_img, 0x32, align)
+    blob = bytes(ne_img) + seg + res_bytes + resident + nr
+    (td / name).write_bytes(mz_prefix(0x40 + len(blob), 0x40) + blob)
+
+write_ne("ne_align9.exe", align=9, sector=1)
+write_ne("ne_align70.exe", align=70, sector=1)
+write_ne("ne_res70.exe", align=9, sector=1, resource=(70, 1, 1))
+write_ne(
+    "ne_json_quote.exe",
+    align=9,
+    sector=1,
+    module=b'A"B',
+    description=b'say "hi"' + bytes([0x5C, 0x0A]),
+)
 
 # Bug 9: normal MZ with known paragraph alloc, checksum, overlay, extra tail.
 body = b"\x90" * 32
@@ -339,13 +386,126 @@ check ne_ok_not_mz_only bash -c "
   ! grep -q 'DOS File Size' '$TD/ne_ok.out'
 "
 
+make -C "$ROOT" asan
+
+check ne_align9_sector512 bash -c "
+  set -euo pipefail
+  err=\$(mktemp)
+  out=\$(mktemp)
+  set +e
+  UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+    '$ROOT/dumpexe-asan' '$TD/ne_align9.exe' >\"\$out\" 2>\"\$err\"
+  rc=\$?
+  set -e
+  if grep -q 'runtime error: shift' \"\$err\"; then
+    echo 'shift ub:' >&2
+    cat \"\$err\" >&2
+    exit 1
+  fi
+  if [[ \$rc -ne 0 ]]; then
+    echo \"asan exit \$rc\" >&2
+    cat \"\$err\" >&2
+    exit 1
+  fi
+  grep -q 'sector size 512' \"\$out\"
+  grep -q '200h' \"\$out\"
+  grep -q 'New Executable (NE)' \"\$out\"
+  ! grep -q 'out of range' \"\$out\"
+  rm -f \"\$err\" \"\$out\"
+"
+
+check ne_align70_out_of_range bash -c "
+  set -euo pipefail
+  err=\$(mktemp)
+  out=\$(mktemp)
+  set +e
+  UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+    '$ROOT/dumpexe-asan' '$TD/ne_align70.exe' >\"\$out\" 2>\"\$err\"
+  rc=\$?
+  set -e
+  if grep -q 'runtime error: shift' \"\$err\"; then
+    echo 'shift ub:' >&2
+    cat \"\$err\" >&2
+    exit 1
+  fi
+  if [[ \$rc -ne 0 ]]; then
+    echo \"asan exit \$rc\" >&2
+    cat \"\$err\" >&2
+    exit 1
+  fi
+  grep -q 'Warning: NE sector alignment shift 70 is out of range' \"\$err\"
+  grep -q 'out of range' \"\$out\"
+  grep -q 'New Executable (NE)' \"\$out\"
+  ! grep -q 'sector size' \"\$out\"
+  rm -f \"\$err\" \"\$out\"
+"
+
+check ne_resource_align70_out_of_range bash -c "
+  set -euo pipefail
+  err=\$(mktemp)
+  out=\$(mktemp)
+  set +e
+  UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+    '$ROOT/dumpexe-asan' '$TD/ne_res70.exe' >\"\$out\" 2>\"\$err\"
+  rc=\$?
+  set -e
+  if grep -q 'runtime error: shift' \"\$err\"; then
+    echo 'shift ub:' >&2
+    cat \"\$err\" >&2
+    exit 1
+  fi
+  if [[ \$rc -ne 0 ]]; then
+    echo \"asan exit \$rc\" >&2
+    cat \"\$err\" >&2
+    exit 1
+  fi
+  grep -q 'Warning: NE resource alignment shift 70 is out of range' \"\$err\"
+  grep -q 'RCDATA' \"\$out\"
+  grep -q 'off=0h' \"\$out\"
+  grep -q 'len=0h' \"\$out\"
+  grep -q 'New Executable (NE)' \"\$out\"
+  rm -f \"\$err\" \"\$out\"
+"
+
+check ne_json_module_quote bash -c "
+  set -euo pipefail
+  err=\$(mktemp)
+  out=\$(mktemp)
+  set +e
+  UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+    '$ROOT/dumpexe-asan' --json '$TD/ne_json_quote.exe' >\"\$out\" 2>\"\$err\"
+  rc=\$?
+  set -e
+  if grep -q 'runtime error: shift' \"\$err\"; then
+    echo 'shift ub:' >&2
+    cat \"\$err\" >&2
+    exit 1
+  fi
+  if [[ \$rc -ne 0 ]]; then
+    echo \"asan exit \$rc\" >&2
+    cat \"\$err\" >&2
+    exit 1
+  fi
+  python3 - \"\$out\" '$TD/ne_json_quote.exe' << 'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d[\"module\"] == 'A\"B', d.get(\"module\")
+assert '\"' in d[\"module\"]
+desc = d[\"description\"]
+assert desc == 'say \"hi\"' + chr(0x5C) + \"\\n\", repr(desc)
+assert '\"' in desc and \"\\\\\" in desc and \"\\n\" in desc
+assert d[\"file\"] == sys.argv[2], d.get(\"file\")
+PY
+  rm -f \"\$err\" \"\$out\"
+"
+
 json_mz_22() {
   "$BIN" --json "$TD/mz_json.exe" >"$TD/mz.json"
   python3 - "$TD/mz.json" << 'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["tool"] == "dumpexe", d.get("tool")
-assert d["version"] == "2.4", d.get("version")
+assert d["version"] == "2.5", d.get("version")
 mz = d["mz"]
 assert mz["extra_bytes"] == 10, mz.get("extra_bytes")
 assert mz["min_alloc"] == 14, mz.get("min_alloc")
@@ -383,7 +543,7 @@ json_com_entry() {
   python3 - "$TD/com.json" "$TD/com_psp_flag.json" << 'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert d["version"] == "2.4"
+assert d["version"] == "2.5"
 assert d["format"] == "com"
 assert d["com"]["file_size"] == 1
 assert d["com"]["entry_ip"] == "0100"
@@ -417,7 +577,7 @@ check json_com_psp json_com_psp
 check version_capstone bash -c "
   set -euo pipefail
   '$BIN' -v >'$TD/ver.txt'
-  grep -q 'dumpexe 2.4' '$TD/ver.txt'
+  grep -q 'dumpexe 2.5' '$TD/ver.txt'
   grep -Eq 'Capstone[[:space:]]+[0-9]+\\.[0-9]+' '$TD/ver.txt'
 "
 
