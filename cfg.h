@@ -127,9 +127,23 @@ struct CfgGraph {
 // Helpers
 //=============================================================================
 
+/**
+ * @brief True for a direct far call or jump.
+ *
+ * Capstone prints `lcall 0x60, 0x2368` / `ljmp 0x60:0x1234` with operand 0 as
+ * the segment immediate. That value is not a near IP in this segment.
+ *
+ * @param m Lowercase mnemonic.
+ * @return true for `lcall`, `ljmp`, `callf`, or `jmpf`.
+ */
+static inline bool cfg_is_far_xfer(std::string_view m)
+{
+    return m == "lcall" || m == "ljmp" || m == "callf" || m == "jmpf";
+}
+
 static inline bool cfg_is_jcc(std::string_view m) {
     if (m.size() < 2 || m[0] != 'j') return false;
-    if (m == "jmp" || m == "jecxz") return false;
+    if (m == "jmp" || m == "jecxz" || cfg_is_far_xfer(m)) return false;
     // jcxz is a jcc-like
     return true;
 }
@@ -372,7 +386,9 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             };
 
             if (cfg_is_uncond_jmp(mnem)) {
-                imm_ip(0);
+                // Far ljmp/jmpf: do not enqueue the segment, and do not fall through.
+                if (!cfg_is_far_xfer(mnem))
+                    imm_ip(0);
                 break;
             }
             if (cfg_is_jcc(mnem) || mnem == "jcxz" || mnem == "loop" ||
@@ -407,7 +423,9 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                 }
                 if (!looks_data)
                     enqueue(next);
-                if (follow_calls)
+                // Far lcall/callf still falls through above. Operand 0 is the
+                // segment, not a near target in this image.
+                if (follow_calls && !cfg_is_far_xfer(mnem))
                     imm_ip(0);
                 break;
             }
@@ -668,7 +686,9 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             };
 
             if (cfg_is_uncond_jmp(mnem)) {
-                if (!edge_imm(table_slots.count(L) ? CfgEdgeKind::Table
+                // Far jump: no near edge to the segment, and no fall-through.
+                if (cfg_is_far_xfer(mnem) ||
+                    !edge_imm(table_slots.count(L) ? CfgEdgeKind::Table
                                                    : CfgEdgeKind::Jump)) {
                     CfgEdge e;
                     e.kind = CfgEdgeKind::Jump;
@@ -687,7 +707,9 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                 blk.outs.push_back(f);
                 stop = true;
             } else if (cfg_is_call(mnem)) {
-                if (!edge_imm(CfgEdgeKind::Call)) {
+                // Far call keeps the fall-through edge below, but operand 0
+                // (the segment) is not a near call target.
+                if (cfg_is_far_xfer(mnem) || !edge_imm(CfgEdgeKind::Call)) {
                     CfgEdge e;
                     e.kind = CfgEdgeKind::Call;
                     e.has_target = false;

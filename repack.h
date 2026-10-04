@@ -3,7 +3,8 @@
  * @brief Rebuild a runnable MZ/COM image from dumpexe export .asm (db lines).
  *
  * Default product policy: after TP/JWASM export, also write <stem>.repack.exe
- * (disable with --no-repack). Offline: parse REPACK-V1 header embedded in .asm.
+ * (disable with --no-repack). An existing default .repack.exe is kept unless
+ * --repack-output names a path. Offline: parse REPACK-V1 header embedded in .asm.
  */
 #ifndef REPACK_H
 #define REPACK_H
@@ -11,12 +12,14 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <format>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 #include "options.h"
@@ -283,6 +286,22 @@ static inline bool repack_extract_meta(std::string_view text,
 // Write EXE
 //=============================================================================
 
+/**
+ * @brief True when @p path already names something on disk.
+ *
+ * Default `<stem>.asm` and `<stem>.repack.exe` outputs are not opened when
+ * this is true. A path named with `-o` or `--repack-output` may still replace
+ * an existing file.
+ *
+ * @param path Candidate output path.
+ * @return true if the path exists (file, directory, or followed symlink).
+ */
+static inline bool output_file_exists(const std::string& path)
+{
+    std::error_code ec;
+    return std::filesystem::exists(path, ec);
+}
+
 static inline std::string repack_default_path(const std::string& input_path)
 {
     if (input_path.empty())
@@ -373,6 +392,18 @@ static inline bool repack_auto(const Options& opts,
     if (!opts.writeRepack)
         return true;
 
+    const std::string path = opts.repackOutputPath.empty()
+                                 ? repack_default_path(input_path)
+                                 : opts.repackOutputPath;
+    // Default <stem>.repack.exe is kept. Skipping is success: the export ran,
+    // and the caller must not also print "repack: failed".
+    if (opts.repackOutputPath.empty() && output_file_exists(path))
+    {
+        std::cerr << "repack: refuse to overwrite '" << path
+                  << "' (pass --repack-output=PATH to replace it)\n";
+        return true;
+    }
+
     std::string err;
     std::vector<uint8_t> image;
     if (!repack_parse_image_from_asm(asm_text, image, err))
@@ -401,9 +432,6 @@ static inline bool repack_auto(const Options& opts,
     }
 
     auto exe = repack_build_exe(prefix, image, suffix);
-    std::string path = opts.repackOutputPath.empty()
-                           ? repack_default_path(input_path)
-                           : opts.repackOutputPath;
 
     if (!repack_write_file(path, exe, err))
     {

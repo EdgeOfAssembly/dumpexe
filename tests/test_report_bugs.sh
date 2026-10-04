@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for dumpexe 2.2 report/header bugs.
+# Regression tests for dumpexe 2.3 report/header bugs.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="${DUMPEXE_BIN:-$ROOT/dumpexe}"
@@ -292,7 +292,7 @@ json_mz_22() {
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["tool"] == "dumpexe", d.get("tool")
-assert d["version"] == "2.2", d.get("version")
+assert d["version"] == "2.3", d.get("version")
 mz = d["mz"]
 assert mz["extra_bytes"] == 10, mz.get("extra_bytes")
 assert mz["min_alloc"] == 14, mz.get("min_alloc")
@@ -330,7 +330,7 @@ json_com_entry() {
   python3 - "$TD/com.json" "$TD/com_psp_flag.json" << 'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert d["version"] == "2.2"
+assert d["version"] == "2.3"
 assert d["format"] == "com"
 assert d["com"]["file_size"] == 1
 assert d["com"]["entry_ip"] == "0100"
@@ -364,7 +364,7 @@ check json_com_psp json_com_psp
 check version_capstone bash -c "
   set -euo pipefail
   '$BIN' -v >'$TD/ver.txt'
-  grep -q 'dumpexe 2.2' '$TD/ver.txt'
+  grep -q 'dumpexe 2.3' '$TD/ver.txt'
   grep -Eq 'Capstone[[:space:]]+[0-9]+\\.[0-9]+' '$TD/ver.txt'
 "
 

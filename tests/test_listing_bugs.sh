@@ -30,6 +30,10 @@ p.joinpath("JCCMID.COM").write_bytes(bytes.fromhex("B8341274FC"))
 # je +1 lands inside the next instruction (mov ax, 0x1234). Fall-through
 # must keep B8 34 12; the interior byte must not become xor al, 0x12.
 p.joinpath("JCCFWD.COM").write_bytes(bytes.fromhex("7401B83412C3"))
+# Near call to the ret, then far lcall (seg 0x60 is inside the PSP hole),
+# nop (far-call fall-through), far ljmp (must not fall into mov ax), ret.
+p.joinpath("FARCALL.COM").write_bytes(bytes.fromhex(
+    "e80e009a6823600090ea78564000b83412c3"))
 PY
 
 fail=0
@@ -256,6 +260,166 @@ if not re.search(r"\bmov\s+ax,\s*0x1234\b", text, re.I):
     sys.exit(1)
 print("jcc forward ok")
 PY
+
+# Far lcall: Capstone operand 0 is the segment. Keep seg,off text; do not
+# invent func_<segment>. Far call falls through; far jmp does not.
+# Near call in the same image still gets a func_ label.
+"$BIN" -d -o - --no-repack --no-asm-file "$TD/FARCALL.COM" >"$TD/far.txt" 2>"$TD/far.err"
+check far_lcall_keeps_seg_off python3 - "$TD/far.txt" "$TD/FARCALL.asm" << 'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+asm = sys.argv[2]
+import os
+if os.path.exists(asm):
+    print(" -o - still wrote", asm)
+    sys.exit(1)
+if not re.search(r"\blcall\b", text, re.I):
+    print("missing lcall")
+    print(text)
+    sys.exit(1)
+if not re.search(r"0x60\b", text, re.I) or not re.search(r"0x2368\b", text, re.I):
+    print("lcall segment/offset text missing")
+    print(text)
+    sys.exit(1)
+if "func_0060" in text or "func_0040" in text:
+    print("far segment was turned into a near func_ label")
+    print(text)
+    sys.exit(1)
+if not re.search(r"\bljmp\b", text, re.I):
+    print("missing ljmp (far call did not fall through)")
+    print(text)
+    sys.exit(1)
+if not re.search(r"0x40:0x5678", text, re.I):
+    print("ljmp seg:off text missing")
+    print(text)
+    sys.exit(1)
+if not re.search(r"\bnop\b", text, re.I):
+    print("missing nop after far call")
+    print(text)
+    sys.exit(1)
+if re.search(r"\bmov\s+ax,\s*0x1234\b", text, re.I):
+    print("far jmp fell through into mov ax")
+    print(text)
+    sys.exit(1)
+if not re.search(r"\bcall\s+func_0111\b", text):
+    print("near call label was lost")
+    print(text)
+    sys.exit(1)
+if not re.search(r"(?m)^func_0111:", text):
+    print("near call target label missing")
+    print(text)
+    sys.exit(1)
+print("far lcall ok")
+PY
+
+# Default <stem>.asm is kept. -o PATH may replace that same file.
+mkdir -p "$TD/ow"
+printf 'KEEP\n' > "$TD/ow/t.asm"
+printf '\xc3' > "$TD/ow/t.com"
+"$BIN" -d "$TD/ow/t.com" >"$TD/ow/stdout.txt" 2>"$TD/ow/err.txt"
+check asm_refuse_default python3 - "$TD/ow/t.asm" "$TD/ow/err.txt" "$TD/ow/stdout.txt" << 'PY'
+import sys
+asm, err_p, out_p = sys.argv[1:]
+body = open(asm, encoding="utf-8").read()
+if body != "KEEP\n":
+    print("default asm was overwritten:", repr(body[:80]))
+    sys.exit(1)
+err = open(err_p, encoding="utf-8", errors="replace").read()
+want = f"listing: refuse to overwrite '{asm}'"
+if want not in err:
+    print("missing", want)
+    print(err)
+    sys.exit(1)
+out = open(out_p, encoding="utf-8", errors="replace").read()
+if "Multi-pass assembly listing" not in out:
+    print("listing did not stay on stdout")
+    sys.exit(1)
+print("asm refuse ok")
+PY
+
+"$BIN" -d -o "$TD/ow/t.asm" "$TD/ow/t.com" >"$TD/ow/stdout2.txt" 2>"$TD/ow/err2.txt"
+check asm_o_may_replace python3 - "$TD/ow/t.asm" "$TD/ow/err2.txt" << 'PY'
+import sys
+asm, err_p = sys.argv[1:]
+body = open(asm, encoding="utf-8", errors="replace").read()
+if body == "KEEP\n" or "KEEP" == body.strip() and "func_" not in body:
+    print(" -o did not replace t.asm:", repr(body[:80]))
+    sys.exit(1)
+if "func_0100" not in body:
+    print("replaced asm has no listing")
+    print(body[:400])
+    sys.exit(1)
+err = open(err_p, encoding="utf-8", errors="replace").read()
+if "refuse to overwrite" in err:
+    print(" -o was refused:", err)
+    sys.exit(1)
+print("asm -o replace ok")
+PY
+
+check help_keeps_default_outputs bash -c "$BIN -h 2>&1 | grep -q 'unless -o or --repack-output'"
+
+# Repack: existing default <stem>.repack.exe is kept. --repack-output may replace.
+CAT="$ROOT/games/catacomb/bin/CATACOMB.EXE"
+if [[ ! -f "$CAT" ]]; then
+  echo "FAIL repack_fixture_missing"
+  fail=$((fail + 1))
+else
+  mkdir -p "$TD/re"
+  cp -f "$CAT" "$TD/re/CATACOMB.EXE"
+  "$BIN" -d "$TD/re/CATACOMB.EXE" >/dev/null 2>"$TD/re/err1.txt"
+  cp -f "$TD/re/CATACOMB.repack.exe" "$TD/re/first.repack.exe"
+  "$BIN" -d "$TD/re/CATACOMB.EXE" >/dev/null 2>"$TD/re/err2.txt"
+  check repack_refuse_default python3 - "$TD/re" << 'PY'
+import pathlib, sys
+re = pathlib.Path(sys.argv[1])
+first = (re / "first.repack.exe").read_bytes()
+second = (re / "CATACOMB.repack.exe").read_bytes()
+if first != second:
+    print("default repack bytes changed", len(first), len(second))
+    sys.exit(1)
+if len(first) < 64:
+    print("repack output too small")
+    sys.exit(1)
+err = (re / "err2.txt").read_text(encoding="utf-8", errors="replace")
+want = "repack: refuse to overwrite '" + str(re / "CATACOMB.repack.exe") + "'"
+if want not in err:
+    print("missing", want)
+    print(err)
+    sys.exit(1)
+if "repack: failed" in err:
+    print("refuse also printed repack: failed")
+    print(err)
+    sys.exit(1)
+print("repack refuse ok", len(first))
+PY
+  printf 'KEEP' > "$TD/re/named.exe"
+  "$BIN" -d --repack-output="$TD/re/named.exe" "$TD/re/CATACOMB.EXE" >/dev/null 2>"$TD/re/err3.txt"
+  check repack_named_overwrite python3 - "$TD/re" << 'PY'
+import pathlib, sys
+re = pathlib.Path(sys.argv[1])
+named = (re / "named.exe").read_bytes()
+if named.startswith(b"KEEP") or named == b"KEEP":
+    print("--repack-output did not replace named.exe")
+    sys.exit(1)
+if not named.startswith(b"MZ"):
+    print("named.exe is not an MZ image")
+    sys.exit(1)
+kept = (re / "CATACOMB.repack.exe").read_bytes()
+first = (re / "first.repack.exe").read_bytes()
+if kept != first:
+    print("named repack rewrote the default file")
+    sys.exit(1)
+err = (re / "err3.txt").read_text(encoding="utf-8", errors="replace")
+if "repack: failed" in err:
+    print(err)
+    sys.exit(1)
+if "repack: wrote" not in err:
+    print("missing repack: wrote")
+    print(err)
+    sys.exit(1)
+print("repack named overwrite ok", len(named))
+PY
+fi
 
 echo "---"
 echo "passed=$pass failed=$fail"

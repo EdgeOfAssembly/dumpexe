@@ -614,6 +614,7 @@ static inline void show_usage(const char* progname) {
         "  --no-asm-file       Do not write .asm file (listing still on stdout unless --json)\n"
         "  --no-repack         Do not write <stem>.repack.exe after TP/JWASM export (default: on)\n"
         "  --repack-output=P   Override repack EXE path (implies repack on)\n"
+        "  Note: existing default <stem>.asm or <stem>.repack.exe is kept unless -o or --repack-output names it.\n"
         "  --cfg               Build/print static CFG + INT/string xref annotations\n"
         "  --cfg-interesting   Only print interesting-block summary/detail (no full dump)\n"
         "  --cfg-no-insns      CFG edges/tags only (no per-block disassembly)\n"
