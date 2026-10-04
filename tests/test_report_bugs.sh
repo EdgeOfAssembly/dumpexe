@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for dumpexe 2.3 report/header bugs.
+# Regression tests for dumpexe 2.4 report/header bugs.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="${DUMPEXE_BIN:-$ROOT/dumpexe}"
@@ -140,11 +140,64 @@ near_hdr = struct.pack("<14H", 0x5A4D, (32 + len(near)) % 512, 1, 0, 2, 0,
                        0xFFFF, 0, 0x200, 0, 0, 0, 0x1C, 0).ljust(32, b"\x00")
 (td / "tp_portions90.exe").write_bytes(near_hdr + near)
 
-# PKLITE banner.
+# PKLITE banner only. String starts at file 0x20. CS and IP stay 0.
 pk = b"PKLITE Copr. 1990 PKWARE"
 pk_hdr = struct.pack("<14H", 0x5A4D, (32 + len(pk)) % 512, 1, 0, 2, 0, 0xFFFF,
                      0, 0x200, 0, 0, 0, 0x1C, 0).ljust(32, b"\x00")
-(td / "pklite.exe").write_bytes(pk_hdr + pk)
+pk_blob = pk_hdr + pk
+assert pk_blob[0x20:0x26] == b"PKLITE"
+(td / "pklite.exe").write_bytes(pk_blob)
+
+def build_mz(image, crlc=0, paras=2, sp=0x200, ip=0, cs=0,
+             lfarlc=0x1C, ovno=0, at_1c=b""):
+    header_bytes = paras * 16
+    if header_bytes < 0x1C + len(at_1c):
+        raise SystemExit("header too small for marker")
+    total = header_bytes + len(image)
+    final_len = total % 512
+    num_blocks = (total + 511) // 512
+    if total % 512 == 0:
+        final_len = 0
+    hdr = bytearray(header_bytes)
+    struct.pack_into(
+        "<14H", hdr, 0,
+        0x5A4D, final_len, num_blocks, crlc, paras,
+        0, 0xFFFF, 0, sp, 0, ip, cs & 0xFFFF, lfarlc, ovno)
+    hdr[0x1C:0x1C + len(at_1c)] = at_1c
+    return bytes(hdr) + image
+
+# Structural PKLITE 1.12: header longer than 32 bytes, second prologue at entry.
+pklite_pat = bytes([0xB8, 0x3C, 0x28, 0xBA, 0xCF, 0x08, 0x05, 0x00, 0x00, 0x3B, 0x06])
+(td / "pklite_112.exe").write_bytes(build_mz(
+    pklite_pat + b"\x90" * 16,
+    crlc=0, paras=4, sp=0x200, ip=0x100, cs=0xFFF0,
+    lfarlc=0x1C, ovno=0, at_1c=struct.pack("<H", 0x310C)))
+
+lz_stub = bytes([0x06, 0x0E, 0x1F, 0x8B]) + b"\x90" * 8
+(td / "lz91.exe").write_bytes(build_mz(
+    lz_stub, crlc=0, paras=2, ip=0, cs=0, lfarlc=0x1C, ovno=0, at_1c=b"LZ91"))
+(td / "lz09.exe").write_bytes(build_mz(
+    lz_stub, crlc=0, paras=2, ip=0, cs=0, lfarlc=0x1C, ovno=0, at_1c=b"LZ09"))
+# LZ91 at 0x1C but the entry stub is not 06 0E 1F 8B.
+(td / "lz91_nostub.exe").write_bytes(build_mz(
+    b"\x90" * 8, crlc=0, paras=2, ip=0, cs=0, lfarlc=0x1C, ovno=0, at_1c=b"LZ91"))
+# Same stub, but e_crlc != 0, so the header gate fails.
+(td / "lz91_relocs.exe").write_bytes(build_mz(
+    lz_stub, crlc=1, paras=2, ip=0, cs=0, lfarlc=0x1C, ovno=0, at_1c=b"LZ91"))
+
+# EXEPACK: IP 16, RB at EP-2, epilog inside [EP+200, EP+300). No English sentence.
+ex_image = bytearray(16 + 220 + 7)
+ex_image[14] = 0x52
+ex_image[15] = 0x42
+ex_image[16 + 220:16 + 220 + 7] = bytes([0xCD, 0x21, 0xB8, 0xFF, 0x4C, 0xCD, 0x21])
+(td / "exepack.exe").write_bytes(build_mz(
+    bytes(ex_image), crlc=0, paras=2, sp=0x80, ip=16, cs=0,
+    lfarlc=0x1C, ovno=0))
+
+# The English stub sentence with an IP that is neither 16 nor 18.
+(td / "exepack_sentence.exe").write_bytes(build_mz(
+    b"Packed file is corrupt", crlc=0, paras=2, sp=0x200, ip=9, cs=0,
+    lfarlc=0x1C, ovno=0))
 
 # Borland C++ literal banner (MZ).
 bc = b"Borland C++"
@@ -292,7 +345,7 @@ json_mz_22() {
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["tool"] == "dumpexe", d.get("tool")
-assert d["version"] == "2.3", d.get("version")
+assert d["version"] == "2.4", d.get("version")
 mz = d["mz"]
 assert mz["extra_bytes"] == 10, mz.get("extra_bytes")
 assert mz["min_alloc"] == 14, mz.get("min_alloc")
@@ -330,7 +383,7 @@ json_com_entry() {
   python3 - "$TD/com.json" "$TD/com_psp_flag.json" << 'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert d["version"] == "2.3"
+assert d["version"] == "2.4"
 assert d["format"] == "com"
 assert d["com"]["file_size"] == 1
 assert d["com"]["entry_ip"] == "0100"
@@ -364,14 +417,61 @@ check json_com_psp json_com_psp
 check version_capstone bash -c "
   set -euo pipefail
   '$BIN' -v >'$TD/ver.txt'
-  grep -q 'dumpexe 2.3' '$TD/ver.txt'
+  grep -q 'dumpexe 2.4' '$TD/ver.txt'
   grep -Eq 'Capstone[[:space:]]+[0-9]+\\.[0-9]+' '$TD/ver.txt'
 "
 
 check pklite_fingerprint bash -c "
   set -euo pipefail
   '$BIN' '$TD/pklite.exe' >'$TD/pk.out'
-  grep -q 'Packer:      PKLITE' '$TD/pk.out'
+  if grep -qx 'Packer:      PKLITE' '$TD/pk.out'; then
+    echo 'banner-only MZ reported Packer PKLITE' >&2
+    exit 1
+  fi
+"
+
+check pklite_structural bash -c "
+  set -euo pipefail
+  '$BIN' '$TD/pklite_112.exe' >'$TD/pk112.out'
+  grep -qx 'Packer:      PKLITE 1.12' '$TD/pk112.out'
+"
+
+check lzexe_091_and_090 bash -c "
+  set -euo pipefail
+  '$BIN' '$TD/lz91.exe' >'$TD/lz91.out'
+  '$BIN' '$TD/lz09.exe' >'$TD/lz09.out'
+  grep -qx 'Packer:      LZEXE 0.91' '$TD/lz91.out'
+  grep -qx 'Packer:      LZEXE 0.90' '$TD/lz09.out'
+"
+
+check lzexe_gate_reject bash -c "
+  set -euo pipefail
+  '$BIN' '$TD/lz91_nostub.exe' >'$TD/lz91_nostub.out'
+  '$BIN' '$TD/lz91_relocs.exe' >'$TD/lz91_relocs.out'
+  if grep -q 'LZEXE' '$TD/lz91_nostub.out' || grep -q 'LZEXE' '$TD/lz91_relocs.out'; then
+    echo 'LZEXE matched without every gate' >&2
+    exit 1
+  fi
+"
+
+check exepack_structural bash -c "
+  set -euo pipefail
+  '$BIN' '$TD/exepack.exe' >'$TD/exepack.out'
+  grep -qx 'Packer:      Microsoft EXEPACK' '$TD/exepack.out'
+  grep -q 'RB at file' '$TD/exepack.out'
+  if grep -q 'Packed file is corrupt' '$TD/exepack.out'; then
+    echo 'EXEPACK evidence used the English sentence' >&2
+    exit 1
+  fi
+"
+
+check exepack_sentence_not_enough bash -c "
+  set -euo pipefail
+  '$BIN' '$TD/exepack_sentence.exe' >'$TD/exepack_sentence.out'
+  if grep -q 'EXEPACK' '$TD/exepack_sentence.out'; then
+    echo 'English sentence alone reported EXEPACK' >&2
+    exit 1
+  fi
 "
 
 check borland_cpp_fingerprint bash -c "
