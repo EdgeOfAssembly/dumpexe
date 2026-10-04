@@ -9,9 +9,10 @@
  *   1. Decode via CFG build (block IR)
  *   2. Annotate INT / tags from cfg_annotate
  *   3. Discover proc starts → symbols func_<IP>
- *   4. Emit: labels, rewritten call/jmp, blank line after proc regions
+ *   4. Emit: labels, rewritten near call/jmp/jcc, blank line after proc regions
  *
  * Default: also write <stem>.asm (disable with --no-asm-file). -o overrides path.
+ * An existing default .asm is kept; -o PATH may replace the named file.
  */
 #ifndef LISTING_H
 #define LISTING_H
@@ -70,17 +71,23 @@ static inline std::string listing_symbol_name(uint16_t ip)
 /**
  * @brief True for a near control transfer whose operand is a code target.
  *
+ * Far `lcall` / `ljmp` / `callf` / `jmpf` are excluded. Their Capstone text is
+ * `seg, off` or `seg:off`; operand 0 is the segment and must not become
+ * `func_<segment>`.
+ *
  * @param m Lowercase mnemonic (`call`, `jmp`, `je`, `loop`, …).
  * @return true when the operand should be a label or an IP, not a linear address.
  */
 static inline bool listing_is_near_xfer(std::string_view m)
 {
-    if (m == "call" || m == "jmp" || m == "ljmp" || m == "lcall" || m == "callf" ||
-        m == "jmpf" || m == "loop" || m == "loope" || m == "loopz" || m == "loopne" ||
-        m == "loopnz" || m == "jcxz" || m == "jecxz")
+    if (cfg_is_far_xfer(m))
+        return false;
+    if (m == "call" || m == "jmp" || m == "loop" || m == "loope" || m == "loopz" ||
+        m == "loopne" || m == "loopnz" || m == "jcxz" || m == "jecxz")
     {
         return true;
     }
+    // `jmpf` starts with 'j' but is far; cfg_is_far_xfer already rejected it.
     return m.size() >= 2 && m[0] == 'j';
 }
 
@@ -220,6 +227,11 @@ static inline std::string listing_rewrite_ops(std::string_view mnem,
     for (char& c : m)
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
+    // Far transfers keep Capstone's segment/offset text. Do not rewrite them
+    // to a near label (including `jmpf`, which starts with 'j').
+    if (cfg_is_far_xfer(m))
+        return std::string(op_str);
+
     // word ptr / byte ptr — leave memory ops alone
     std::string op(op_str);
     if (op.find('[') != std::string::npos)
@@ -248,8 +260,10 @@ static inline std::string listing_rewrite_ops(std::string_view mnem,
     }
 
     // use edge: entire operand becomes the label for near call/jmp/jcc/loop.
-    if (m == "call" || m == "jmp" || m.starts_with("j") || m == "loop" || m == "loope" ||
-        m == "loopz" || m == "loopne" || m == "loopnz")
+    // `jmpf` starts with 'j' but is far and was returned above.
+    if (!cfg_is_far_xfer(m) &&
+        (m == "call" || m == "jmp" || m.starts_with("j") || m == "loop" || m == "loope" ||
+         m == "loopz" || m == "loopne" || m == "loopnz"))
         return sym.at(edge_tgt);
 
     return op;
@@ -1045,6 +1059,12 @@ static inline void listing_deliver(const Options& opts,
         }
         if (opts.outputPath.empty() && !opts.writeAsmFile)
             return;
+        // Default <stem>.asm is kept. A path the user named with -o may replace.
+        if (opts.outputPath.empty() && output_file_exists(path))
+        {
+            std::cerr << "listing: refuse to overwrite '" << path << "'\n";
+            return;
+        }
         std::ofstream f(path);
         if (!f)
         {
