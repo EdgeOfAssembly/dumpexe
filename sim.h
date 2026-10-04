@@ -10,12 +10,8 @@
 #define SIM_H
 
 #include <array>
-#include <cctype>
-#include <cstdio>
 #include <cstring>
-#include <filesystem>
 #include <format>
-#include <fstream>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -24,6 +20,8 @@
 #include <cstdint>
 #include <algorithm>
 #include <capstone/capstone.h>
+
+#include "sim_path.h"
 
 #include "exe.h"
 #include "registers.h"
@@ -105,21 +103,24 @@ struct SimMemory {
 };
 
 //=============================================================================
-// Open host files for FCB / handle stubs
+// Guest files (in-memory map only — never the host filesystem)
 //=============================================================================
 
+/// One simulated read or write transfers at most this many bytes.
+inline constexpr size_t kSimIoCap = 65536;
+
 struct SimFile {
-    std::FILE* fp = nullptr;
-    std::string path;
+    std::string path;       ///< Map key: accepted path, ASCII letters uppercased.
+    uint32_t cursor = 0;    ///< Next byte offset for sequential FCB I/O.
     uint32_t rec_size = 128;
-    uint32_t seq_rec = 0;
 };
 
 struct SimState {
     SimMemory mem;
     uint16_t image_seg = 0;
     uint16_t psp_seg = 0;
-    std::filesystem::path host_dir;   ///< directory of the guest EXE (for FCB opens)
+    /// Guest file bytes keyed by the uppercased accepted path. Not host files.
+    std::unordered_map<std::string, std::vector<uint8_t>> guest_files;
     std::unordered_map<uint32_t, SimFile> fcb_files; // key = linear FCB addr
     std::unordered_map<uint16_t, SimFile> handle_files; // DOS handles
     uint16_t next_handle = 5;
@@ -384,9 +385,88 @@ static inline std::string sim_fcb_name(SimState& st, uint16_t seg, uint16_t off)
     return n + "." + e;
 }
 
-static inline void sim_fcb_to_lower(std::string& s) {
-    for (char& c : s)
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+/// Accept @p raw via sim_guest_path_ok and build the uppercase map key.
+static inline bool sim_guest_accept(const std::string& raw, std::string& key) {
+    if (!sim_guest_path_ok(raw.c_str()))
+        return false;
+    key.clear();
+    key.reserve(raw.size());
+    for (unsigned char c : raw) {
+        if (c >= 'a' && c <= 'z')
+            c = static_cast<unsigned char>(c - 'a' + 'A');
+        key.push_back(static_cast<char>(c));
+    }
+    return sim_guest_path_ok(key.c_str());
+}
+
+static inline std::string sim_read_asciiz(SimState& st, uint16_t seg, uint16_t off,
+                                          int limit) {
+    std::string name;
+    for (int i = 0; i < limit; ++i) {
+        char c = static_cast<char>(st.mem.read8(seg, off));
+        if (c == 0)
+            break;
+        name.push_back(c);
+        off = static_cast<uint16_t>(off + 1);
+    }
+    return name;
+}
+
+static inline uint16_t sim_fcb_rec_size(SimState& st, uint16_t seg, uint16_t off) {
+    uint16_t rec = st.mem.read16(seg, static_cast<uint16_t>(off + 0x0E));
+    if (rec == 0)
+        rec = 128;
+    return rec;
+}
+
+static inline uint32_t sim_fcb_random_rec(SimState& st, uint16_t seg, uint16_t off) {
+    return static_cast<uint32_t>(st.mem.read8(seg, static_cast<uint16_t>(off + 0x21)))
+         | (static_cast<uint32_t>(st.mem.read8(seg, static_cast<uint16_t>(off + 0x22))) << 8)
+         | (static_cast<uint32_t>(st.mem.read8(seg, static_cast<uint16_t>(off + 0x23))) << 16);
+}
+
+/// Copy at most @p want bytes from the guest file into DOS memory.
+/// @p want must already be <= kSimIoCap. Does not allocate.
+static inline size_t sim_guest_read_mem(SimState& st, const std::vector<uint8_t>& data,
+                                        uint32_t cursor, uint16_t seg, uint16_t off,
+                                        size_t want) {
+    if (want == 0 || static_cast<uint64_t>(cursor) >= data.size())
+        return 0;
+    size_t avail = data.size() - static_cast<size_t>(cursor);
+    size_t n = want < avail ? want : avail;
+    for (size_t i = 0; i < n; ++i) {
+        st.mem.write8(seg, static_cast<uint16_t>(off + static_cast<uint16_t>(i)),
+                      data[static_cast<size_t>(cursor) + i]);
+    }
+    return n;
+}
+
+/// Copy at most @p want bytes from DOS memory into the guest file.
+/// Grows the file by at most kSimIoCap bytes. A cursor past EOF writes nothing
+/// (no guest-controlled hole allocation).
+static inline size_t sim_guest_write_mem(SimState& st, std::vector<uint8_t>& data,
+                                         uint32_t cursor, uint16_t seg, uint16_t off,
+                                         size_t want) {
+    if (want == 0 || static_cast<uint64_t>(cursor) > data.size())
+        return 0;
+    if (want > kSimIoCap)
+        want = kSimIoCap;
+    size_t cur = static_cast<size_t>(cursor);
+    size_t max_end = cur + want;
+    if (max_end < cur)
+        return 0;
+    if (max_end > data.size()) {
+        size_t growth = max_end - data.size();
+        if (growth > kSimIoCap) {
+            want = (data.size() - cur) + kSimIoCap;
+            max_end = cur + want;
+        }
+        data.resize(max_end, 0);
+    }
+    for (size_t i = 0; i < want; ++i) {
+        data[cur + i] = st.mem.read8(seg, static_cast<uint16_t>(off + static_cast<uint16_t>(i)));
+    }
+    return want;
 }
 
 //=============================================================================
@@ -526,40 +606,29 @@ static inline void sim_int21(SimState& st, const Options& opts) {
         CF = 0;
         return;
 
-    case 0x0F: { // FCB open
-        std::string name = sim_fcb_name(st, DS, DX);
-        sim_fcb_to_lower(name);
-        auto path = st.host_dir / name;
-        // Also try uppercase original path components
-        uint32_t key = SimMemory::linear(DS, DX);
-        SimFile sf;
-        sf.path = path.string();
-        sf.fp = std::fopen(path.string().c_str(), "rb");
-        if (!sf.fp) {
-            // try as-is from FCB without lower
-            std::string n2 = sim_fcb_name(st, DS, DX);
-            path = st.host_dir / n2;
-            sf.path = path.string();
-            sf.fp = std::fopen(path.string().c_str(), "rb");
-        }
-        if (!sf.fp) {
+    case 0x0F: { // FCB open — guest map only
+        std::string raw = sim_fcb_name(st, DS, DX);
+        std::string gkey;
+        uint32_t slot = SimMemory::linear(DS, DX);
+        if (!sim_guest_accept(raw, gkey) || !st.guest_files.contains(gkey)) {
             AL = 0xFF;
-            log_int(std::format("FCB open '{}' → FAIL (looked in {})", name, st.host_dir.string()));
+            log_int(std::format("FCB open '{}' → FAIL", raw));
         } else {
-            AL = 0;
-            // Default record size
+            SimFile sf;
+            sf.path = gkey;
+            sf.cursor = 0;
+            st.fcb_files[slot] = sf;
             st.mem.write16(DS, static_cast<uint16_t>(DX + 0x0E), 128);
-            st.fcb_files[key] = sf;
-            log_int(std::format("FCB open '{}' → OK ({})", name, sf.path));
+            AL = 0;
+            log_int(std::format("FCB open '{}' → OK", gkey));
         }
         return;
     }
 
     case 0x10: { // FCB close
-        uint32_t key = SimMemory::linear(DS, DX);
-        auto it = st.fcb_files.find(key);
+        uint32_t slot = SimMemory::linear(DS, DX);
+        auto it = st.fcb_files.find(slot);
         if (it != st.fcb_files.end()) {
-            if (it->second.fp) std::fclose(it->second.fp);
             log_int(std::format("FCB close '{}'", it->second.path));
             st.fcb_files.erase(it);
             AL = 0;
@@ -571,87 +640,117 @@ static inline void sim_int21(SimState& st, const Options& opts) {
     }
 
     case 0x14:   // sequential read
+    case 0x15:   // sequential write
     case 0x21:   // random read
-    case 0x27: { // random block read
-        uint32_t key = SimMemory::linear(DS, DX);
-        auto it = st.fcb_files.find(key);
-        if (it == st.fcb_files.end() || !it->second.fp) {
+    case 0x22:   // random write
+    case 0x27:   // random block read
+    case 0x28: { // random block write
+        const bool is_write = (ah == 0x15 || ah == 0x22 || ah == 0x28);
+        uint32_t slot = SimMemory::linear(DS, DX);
+        auto it = st.fcb_files.find(slot);
+        if (it == st.fcb_files.end() ||
+            !sim_guest_path_ok(it->second.path.c_str())) {
             AL = 1;
-            log_int("FCB read → no open FCB");
+            log_int(is_write ? "FCB write → no open FCB" : "FCB read → no open FCB");
             return;
         }
-        uint16_t rec_size = st.mem.read16(DS, static_cast<uint16_t>(DX + 0x0E));
-        if (rec_size == 0) rec_size = 128;
-        uint16_t recs = (ah == 0x27) ? CX : 1;
-        uint32_t bytes = static_cast<uint32_t>(recs) * rec_size;
+        auto git = st.guest_files.find(it->second.path);
+        if (git == st.guest_files.end()) {
+            AL = 1;
+            log_int(is_write ? "FCB write → missing guest file"
+                             : "FCB read → missing guest file");
+            return;
+        }
+        uint16_t rec_size = sim_fcb_rec_size(st, DS, DX);
+        const bool block = (ah == 0x27 || ah == 0x28);
+        uint16_t recs = block ? CX : 1;
+        uint64_t requested = static_cast<uint64_t>(recs) * static_cast<uint64_t>(rec_size);
+        bool capped = requested > kSimIoCap;
+        size_t want = capped ? kSimIoCap : static_cast<size_t>(requested);
 
-        // Random record number at FCB+0x21 (3 bytes) for 0x21/0x27
-        if (ah == 0x21 || ah == 0x27) {
-            uint32_t rec =
-                st.mem.read8(DS, static_cast<uint16_t>(DX + 0x21)) |
-                (static_cast<uint32_t>(st.mem.read8(DS, static_cast<uint16_t>(DX + 0x22))) << 8) |
-                (static_cast<uint32_t>(st.mem.read8(DS, static_cast<uint16_t>(DX + 0x23))) << 16);
-            std::fseek(it->second.fp, static_cast<long>(rec * rec_size), SEEK_SET);
+        uint32_t cursor = it->second.cursor;
+        if (ah == 0x21 || ah == 0x22 || ah == 0x27 || ah == 0x28) {
+            uint64_t pos = static_cast<uint64_t>(sim_fcb_random_rec(st, DS, DX))
+                         * static_cast<uint64_t>(rec_size);
+            if (pos > 0xFFFFFFFFu) {
+                AL = 1;
+                if (block)
+                    CX = 0;
+                log_int(std::format("FCB {} '{}' → partial (record past 4GiB)",
+                                    is_write ? "write" : "read", it->second.path));
+                return;
+            }
+            cursor = static_cast<uint32_t>(pos);
         }
 
-        std::vector<uint8_t> buf(bytes);
-        size_t n = std::fread(buf.data(), 1, bytes, it->second.fp);
-        // Write into DTA
-        for (size_t i = 0; i < n; ++i)
-            st.mem.write8(st.dta_seg, static_cast<uint16_t>(st.dta_off + i), buf[i]);
-
-        if (ah == 0x27)
-            CX = static_cast<uint16_t>(n / rec_size);
-        AL = (n < bytes) ? 1 : 0; // 1 = EOF partial
-        log_int(std::format("FCB read {} bytes from '{}' → DTA {:04X}:{:04X} (AL={})",
-                            n, it->second.path, st.dta_seg, st.dta_off, AL));
+        size_t n = is_write
+            ? sim_guest_write_mem(st, git->second, cursor, st.dta_seg, st.dta_off, want)
+            : sim_guest_read_mem(st, git->second, cursor, st.dta_seg, st.dta_off, want);
+        if (static_cast<uint64_t>(cursor) + n <= 0xFFFFFFFFu)
+            it->second.cursor = static_cast<uint32_t>(static_cast<uint64_t>(cursor) + n);
+        bool partial = capped || static_cast<uint64_t>(n) < requested;
+        if (block) {
+            uint64_t got = rec_size == 0 ? 0 : n / rec_size;
+            if (got > 0xFFFF)
+                got = 0xFFFF;
+            CX = static_cast<uint16_t>(got);
+        }
+        AL = partial ? 1 : 0;
+        log_int(std::format("FCB {} {} bytes {} '{}' → DTA {:04X}:{:04X} (AL={})",
+                            is_write ? "write" : "read", n,
+                            is_write ? "to" : "from",
+                            it->second.path, st.dta_seg, st.dta_off, AL));
         return;
     }
 
-    case 0x16: { // FCB create
-        std::string name = sim_fcb_name(st, DS, DX);
-        sim_fcb_to_lower(name);
-        auto path = st.host_dir / name;
-        uint32_t key = SimMemory::linear(DS, DX);
-        SimFile sf;
-        sf.path = path.string();
-        sf.fp = std::fopen(path.string().c_str(), "wb+");
-        if (!sf.fp) {
+    case 0x16: { // FCB create — truncates the guest map entry, not a host file
+        std::string raw = sim_fcb_name(st, DS, DX);
+        std::string gkey;
+        uint32_t slot = SimMemory::linear(DS, DX);
+        if (!sim_guest_accept(raw, gkey)) {
             AL = 0xFF;
-            log_int(std::format("FCB create '{}' → FAIL", name));
+            log_int(std::format("FCB create '{}' → FAIL", raw));
         } else {
-            AL = 0;
+            st.guest_files[gkey].clear();
+            SimFile sf;
+            sf.path = gkey;
+            sf.cursor = 0;
+            st.fcb_files[slot] = sf;
             st.mem.write16(DS, static_cast<uint16_t>(DX + 0x0E), 128);
-            st.fcb_files[key] = sf;
-            log_int(std::format("FCB create '{}' → OK", name));
+            AL = 0;
+            log_int(std::format("FCB create '{}' → OK", gkey));
         }
         return;
     }
 
-    case 0x3D: { // handle open DS:DX asciiz, AL mode
-        std::string name;
-        uint16_t off = DX;
-        for (int i = 0; i < 128; ++i) {
-            char c = static_cast<char>(st.mem.read8(DS, off));
-            if (c == 0) break;
-            name.push_back(c);
-            off = static_cast<uint16_t>(off + 1);
+    case 0x3C:   // handle create (truncate)
+    case 0x3D: { // handle open DS:DX asciiz
+        std::string raw = sim_read_asciiz(st, DS, DX, 128);
+        std::string gkey;
+        if (!sim_guest_accept(raw, gkey)) {
+            CF = 1;
+            AX = 3;
+            log_int(std::format("handle {} '{}' → FAIL",
+                                ah == 0x3C ? "create" : "open", raw));
+            return;
         }
-        auto path = st.host_dir / name;
-        const char* mode = (AL & 1) ? "rb+" : "rb";
-        std::FILE* fp = std::fopen(path.string().c_str(), mode);
-        if (!fp) {
-            CF = 1; AX = 2; // file not found
-            log_int(std::format("handle open '{}' → FAIL", name));
-        } else {
-            uint16_t h = st.next_handle++;
-            SimFile sf;
-            sf.fp = fp;
-            sf.path = path.string();
-            st.handle_files[h] = sf;
-            AX = h; CF = 0;
-            log_int(std::format("handle open '{}' → handle {:04X}h", name, h));
+        if (ah == 0x3C) {
+            st.guest_files[gkey].clear();
+        } else if (!st.guest_files.contains(gkey)) {
+            CF = 1;
+            AX = 2;
+            log_int(std::format("handle open '{}' → FAIL", raw));
+            return;
         }
+        uint16_t h = st.next_handle++;
+        SimFile sf;
+        sf.path = gkey;
+        sf.cursor = 0;
+        st.handle_files[h] = sf;
+        AX = h;
+        CF = 0;
+        log_int(std::format("handle {} '{}' → handle {:04X}h",
+                            ah == 0x3C ? "create" : "open", gkey, h));
         return;
     }
 
@@ -661,7 +760,6 @@ static inline void sim_int21(SimState& st, const Options& opts) {
             CF = 1; AX = 6;
             log_int(std::format("handle close {:04X}h → FAIL", BX));
         } else {
-            if (it->second.fp) std::fclose(it->second.fp);
             log_int(std::format("handle close {:04X}h ({})", BX, it->second.path));
             st.handle_files.erase(it);
             CF = 0;
@@ -669,20 +767,38 @@ static inline void sim_int21(SimState& st, const Options& opts) {
         return;
     }
 
-    case 0x3F: { // read BX handle, CX bytes, DS:DX buffer
+    case 0x3F:   // read BX handle, CX bytes, DS:DX buffer
+    case 0x40: { // write BX handle, CX bytes, DS:DX buffer
+        const bool is_write = (ah == 0x40);
         auto it = st.handle_files.find(BX);
-        if (it == st.handle_files.end() || !it->second.fp) {
+        if (it == st.handle_files.end() ||
+            !sim_guest_path_ok(it->second.path.c_str())) {
             CF = 1; AX = 6;
-            log_int("handle read → bad handle");
+            log_int(is_write ? "handle write → bad handle" : "handle read → bad handle");
             return;
         }
-        std::vector<uint8_t> buf(CX);
-        size_t n = std::fread(buf.data(), 1, CX, it->second.fp);
-        for (size_t i = 0; i < n; ++i)
-            st.mem.write8(DS, static_cast<uint16_t>(DX + i), buf[i]);
-        AX = static_cast<uint16_t>(n); CF = 0;
-        log_int(std::format("handle read {} bytes from '{}' -> DS:{:04X}",
-                            n, it->second.path, DX));
+        auto git = st.guest_files.find(it->second.path);
+        if (git == st.guest_files.end()) {
+            CF = 1; AX = 6;
+            log_int(is_write ? "handle write → missing guest file"
+                             : "handle read → missing guest file");
+            return;
+        }
+        uint64_t requested = CX;
+        bool capped = requested > kSimIoCap;
+        size_t want = capped ? kSimIoCap : static_cast<size_t>(requested);
+        uint32_t cursor = it->second.cursor;
+        size_t n = is_write
+            ? sim_guest_write_mem(st, git->second, cursor, DS, DX, want)
+            : sim_guest_read_mem(st, git->second, cursor, DS, DX, want);
+        if (static_cast<uint64_t>(cursor) + n <= 0xFFFFFFFFu)
+            it->second.cursor = static_cast<uint32_t>(static_cast<uint64_t>(cursor) + n);
+        AX = static_cast<uint16_t>(n > 0xFFFF ? 0xFFFF : n);
+        CF = 0;
+        log_int(std::format("handle {} {} bytes {} '{}' -> DS:{:04X}",
+                            is_write ? "write" : "read", n,
+                            is_write ? "to" : "from",
+                            it->second.path, DX));
         return;
     }
 
@@ -1530,6 +1646,8 @@ static inline bool sim_exec_insn(SimState& st, Options& opts) {
 // Main run loop
 //=============================================================================
 
+static inline void sim_execute(SimState& st, Options& opts);
+
 static inline void sim_run_mz(Options& opts,
                               const MZHeader& header,
                               const std::vector<uint8_t>& fileData,
@@ -1539,8 +1657,6 @@ static inline void sim_run_mz(Options& opts,
     SimState st;
     st.image_seg = opts.loadBase;
     st.psp_seg = static_cast<uint16_t>(opts.loadBase - 0x0010);
-    st.host_dir = std::filesystem::path(opts.filename).parent_path();
-    if (st.host_dir.empty()) st.host_dir = ".";
     st.dta_seg = st.psp_seg;
     st.dta_off = 0x80;
 
@@ -1564,10 +1680,53 @@ static inline void sim_run_mz(Options& opts,
     SI = DI = BP = 0;
     FLAGS = 0x0202; // IF set-ish + reserved bit1
 
+    sim_execute(st, opts);
+}
+
+/// Load a .COM image (PSP at the load segment, code at IP 0100h) and execute.
+/// Guest file I/O uses the in-memory map only. @p entry_offset is 0 when the
+/// file has no embedded PSP, or >= 0x100 when the file already contains one.
+static inline void sim_run_com(Options& opts,
+                               const std::vector<uint8_t>& fileData,
+                               size_t entry_offset) {
+    SimState st;
+    st.image_seg = opts.loadBase;
+    st.psp_seg = opts.loadBase;
+    st.dta_seg = st.psp_seg;
+    st.dta_off = 0x80;
+
+    st.mem.write8(st.psp_seg, 0x00, 0xCD);
+    st.mem.write8(st.psp_seg, 0x01, 0x20);
+    st.mem.write16(st.psp_seg, 0x02, 0xA000);
+    st.mem.write8(st.psp_seg, 0x80, 0);
+    st.mem.write8(st.psp_seg, 0x81, 0x0D);
+
+    const bool embedded_psp = entry_offset >= 0x100;
+    const uint32_t base = embedded_psp ? 0u : 0x100u;
+    for (size_t i = 0; i < fileData.size(); ++i) {
+        uint32_t a = (static_cast<uint32_t>(st.psp_seg) * 16u + base
+                      + static_cast<uint32_t>(i)) & 0xFFFFFu;
+        st.mem.ram[a] = fileData[i];
+    }
+
+    CS = opts.loadBase;
+    DS = opts.loadBase;
+    ES = opts.loadBase;
+    SS = opts.loadBase;
+    IP = 0x0100;
+    SP = 0xFFFE;
+    AX = BX = CX = DX = 0;
+    SI = DI = BP = 0;
+    FLAGS = 0x0202;
+
+    sim_execute(st, opts);
+}
+
+static inline void sim_execute(SimState& st, Options& opts) {
     if (!opts.simQuiet) {
         std::cout << "Load Image Segment: " << hex_format(st.image_seg, 4) << "\n";
         std::cout << "PSP Segment:        " << hex_format(st.psp_seg, 4) << "\n";
-        std::cout << "Host file dir:      " << st.host_dir.string() << "\n";
+        std::cout << "Guest files:        in-memory only (no host file I/O)\n";
         std::cout << "Max instructions:   " << opts.maxInsns << "\n";
         std::cout << "Loop limit:         " << opts.loopLimit
                   << (opts.loopLimit == 0 ? " (disabled)" : " back-edges then skip")
@@ -1660,12 +1819,6 @@ static inline void sim_run_mz(Options& opts,
         st.halt_reason = "max-insns reached";
         st.halted = true;
     }
-
-    // Close host files
-    for (auto& kv : st.fcb_files)
-        if (kv.second.fp) std::fclose(kv.second.fp);
-    for (auto& kv : st.handle_files)
-        if (kv.second.fp) std::fclose(kv.second.fp);
 
     std::cout << "\n=== Simulation stopped ===\n";
     std::cout << "Reason: " << st.halt_reason << "\n";

@@ -131,8 +131,7 @@ static inline void print_com_info(const Options& opts,
 // COM Simulation
 //=============================================================================
 
-/// Simulate DOS loading a .COM file and show initial register state plus a
-/// best-effort Capstone register trace of the first ~20 instructions.
+/// Execute a .COM under the real-mode simulator (in-memory guest files only).
 ///
 /// @param opts         Parsed CLI options.
 /// @param data         Full file contents.
@@ -143,66 +142,18 @@ static inline void run_com_simulation(const Options& opts,
     std::cout << "\n========================================\n";
     std::cout << "=== DOS LOAD SIMULATION (.COM) ===\n";
     std::cout << "========================================\n";
-    std::cout << "Note: Best-effort; .COM PSP setup is simplified.\n";
-    std::cout << "Load Base Segment: " << hex_format(opts.loadBase, 4) << "\n\n";
+    std::cout << "Note: Guest file I/O stays inside the simulator "
+                 "and does not read or write the host.\n";
 
-    // DOS sets all segment registers to the load segment for .COM programs.
-    CS = opts.loadBase;
-    DS = opts.loadBase;
-    ES = opts.loadBase;
-    SS = opts.loadBase;
-    IP = COM_ENTRY_IP;          // Always 0x0100 in memory
-    SP = 0xFFFE;                // Stack grows down from top of segment
-    AX = 0; BX = 0; CX = 0; DX = 0;
-    SI = 0; DI = 0; BP = 0;
-    FLAGS = 0x0002;
-
-    std::cout << "Initial Register State:\n";
-    std::cout << "  CS:IP = " << hex_format(CS, 4) << ":" << hex_format(IP, 4) << "\n";
-    std::cout << "  SS:SP = " << hex_format(SS, 4) << ":" << hex_format(SP, 4) << "\n";
-    std::cout << "  DS    = " << hex_format(DS, 4) << "\n";
-    std::cout << "  ES    = " << hex_format(ES, 4) << "\n";
-    std::cout << "  FLAGS = " << hex_format(FLAGS, 4) << "\n\n";
-
-    if (entry_offset >= data.size()) {
-        std::cout << "Register tracing skipped: entry offset ("
+    if (entry_offset > data.size()) {
+        std::cout << "Simulation skipped: entry offset ("
                   << entry_offset << ") is beyond file size ("
                   << data.size() << ").\n";
         return;
     }
 
-    std::cout << "=== Register Tracing ===\n";
-    std::cout << "Note: Best-effort trace for common instructions.\n\n";
-
-    csh handle;
-    if (cs_open(CS_ARCH_X86, CS_MODE_16, &handle) != CS_ERR_OK) {
-        std::cerr << "Error: Failed to initialize Capstone disassembler\n";
-        return;
-    }
-    cs_option(handle, CS_OPT_DETAIL, CS_OPT_ON);
-
-    size_t codeSize = std::min((size_t)128, data.size() - entry_offset);
-    const uint8_t* code = data.data() + entry_offset;
-    // Linear address = CS*16 + IP
-    uint32_t entryLinear = static_cast<uint32_t>(CS) * 16u + IP;
-
-    cs_insn* insn = nullptr;
-    size_t count = cs_disasm(handle, code, codeSize, entryLinear, 20, &insn);
-
-    if (count > 0) {
-        for (size_t i = 0; i < count; i++) {
-            std::cout << std::format("{:04x}: {}", insn[i].address & 0xFFFF,
-                                     insn[i].mnemonic);
-            if (insn[i].op_str[0]) std::cout << " " << insn[i].op_str;
-
-            std::string comment = trace_comment(handle, &insn[i], opts.noIntAnnot);
-            if (!comment.empty()) std::cout << "  " << comment;
-
-            std::cout << "\n";
-        }
-        cs_free(insn, count);
-    }
-    cs_close(&handle);
+    Options opts_mut = opts;
+    sim_run_com(opts_mut, data, entry_offset);
 }
 
 //=============================================================================

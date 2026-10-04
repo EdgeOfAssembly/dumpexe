@@ -39,7 +39,7 @@ CAPSTONE_LIBS   := $(shell pkg-config --libs capstone 2>/dev/null)
 
 all: dumpexe
 
-HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h listing.h cfg.h analysis.h sim.h sys.h sys_analysis.h com.h com_analysis.h ne.h ne_shift.h ne_analysis.h dos_extender.h strings.h pascal_mt.h turbo_pascal.h toolchain.h symbols.h repack.h json_escape.h json_report.h
+HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h listing.h cfg.h analysis.h sim.h sim_path.h sys.h sys_analysis.h com.h com_analysis.h ne.h ne_shift.h ne_analysis.h dos_extender.h strings.h pascal_mt.h turbo_pascal.h toolchain.h symbols.h repack.h json_escape.h json_report.h
 
 ne_shift.o: ne_shift.c ne_shift.h
 	$(CC) $(CFLAGS_NE) -O2 -c ne_shift.c -o ne_shift.o
@@ -47,13 +47,19 @@ ne_shift.o: ne_shift.c ne_shift.h
 ne_shift-asan.o: ne_shift.c ne_shift.h
 	$(CC) $(CFLAGS_NE) -O1 -g -fsanitize=address,undefined -c ne_shift.c -o ne_shift-asan.o
 
-dumpexe: dumpexe.cpp ne_shift.o $(HEADERS)
-	$(CXX) $(CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe dumpexe.cpp ne_shift.o $(CAPSTONE_LIBS)
+sim_path.o: sim_path.c sim_path.h
+	$(CC) $(CFLAGS_NE) -O2 -c sim_path.c -o sim_path.o
+
+sim_path-asan.o: sim_path.c sim_path.h
+	$(CC) $(CFLAGS_NE) -O1 -g -fsanitize=address,undefined -c sim_path.c -o sim_path-asan.o
+
+dumpexe: dumpexe.cpp ne_shift.o sim_path.o $(HEADERS)
+	$(CXX) $(CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe dumpexe.cpp ne_shift.o sim_path.o $(CAPSTONE_LIBS)
 	@echo "Built dumpexe with Capstone disassembly support"
 
 # ASan/UBSan cannot link -static. Capstone comes from pkg-config, shared.
-dumpexe-asan: dumpexe.cpp ne_shift-asan.o $(HEADERS)
-	$(CXX) $(ASAN_CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe-asan dumpexe.cpp ne_shift-asan.o $(CAPSTONE_LIBS)
+dumpexe-asan: dumpexe.cpp ne_shift-asan.o sim_path-asan.o $(HEADERS)
+	$(CXX) $(ASAN_CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe-asan dumpexe.cpp ne_shift-asan.o sim_path-asan.o $(CAPSTONE_LIBS)
 	@echo "Built dumpexe-asan (address,undefined)"
 
 asan: dumpexe-asan
@@ -83,3 +89,5 @@ tests: test
 verify: test
 	$(HOME)/.local/bin/cbmc ne_shift.c formal/harness_ne_shift.c \
 	  --bounds-check --pointer-check --unwind 2 --unwinding-assertions
+	$(HOME)/.local/bin/cbmc sim_path.c formal/harness_sim_path.c \
+	  --bounds-check --pointer-check --unwind 8 --unwinding-assertions

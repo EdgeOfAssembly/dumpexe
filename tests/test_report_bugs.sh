@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for dumpexe 2.5 report/header bugs.
+# Regression tests for dumpexe 2.6 report/header bugs.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="${DUMPEXE_BIN:-$ROOT/dumpexe}"
@@ -505,7 +505,7 @@ json_mz_22() {
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["tool"] == "dumpexe", d.get("tool")
-assert d["version"] == "2.5", d.get("version")
+assert d["version"] == "2.6", d.get("version")
 mz = d["mz"]
 assert mz["extra_bytes"] == 10, mz.get("extra_bytes")
 assert mz["min_alloc"] == 14, mz.get("min_alloc")
@@ -543,7 +543,7 @@ json_com_entry() {
   python3 - "$TD/com.json" "$TD/com_psp_flag.json" << 'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert d["version"] == "2.5"
+assert d["version"] == "2.6"
 assert d["format"] == "com"
 assert d["com"]["file_size"] == 1
 assert d["com"]["entry_ip"] == "0100"
@@ -577,7 +577,7 @@ check json_com_psp json_com_psp
 check version_capstone bash -c "
   set -euo pipefail
   '$BIN' -v >'$TD/ver.txt'
-  grep -q 'dumpexe 2.5' '$TD/ver.txt'
+  grep -q 'dumpexe 2.6' '$TD/ver.txt'
   grep -Eq 'Capstone[[:space:]]+[0-9]+\\.[0-9]+' '$TD/ver.txt'
 "
 
@@ -650,6 +650,110 @@ ICON="$ROOT/games/icon-quest-for-the-ring/ICON/ICON.EXE"
 if [[ -f "$ICON" ]]; then
   check icon_not_turbo_c bash -c "! '$BIN' '$ICON' | grep -q 'Turbo C'"
 fi
+
+# Guest file I/O stays in the simulator. COMs are hand-built (no DOSBox, no TPC).
+python3 - "$TD" << 'PY'
+import sys
+from pathlib import Path
+td = Path(sys.argv[1])
+
+def emit(name, hexbytes):
+    (td / name).write_bytes(bytes.fromhex(hexbytes))
+
+# FCB-create VICTIM.TXT (8.3). Must not truncate a host file of that name.
+emit("victim.com",
+     "ba1001b416cd21b44ccd2190909090900056494354494d2020545854"
+     "00000000000000000000000000000000000000000000000000")
+# FCB-create ../escap.txt (name "../escap" + ext "txt") and handle-open
+# /etc/hostname, then print whatever a read returned.
+emit("escape.com",
+     "ba3001b416cd21ba550130c0b43dcd2189c3b94000ba6301b43fcd21ba63"
+     "01b409cd21b44ccd21909090909090909090002e2e2f6573636170747874"
+     "000000000000000000000000000000000000000000000000002f6574632f"
+     "686f73746e616d6500000000000000000000000000000000000000000000"
+     "000000000000000000000000000000000000000000000000000000000000"
+     "0000000000000000000000000024")
+# Create NEWFILE.TXT, write MAPDATA!$, clobber the buffer, read it back, print.
+emit("newfile.com",
+     "ba8001b416cd21ba0002b41acd21ba8001b415cd21b05abf0002b90800f3"
+     "aaba8001b421cd21ba0002b409cd21b44ccd219090909090909090909090"
+     "909090909090909090909090909090909090909090909090909090909090"
+     "909090909090909090909090909090909090909090909090909090909090"
+     "9090909090909090004e455746494c452054585400000000000000000000"
+     "000000000000000000000000000000000000000000000000000000000000"
+     "000000000000000000000000000000000000000000000000000000000000"
+     "000000000000000000000000000000000000000000000000000000000000"
+     "000000000000000000000000000000004d41504441544121244141414141"
+     "414141414141414141414141414141414141414141414141414141414141"
+     "414141414141414141414141414141414141414141414141414141414141"
+     "414141414141414141414141414141414141414141414141414141414141"
+     "414141414141414141414141414141414141414141414141")
+# FCB create + random-block read of 65535 records of 65535 bytes.
+emit("huge.com",
+     "ba2001b416cd21c7062e01ffffb9ffffba2001b427cd21b44ccd2190"
+     "90909090004855474520202020444154000000000000000000000000"
+     "0000000000000000000000000000000000000000")
+PY
+
+check sim_guest_victim bash -c "
+  set -euo pipefail
+  dir='$TD/simvic'
+  mkdir -p \"\$dir\"
+  printf 'HELLO' > \"\$dir/VICTIM.TXT\"
+  cp '$TD/victim.com' \"\$dir/victim.com\"
+  '$BIN' --simulate --max-insns=200 \"\$dir/victim.com\" >'$TD/vic.out'
+  [[ \"\$(cat \"\$dir/VICTIM.TXT\")\" == HELLO ]]
+  [[ ! -e \"\$dir/victim.txt\" ]]
+  names=\$(find \"\$dir\" -type f -printf '%f\n' | sort)
+  [[ \"\$names\" == $'VICTIM.TXT\nvictim.com' ]]
+  grep -F \"FCB create 'VICTIM.TXT'\" '$TD/vic.out' >/dev/null
+"
+
+check sim_guest_escape bash -c "
+  set -euo pipefail
+  box='$TD/simesc'
+  mkdir -p \"\$box/sub\"
+  cp '$TD/escape.com' \"\$box/sub/escape.com\"
+  '$BIN' --simulate --max-insns=400 \"\$box/sub/escape.com\" >'$TD/esc.out'
+  [[ ! -e \"\$box/escap.txt\" ]]
+  [[ ! -e \"\$box/sub/escap.txt\" ]]
+  hn=\$(tr -d '\r\n' < /etc/hostname)
+  [[ -n \"\$hn\" ]]
+  if grep -a -F -q \"\$hn\" '$TD/esc.out'; then
+    echo \"simulate stdout contains host name '\$hn'\" >&2
+    exit 1
+  fi
+  grep -a -F \"FCB create '../escap.txt'\" '$TD/esc.out' >/dev/null
+  grep -a -F \"handle open '/etc/hostname'\" '$TD/esc.out' >/dev/null
+  grep -a -F '→ FAIL' '$TD/esc.out' >/dev/null
+"
+
+check sim_guest_newfile bash -c "
+  set -euo pipefail
+  dir='$TD/simnew'
+  mkdir -p \"\$dir\"
+  cp '$TD/newfile.com' \"\$dir/newfile.com\"
+  '$BIN' --simulate --max-insns=400 \"\$dir/newfile.com\" >'$TD/new.out'
+  [[ ! -e \"\$dir/NEWFILE.TXT\" ]]
+  [[ ! -e \"\$dir/newfile.txt\" ]]
+  names=\$(find \"\$dir\" -type f -printf '%f\n' | sort)
+  [[ \"\$names\" == newfile.com ]]
+  grep -F 'DOS: MAPDATA!' '$TD/new.out' >/dev/null
+"
+
+check sim_guest_huge bash -c "
+  set -euo pipefail
+  dir='$TD/simhuge'
+  mkdir -p \"\$dir\"
+  cp '$TD/huge.com' \"\$dir/huge.com\"
+  # 512 MiB virtual cap: a multi-gigabyte FCB buffer cannot be allocated.
+  bash -c 'ulimit -v 524288; timeout 8 \"\$1\" --simulate --max-insns=200 \"\$2\" >\"\$3\"' \
+    bash '$BIN' \"\$dir/huge.com\" '$TD/huge.out'
+  [[ ! -e \"\$dir/HUGE.DAT\" ]]
+  [[ ! -e \"\$dir/huge.dat\" ]]
+  grep -F 'FCB read' '$TD/huge.out' >/dev/null
+  grep -F 'DOS terminate' '$TD/huge.out' >/dev/null
+"
 
 echo "---"
 echo "passed=$pass failed=$fail"
