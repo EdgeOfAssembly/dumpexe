@@ -61,7 +61,7 @@ static inline std::string json_escape(std::string_view s)
 struct JsonReport
 {
     std::string tool = "dumpexe";
-    std::string version = "2.3";
+    std::string version = "2.4";
     std::string file;
     std::string format; ///< "mz" | "com" | "sys"
 

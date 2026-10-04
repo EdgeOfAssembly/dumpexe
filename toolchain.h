@@ -7,13 +7,13 @@
  *     (`bin/jwasm/jwasm-1.8.exe` + wlink + exe2bin + com2exe-style wrap).
  *   - JWASM even-padding uses 0xFC (vs TASM 0x00) — weak encoding hint.
  *
- * Also reports packer/compiler banners when the characteristic string is
- * present: PKLITE, LZEXE (LZ91/LZ09 at 0x1C), Microsoft EXEPACK
- * ("Packed file is corrupt"), DIET (signature at 0x1C, file(1) Magdir/msdos),
- * LHarc / "LHA ", Turbo C, Turbo C++, Borland C++, Microsoft C, QuickBASIC,
- * Clipper, TopSpeed, Watcom. BRUN alone is not QuickBASIC. No guessed
- * binary signatures. The same string scan runs for MZ, COM, and SYS.
- * Does not replace Pascal MT+ or Turbo Pascal reports.
+ * Also reports packers and compiler banners. PKLITE, LZEXE, and Microsoft
+ * EXEPACK are structural MZ matches (signed CS, entry in-file), not a
+ * whole-file scan for "PKLITE", "RB", or "Packed file is corrupt".
+ * DIET is the 4-byte stub at file offset 0x1C. LHarc / "LHA ", Turbo C,
+ * Turbo C++, Borland C++, Microsoft C, QuickBASIC, Clipper, TopSpeed, and
+ * Watcom are literal banners. BRUN alone is not QuickBASIC. The same scan
+ * runs for MZ, COM, and SYS. Does not replace Pascal MT+ or Turbo Pascal.
  *
  * Default ON (disable with --no-toolchain). Complements pascal_mt.h.
  */
@@ -50,7 +50,7 @@ struct ToolchainReport
     bool exepack = false;
     bool diet = false;
     bool lharc = false;
-    std::string packer;            ///< PKLITE / LZEXE / Microsoft EXEPACK / DIET / LHarc
+    std::string packer;            ///< PKLITE M.mm / LZEXE 0.91|0.90 / Microsoft EXEPACK / DIET / LHarc
     std::string compiler_fp;       ///< Turbo C / Borland C++ / Microsoft C / …
 
     uint16_t header_bytes = 0;
@@ -132,61 +132,369 @@ static inline size_t toolchain_count_fc_pad_runs(const std::vector<uint8_t>& dat
 // Packer / compiler fingerprints
 //=============================================================================
 
+/// MZ words for the structural packer gates, plus the signed CS:IP file offset.
+struct ToolchainMzLoc
+{
+    bool valid = false;
+    uint16_t e_crlc = 0;
+    uint16_t e_sp = 0;
+    uint16_t e_ip = 0;
+    int16_t e_cs = 0; ///< Signed initial CS, matching Deark regCS.
+    uint16_t e_lfarlc = 0;
+    uint16_t e_ovno = 0;
+    int64_t start = 0;  ///< e_cparhdr * 16
+    int64_t entry = -1; ///< start + int16(e_cs) * 16 + e_ip
+};
+
 /**
- * @brief Record packer and compiler fingerprints from known strings.
+ * @brief Read one little-endian uint16 if both bytes are inside the image.
  *
- * LZEXE and DIET are the 4-byte stubs at file offset 0x1C (file(1)
- * Magdir/msdos: "LZ91", "LZ09", "diet"). PKLITE is the ASCII banner
- * "PKLITE" / "PKLITE Copr." anywhere in the image. Microsoft EXEPACK is the
- * stub text "Packed file is corrupt" (the bare "RB" byte pattern is not
- * used). Compiler hits are literal banners only: "Turbo C++", "Borland C++",
- * "Turbo-C - Copyright", "MS Run-Time Library", "QuickBASIC", "Clipper",
- * "TopSpeed", "Watcom". LHarc is the literal "LHarc" or "LHA " (trailing
- * space). "BRUN" alone is ignored. The first packer and the first compiler
- * name win; later banners are still recorded as evidence.
+ * @param data File bytes.
+ * @param off  Offset of the low byte.
+ * @param out  Receives the value when the read is in range. Unchanged otherwise.
+ * @return True when @p off and the following byte are inside @p data.
+ */
+static inline bool toolchain_read_u16(const std::vector<uint8_t>& data,
+                                      size_t off,
+                                      uint16_t& out)
+{
+    if (off >= data.size() || data.size() - off < 2)
+    {
+        return false;
+    }
+    out = static_cast<uint16_t>(data[off]) |
+          static_cast<uint16_t>(static_cast<uint16_t>(data[off + 1]) << 8);
+    return true;
+}
+
+/**
+ * @brief Parse an MZ header and the file offset of CS:IP.
+ *
+ * CS is a signed int16. The entry is @c e_cparhdr*16 + CS*16 + e_ip, computed
+ * in a wide integer. A missing MZ signature, a short header, a negative entry,
+ * or an entry past the last file byte leaves @c valid false. This does not
+ * scan the file.
+ *
+ * @param data Image bytes.
+ * @return Parsed location. @c valid is false when the entry cannot be used.
+ */
+static inline ToolchainMzLoc toolchain_mz_loc(const std::vector<uint8_t>& data)
+{
+    ToolchainMzLoc mz;
+    if (data.size() < 0x1C)
+    {
+        return mz;
+    }
+    if (data[0] != 0x4D || data[1] != 0x5A)
+    {
+        return mz;
+    }
+
+    uint16_t crlc = 0;
+    uint16_t cpar = 0;
+    uint16_t sp = 0;
+    uint16_t ip = 0;
+    uint16_t cs_raw = 0;
+    uint16_t lfarlc = 0;
+    uint16_t ovno = 0;
+    if (!toolchain_read_u16(data, 0x06, crlc) ||
+        !toolchain_read_u16(data, 0x08, cpar) ||
+        !toolchain_read_u16(data, 0x10, sp) ||
+        !toolchain_read_u16(data, 0x14, ip) ||
+        !toolchain_read_u16(data, 0x16, cs_raw) ||
+        !toolchain_read_u16(data, 0x18, lfarlc) ||
+        !toolchain_read_u16(data, 0x1A, ovno))
+    {
+        return mz;
+    }
+
+    const int16_t cs = static_cast<int16_t>(cs_raw);
+    const int64_t start = static_cast<int64_t>(cpar) * 16;
+    const int64_t entry = start + static_cast<int64_t>(cs) * 16 +
+                          static_cast<int64_t>(ip);
+    if (entry < 0 || static_cast<uint64_t>(entry) >= data.size())
+    {
+        return mz;
+    }
+
+    mz.valid = true;
+    mz.e_crlc = crlc;
+    mz.e_sp = sp;
+    mz.e_ip = ip;
+    mz.e_cs = cs;
+    mz.e_lfarlc = lfarlc;
+    mz.e_ovno = ovno;
+    mz.start = start;
+    mz.entry = entry;
+    return mz;
+}
+
+/**
+ * @brief Compare a byte pattern at a file offset.
+ *
+ * @param data  Image bytes.
+ * @param off   Offset of the first pattern byte. Negative offsets do not match.
+ * @param bytes Expected bytes. Positions whose mask is '?' are not compared.
+ * @param wild  Mask of at least @p n bytes. '?' matches any byte; other
+ *              characters require the corresponding @p bytes value.
+ * @param n     Number of bytes to compare.
+ * @return True when the span is inside @p data and every fixed byte matches.
+ */
+static inline bool toolchain_match_bytes(const std::vector<uint8_t>& data,
+                                         int64_t off,
+                                         const uint8_t* bytes,
+                                         const char* wild,
+                                         size_t n)
+{
+    if (bytes == nullptr || wild == nullptr || n == 0)
+    {
+        return false;
+    }
+    if (off < 0)
+    {
+        return false;
+    }
+    const uint64_t begin = static_cast<uint64_t>(off);
+    if (n > data.size() || begin > static_cast<uint64_t>(data.size()) - n)
+    {
+        return false;
+    }
+    for (size_t i = 0; i < n; ++i)
+    {
+        if (wild[i] == '\0')
+        {
+            return false;
+        }
+        if (wild[i] == '?')
+        {
+            continue;
+        }
+        if (data[static_cast<size_t>(begin) + i] != bytes[i])
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * @brief Find the EXEPACK epilog just after the entry point.
+ *
+ * The seven bytes CD 21 B8 FF 4C CD 21 must start at an offset in
+ * [entry+200, entry+300). No other file range is examined.
+ *
+ * @param data  Image bytes.
+ * @param entry File offset of the DOS entry point.
+ * @return True when the epilog starts in that window and fits in @p data.
+ */
+static inline bool toolchain_find_exepack_epilog(const std::vector<uint8_t>& data,
+                                                 int64_t entry)
+{
+    static constexpr uint8_t kEpilog[] = {
+        0xCD, 0x21, 0xB8, 0xFF, 0x4C, 0xCD, 0x21
+    };
+    static constexpr char kWild[] = "xxxxxxx";
+    static_assert(sizeof(kWild) == sizeof(kEpilog) + 1);
+
+    if (entry < 0)
+    {
+        return false;
+    }
+    const int64_t window = entry + 200;
+    const int64_t window_end = entry + 300;
+    for (int64_t at = window; at < window_end; ++at)
+    {
+        if (toolchain_match_bytes(data, at, kEpilog, kWild, sizeof(kEpilog)))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * @brief Match a normal PKLITE prologue at the entry point.
+ *
+ * Deark flag 0x01 only. Beta and Megalite prologues are not recognized.
+ *
+ * @param data  Image bytes.
+ * @param entry File offset of the DOS entry point.
+ * @return True when one of the four typical PKLITE prologues matches.
+ */
+static inline bool toolchain_pklite_prologue(const std::vector<uint8_t>& data,
+                                             int64_t entry)
+{
+    static constexpr uint8_t kV100[] = {
+        0xB8, 0x00, 0x00, 0xBA, 0x00, 0x00, 0x8C, 0xDB, 0x03, 0xD8, 0x3B
+    };
+    static constexpr char kV100Wild[] = "x??x??xxxxx";
+    static constexpr uint8_t kV112[] = {
+        0xB8, 0x00, 0x00, 0xBA, 0x00, 0x00, 0x05, 0x00, 0x00, 0x3B, 0x06
+    };
+    static constexpr char kV112Wild[] = "x??x??xxxxx";
+    static constexpr uint8_t kV201[] = {
+        0x50, 0xB8, 0x00, 0x00, 0xBA, 0x00, 0x00, 0x05, 0x00, 0x00, 0x3B
+    };
+    static constexpr char kV201Wild[] = "xx??x??xxxx";
+    static constexpr uint8_t kUn2[] = {
+        0x9C, 0xBA, 0x00, 0x00, 0x2D, 0x00, 0x00, 0x81, 0xE1, 0x00, 0x00, 0x81
+    };
+    static constexpr char kUn2Wild[] = "xx?xx?xxx?xx";
+    static_assert(sizeof(kV100Wild) == sizeof(kV100) + 1);
+    static_assert(sizeof(kV112Wild) == sizeof(kV112) + 1);
+    static_assert(sizeof(kV201Wild) == sizeof(kV201) + 1);
+    static_assert(sizeof(kUn2Wild) == sizeof(kUn2) + 1);
+
+    if (toolchain_match_bytes(data, entry, kV100, kV100Wild, sizeof(kV100)))
+    {
+        return true;
+    }
+    if (toolchain_match_bytes(data, entry, kV112, kV112Wild, sizeof(kV112)))
+    {
+        return true;
+    }
+    if (toolchain_match_bytes(data, entry, kV201, kV201Wild, sizeof(kV201)))
+    {
+        return true;
+    }
+    return toolchain_match_bytes(data, entry, kUn2, kUn2Wild, sizeof(kUn2));
+}
+
+/**
+ * @brief Format the PKLITE name from the little-endian info word at file 0x1C.
+ *
+ * The version is the low 12 bits. Major is that value shifted right 8.
+ * Minor is the low 8 bits, printed as two digits. High flag bits are ignored,
+ * so no /l, /s, /e, or /h suffix is appended.
+ *
+ * @param info Little-endian word from file offset 0x1C.
+ * @return "PKLITE" when the 12-bit version is 0, otherwise "PKLITE M.mm".
+ */
+static inline std::string toolchain_pklite_name(uint16_t info)
+{
+    const uint16_t ver = static_cast<uint16_t>(info & 0x0fffu);
+    if (ver == 0)
+    {
+        return "PKLITE";
+    }
+    const unsigned major = static_cast<unsigned>(ver >> 8);
+    const unsigned minor = static_cast<unsigned>(ver & 0xffu);
+    return std::format("PKLITE {}.{:02}", major, minor);
+}
+
+/**
+ * @brief Record structural packer hits and literal compiler banners.
+ *
+ * PKLITE matches only the typical header (e_ip 256, signed CS -16, e_crlc
+ * at most 2, entry at the header end) plus one normal prologue. The version
+ * word is the little-endian value at file 0x1C. An ASCII "PKLITE" banner is
+ * not sufficient.
+ *
+ * LZEXE matches LZ91 or LZ09 at file 0x1C, with e_crlc 0, e_lfarlc 0x1C,
+ * e_ovno 0, and the bytes 06 0E 1F 8B at the entry. LZ91 is "LZEXE 0.91"
+ * and LZ09 is "LZEXE 0.90". LZ90 and the 0.91e leading-50 stub are not
+ * matched.
+ *
+ * Microsoft EXEPACK matches e_crlc 0, e_ip 16 or 18 (not 20), e_sp 0x80,
+ * the bytes 52 42 at entry-2, and the epilog CD 21 B8 FF 4C CD 21 starting
+ * in [entry+200, entry+300). The English sentence "Packed file is corrupt"
+ * is neither required nor sufficient. No stub CRC bypass.
+ *
+ * DIET remains the 4-byte "diet" or "DIET" at file 0x1C. LHarc and the
+ * compiler banners are unchanged literal strings. The first packer name
+ * wins; later hits stay in the evidence list.
  *
  * @param fileData Image bytes.
  * @param rep      Report to fill. Existing fields are left intact.
+ * @return Nothing. Packer flags, @c rep.packer, and evidence are updated in place.
  */
 static inline void toolchain_scan_fingerprints(const std::vector<uint8_t>& fileData,
                                                ToolchainReport& rep)
 {
     size_t off = 0;
-    if (toolchain_find_ascii(fileData, "PKLITE", off))
+    const ToolchainMzLoc mz = toolchain_mz_loc(fileData);
+
+    uint16_t pklite_info = 0;
+    if (mz.valid &&
+        mz.e_ip == 256 &&
+        mz.e_cs == -16 &&
+        mz.e_crlc <= 2 &&
+        mz.entry == mz.start &&
+        toolchain_pklite_prologue(fileData, mz.entry) &&
+        toolchain_read_u16(fileData, 0x1C, pklite_info))
     {
+        const std::string name = toolchain_pklite_name(pklite_info);
         rep.pklite = true;
-        rep.packer = "PKLITE";
-        rep.evidence.push_back(
-            std::format("PKLITE banner at file 0x{:X}", off));
+        if (rep.packer.empty())
+        {
+            rep.packer = name;
+        }
+        rep.evidence.push_back(std::format(
+            "{} entry at file 0x{:X}, version word at file 0x1C",
+            name, static_cast<uint64_t>(mz.entry)));
     }
+
+    static constexpr uint8_t kLzStub[] = {0x06, 0x0E, 0x1F, 0x8B};
+    static constexpr char kLzStubWild[] = "xxxx";
+    static_assert(sizeof(kLzStubWild) == sizeof(kLzStub) + 1);
+    if (mz.valid &&
+        mz.e_crlc == 0 &&
+        mz.e_lfarlc == 0x001C &&
+        mz.e_ovno == 0 &&
+        fileData.size() >= 0x20 &&
+        toolchain_match_bytes(fileData, mz.entry, kLzStub, kLzStubWild,
+                              sizeof(kLzStub)))
+    {
+        const uint8_t* marker = fileData.data() + 0x1C;
+        const bool lz91 = std::memcmp(marker, "LZ91", 4) == 0;
+        const bool lz09 = std::memcmp(marker, "LZ09", 4) == 0;
+        if (lz91 || lz09)
+        {
+            const char* name = lz91 ? "LZEXE 0.91" : "LZEXE 0.90";
+            rep.lzexe = true;
+            if (rep.packer.empty())
+            {
+                rep.packer = name;
+            }
+            rep.evidence.push_back(std::format(
+                "{} marker at file 0x1C, entry at file 0x{:X}",
+                name, static_cast<uint64_t>(mz.entry)));
+        }
+    }
+
     if (fileData.size() >= 0x1C + 4)
     {
         const uint8_t* p = fileData.data() + 0x1C;
-        if (std::memcmp(p, "LZ91", 4) == 0 || std::memcmp(p, "LZ09", 4) == 0)
-        {
-            rep.lzexe = true;
-            if (rep.packer.empty())
-                rep.packer = "LZEXE";
-            rep.evidence.push_back(std::format(
-                "LZEXE signature \"{}{}{}{}\" at file 0x1C",
-                static_cast<char>(p[0]), static_cast<char>(p[1]),
-                static_cast<char>(p[2]), static_cast<char>(p[3])));
-        }
         if (std::memcmp(p, "diet", 4) == 0 || std::memcmp(p, "DIET", 4) == 0)
         {
             rep.diet = true;
             if (rep.packer.empty())
+            {
                 rep.packer = "DIET";
+            }
             rep.evidence.push_back("DIET signature at file 0x1C");
         }
     }
-    if (toolchain_find_ascii(fileData, "Packed file is corrupt", off))
+
+    static constexpr uint8_t kRb[] = {0x52, 0x42};
+    static constexpr char kRbWild[] = "xx";
+    static_assert(sizeof(kRbWild) == sizeof(kRb) + 1);
+    if (mz.valid &&
+        mz.e_crlc == 0 &&
+        (mz.e_ip == 16 || mz.e_ip == 18) &&
+        mz.e_sp == 0x0080 &&
+        toolchain_match_bytes(fileData, mz.entry - 2, kRb, kRbWild, sizeof(kRb)) &&
+        toolchain_find_exepack_epilog(fileData, mz.entry))
     {
         rep.exepack = true;
         if (rep.packer.empty())
+        {
             rep.packer = "Microsoft EXEPACK";
+        }
         rep.evidence.push_back(std::format(
-            "EXEPACK stub \"Packed file is corrupt\" at file 0x{:X}", off));
+            "Microsoft EXEPACK entry at file 0x{:X}, RB at file 0x{:X}",
+            static_cast<uint64_t>(mz.entry),
+            static_cast<uint64_t>(mz.entry - 2)));
     }
     if (toolchain_find_ascii(fileData, "LHarc", off))
     {
@@ -263,13 +571,14 @@ static inline void toolchain_finish_fingerprints(ToolchainReport& rep)
 }
 
 /**
- * @brief String fingerprints only (no MZ layout or JWASM heuristics).
+ * @brief Packer and compiler fingerprints only (no JWASM or COM-in-EXE).
  *
  * COM, SYS, and an MZ already identified as Turbo Pascal use this so a
- * banner is reported without replacing Pascal MT+ or Turbo Pascal.
+ * structural packer or compiler banner is reported without replacing
+ * Pascal MT+ or Turbo Pascal.
  *
  * @param fileData Image bytes.
- * @return Report. @c detected is true when a packer or compiler banner hit.
+ * @return Report. @c detected is true when a packer or compiler hit is recorded.
  */
 static inline ToolchainReport toolchain_fingerprints_only(
     const std::vector<uint8_t>& fileData)
