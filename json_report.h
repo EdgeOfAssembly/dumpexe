@@ -20,39 +20,10 @@
 #include "cfg.h"
 #include "exe.h"
 #include "options.h"
+#include "json_escape.h"
 #include "pascal_mt.h"
 #include "strings.h"
 #include "toolchain.h"
-
-//=============================================================================
-// Escape
-//=============================================================================
-
-static inline std::string json_escape(std::string_view s)
-{
-    std::string o;
-    o.reserve(s.size() + 8);
-    for (unsigned char c : s)
-    {
-        switch (c)
-        {
-        case '"':  o += "\\\""; break;
-        case '\\': o += "\\\\"; break;
-        case '\b': o += "\\b"; break;
-        case '\f': o += "\\f"; break;
-        case '\n': o += "\\n"; break;
-        case '\r': o += "\\r"; break;
-        case '\t': o += "\\t"; break;
-        default:
-            if (c < 0x20)
-                o += std::format("\\u{:04x}", c);
-            else
-                o.push_back(static_cast<char>(c));
-            break;
-        }
-    }
-    return o;
-}
 
 //=============================================================================
 // Report
@@ -61,7 +32,7 @@ static inline std::string json_escape(std::string_view s)
 struct JsonReport
 {
     std::string tool = "dumpexe";
-    std::string version = "2.4";
+    std::string version = "2.5";
     std::string file;
     std::string format; ///< "mz" | "com" | "sys"
 

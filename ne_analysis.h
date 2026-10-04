@@ -12,6 +12,7 @@
 #include "options.h"
 #include "formatting.h"
 #include "disasm.h"
+#include "json_escape.h"
 
 #include <cstdint>
 #include <cstring>
@@ -210,13 +211,45 @@ static inline bool ne_parse(const std::vector<uint8_t>& data, NEParsed& out)
     return true;
 }
 
-/// File offset of segment data (0 if empty sector field).
+/**
+ * @brief Report whether an NE alignment shift count may be applied.
+ *
+ * Real NE linkers use a small shift (commonly 9, a 512-byte sector). A count
+ * above 16 is not a sector size this tool applies. `1u << n` is undefined for
+ * `n >= 32`, and a `size_t` shift is undefined when the count is at least the
+ * width of `size_t`. Callers must not evaluate `<<` when this returns false.
+ *
+ * @param[in] shift Alignment shift from @c NEHeader::align or a resource
+ *                  table's @c align_shift.
+ * @return true when @p shift is usable.
+ * @retval true  @p shift is at most 16 and may be applied.
+ * @retval false @p shift is out of range. Do not shift.
+ */
+static inline bool ne_align_shift_ok(uint16_t shift)
+{
+    return shift <= 16;
+}
+
+/**
+ * @brief File offset of one NE segment's bytes.
+ *
+ * @param[in] hdr NE header. @c hdr.align is the sector shift.
+ * @param[in] seg Segment table entry. @c seg.sector is the sector index.
+ * @return @c size_t(seg.sector) << hdr.align when the sector is non-zero and
+ *         the shift is usable.
+ * @retval 0 @c seg.sector is 0, or @c hdr.align is greater than 16.
+ */
 static inline size_t ne_seg_file_offset(const NEHeader& hdr, const NESegment& seg)
 {
     if (seg.sector == 0)
+    {
         return 0;
-    const unsigned shift = hdr.align;
-    return static_cast<size_t>(seg.sector) << shift;
+    }
+    if (!ne_align_shift_ok(hdr.align))
+    {
+        return 0;
+    }
+    return static_cast<size_t>(seg.sector) << hdr.align;
 }
 
 /// On-disk length of segment (0 in header means 65536).
@@ -253,8 +286,18 @@ static inline void ne_print_header(const NEParsed& ne, int64_t fileSize)
               << std::hex << h.ss << ":" << h.sp << std::dec << "\n";
     std::cout << "Segment count                              " << h.cseg << "\n";
     std::cout << "Module ref count                           " << h.cmod << "\n";
-    std::cout << "Sector alignment shift                     " << h.align
-              << "  (sector size " << (1u << h.align) << ")\n";
+    std::cout << "Sector alignment shift                     " << std::dec
+              << h.align;
+    if (ne_align_shift_ok(h.align))
+    {
+        std::cout << "  (sector size " << (1u << h.align) << ")\n";
+    }
+    else
+    {
+        std::cerr << "Warning: NE sector alignment shift " << std::dec
+                  << h.align << " is out of range\n";
+        std::cout << "  (out of range)\n";
+    }
     std::cout << "Target OS                                  "
               << static_cast<unsigned>(h.exetyp) << " ("
               << ne_exetyp_name(h.exetyp) << ")\n";
@@ -319,7 +362,14 @@ static inline void ne_print_resources(const std::vector<uint8_t>& data,
 
     uint16_t align_shift = 0;
     ne_read_u16(data, rsrctab, align_shift);
-    std::cout << "\n=== Resource table (align_shift=" << align_shift << ") ===\n";
+    std::cout << "\n=== Resource table (align_shift=" << std::dec
+              << align_shift << ") ===\n";
+    const bool align_ok = ne_align_shift_ok(align_shift);
+    if (!align_ok)
+    {
+        std::cerr << "Warning: NE resource alignment shift " << std::dec
+                  << align_shift << " is out of range\n";
+    }
 
     size_t pos = rsrctab + 2;
     while (pos + 8 <= data.size())
@@ -350,10 +400,13 @@ static inline void ne_print_resources(const std::vector<uint8_t>& data,
             std::memcpy(&res, data.data() + pos, sizeof(NEResource));
             pos += sizeof(NEResource);
 
-            const size_t file_off =
-                static_cast<size_t>(res.offset) << align_shift;
-            const size_t file_len =
-                static_cast<size_t>(res.length) << align_shift;
+            size_t file_off = 0;
+            size_t file_len = 0;
+            if (align_ok)
+            {
+                file_off = static_cast<size_t>(res.offset) << align_shift;
+                file_len = static_cast<size_t>(res.length) << align_shift;
+            }
 
             std::string id_label;
             if (res.id & 0x8000u)
@@ -437,7 +490,7 @@ static inline bool analyze_ne(const Options& opts,
         std::cout << "{\n"
                   << "  \"tool\": \"dumpexe\",\n"
                   << "  \"format\": \"ne\",\n"
-                  << "  \"file\": \"" << opts.filename << "\",\n"
+                  << "  \"file\": \"" << json_escape(opts.filename) << "\",\n"
                   << "  \"e_lfanew\": " << ne.e_lfanew << ",\n"
                   << "  \"linker\": \"" << static_cast<unsigned>(ne.hdr.ver)
                   << "." << static_cast<unsigned>(ne.hdr.rev) << "\",\n"
@@ -447,8 +500,8 @@ static inline bool analyze_ne(const Options& opts,
                   << "  \"cmod\": " << ne.hdr.cmod << ",\n"
                   << "  \"entry_cs\": " << ne.hdr.cs << ",\n"
                   << "  \"entry_ip\": " << ne.hdr.ip << ",\n"
-                  << "  \"module\": \"" << ne.module_name << "\",\n"
-                  << "  \"description\": \"" << ne.description << "\"\n"
+                  << "  \"module\": \"" << json_escape(ne.module_name) << "\",\n"
+                  << "  \"description\": \"" << json_escape(ne.description) << "\"\n"
                   << "}\n";
         return true;
     }
