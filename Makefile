@@ -17,9 +17,12 @@ CXX := g++-15
 endif
 endif
 CXX ?= g++
+CC ?= gcc
 CXXFLAGS = -static -static-libstdc++ -no-pie -Wl,--build-id=none -std=c++23 -Wall -Wextra -O2
 # Separate non-static sanitizer binary. Do not fold these into CXXFLAGS.
 ASAN_CXXFLAGS = -std=c++23 -Wall -Wextra -O1 -g -fsanitize=address,undefined
+# NE shift is C23 so the same translation unit is what CBMC verifies.
+CFLAGS_NE = -std=c23 -Wall -Wextra
 
 # Capstone is a hard requirement for compiling — checked only when building,
 # not for `make clean` or `make install` which don't need the library headers.
@@ -36,15 +39,21 @@ CAPSTONE_LIBS   := $(shell pkg-config --libs capstone 2>/dev/null)
 
 all: dumpexe
 
-HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h listing.h cfg.h analysis.h sim.h sys.h sys_analysis.h com.h com_analysis.h ne.h ne_analysis.h dos_extender.h strings.h pascal_mt.h turbo_pascal.h toolchain.h symbols.h repack.h json_escape.h json_report.h
+HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h listing.h cfg.h analysis.h sim.h sys.h sys_analysis.h com.h com_analysis.h ne.h ne_shift.h ne_analysis.h dos_extender.h strings.h pascal_mt.h turbo_pascal.h toolchain.h symbols.h repack.h json_escape.h json_report.h
 
-dumpexe: dumpexe.cpp $(HEADERS)
-	$(CXX) $(CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe dumpexe.cpp $(CAPSTONE_LIBS)
+ne_shift.o: ne_shift.c ne_shift.h
+	$(CC) $(CFLAGS_NE) -O2 -c ne_shift.c -o ne_shift.o
+
+ne_shift-asan.o: ne_shift.c ne_shift.h
+	$(CC) $(CFLAGS_NE) -O1 -g -fsanitize=address,undefined -c ne_shift.c -o ne_shift-asan.o
+
+dumpexe: dumpexe.cpp ne_shift.o $(HEADERS)
+	$(CXX) $(CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe dumpexe.cpp ne_shift.o $(CAPSTONE_LIBS)
 	@echo "Built dumpexe with Capstone disassembly support"
 
 # ASan/UBSan cannot link -static. Capstone comes from pkg-config, shared.
-dumpexe-asan: dumpexe.cpp $(HEADERS)
-	$(CXX) $(ASAN_CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe-asan dumpexe.cpp $(CAPSTONE_LIBS)
+dumpexe-asan: dumpexe.cpp ne_shift-asan.o $(HEADERS)
+	$(CXX) $(ASAN_CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe-asan dumpexe.cpp ne_shift-asan.o $(CAPSTONE_LIBS)
 	@echo "Built dumpexe-asan (address,undefined)"
 
 asan: dumpexe-asan
@@ -72,4 +81,5 @@ test: dumpexe
 tests: test
 
 verify: test
-	@echo "formal: not run (no CBMC harness for dumpexe yet)"
+	$(HOME)/.local/bin/cbmc ne_shift.c formal/harness_ne_shift.c \
+	  --bounds-check --pointer-check --unwind 2 --unwinding-assertions
