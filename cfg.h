@@ -156,6 +156,52 @@ static inline bool cfg_ip_in_image(uint16_t ip, size_t image_size) {
     return static_cast<size_t>(ip) < image_size;
 }
 
+/// No instruction has claimed this image byte yet.
+inline constexpr uint32_t kCfgUnowned = 0xFFFFFFFFu;
+
+/**
+ * @brief True when @p ip sits strictly inside an instruction another start owns.
+ *
+ * @param owner Per-byte map; owner[i] is the instruction start that covers
+ *              image byte i, or kCfgUnowned.
+ * @param ip    Candidate leader or decode address.
+ * @return true if disassembly must not restart at @p ip.
+ */
+static inline bool cfg_ip_inside_owned(const std::vector<uint32_t>& owner, uint16_t ip)
+{
+    if (static_cast<size_t>(ip) >= owner.size())
+    {
+        return false;
+    }
+    const uint32_t own = owner[ip];
+    return own != kCfgUnowned && own != ip;
+}
+
+/**
+ * @brief DOS/BIOS interrupt numbers the CFG still treats as block seeds.
+ *
+ * @param inum Immediate byte of an `int` instruction.
+ * @return true for the historical tracked set (INT 10h/13h/16h/1Ah/20h/21h/…).
+ */
+static inline bool cfg_is_tracked_int(uint8_t inum)
+{
+    switch (inum)
+    {
+    case 0x10:
+    case 0x13:
+    case 0x16:
+    case 0x1A:
+    case 0x20:
+    case 0x21:
+    case 0x25:
+    case 0x2F:
+    case 0x33:
+        return true;
+    default:
+        return false;
+    }
+}
+
 //=============================================================================
 // Jump-table heuristic (Pascal MT+ etc.): run of near JMPs (E9 xx xx)
 //=============================================================================
@@ -166,23 +212,34 @@ static inline void cfg_find_near_jmp_tables(const std::vector<uint8_t>& image,
                                             uint16_t scan_lo, uint16_t scan_hi,
                                             std::set<uint16_t>& leaders,
                                             std::set<uint16_t>& table_slots,
-                                            size_t min_slots = 4) {
+                                            size_t min_slots = 4,
+                                            const std::vector<uint32_t>* owner = nullptr) {
     if (scan_hi > image.size()) scan_hi = static_cast<uint16_t>(std::min(image.size(), size_t{0xFFFF}));
     if (scan_lo >= scan_hi) return;
 
+    auto slot_rejected = [&](size_t off) -> bool {
+        if (owner == nullptr || off > 0xFFFFu)
+            return false;
+        return cfg_ip_inside_owned(*owner, static_cast<uint16_t>(off));
+    };
+
     size_t i = scan_lo;
     while (i + 3 <= scan_hi) {
-        if (image[i] != 0xE9) { ++i; continue; }
+        // An E9 that is an immediate/displacement of an owned insn is not a slot.
+        if (image[i] != 0xE9 || slot_rejected(i)) { ++i; continue; }
         // Count consecutive E9 rel16
         size_t j = i;
         std::vector<uint16_t> slots;
-        while (j + 3 <= scan_hi && image[j] == 0xE9) {
+        while (j + 3 <= scan_hi && image[j] == 0xE9 && !slot_rejected(j)) {
             int16_t rel = static_cast<int16_t>(image[j + 1] | (image[j + 2] << 8));
             uint16_t slot_ip = static_cast<uint16_t>(j);
             uint16_t tgt = static_cast<uint16_t>(j + 3 + rel);
             slots.push_back(slot_ip);
             leaders.insert(slot_ip);
-            leaders.insert(tgt);
+            // Drop a target that would restart inside an owned instruction.
+            if (owner == nullptr || !cfg_ip_in_image(tgt, image.size()) ||
+                !cfg_ip_inside_owned(*owner, tgt))
+                leaders.insert(tgt);
             table_slots.insert(slot_ip);
             j += 3;
         }
@@ -232,77 +289,78 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
 
     std::set<uint16_t> leaders;
     std::set<uint16_t> table_slots;
-    leaders.insert(entry_ip);
-
-    // Force leaders at every INT (CD nn) so far-callable DOS helpers that are
-    // not reached by near edges still become blocks (FCB open/read etc.).
-    for (size_t i = 0; i + 1 < image.size(); ++i) {
-        if (image[i] != 0xCD) continue;
-        uint8_t inum = image[i + 1];
-        // Common DOS/BIOS ints; skip rare/undefined to limit noise
-        if (inum == 0x10 || inum == 0x13 || inum == 0x16 || inum == 0x1A ||
-            inum == 0x20 || inum == 0x21 || inum == 0x25 || inum == 0x2F ||
-            inum == 0x33) {
-            uint16_t ip = static_cast<uint16_t>(i);
-            leaders.insert(ip);
-            // Also a few bytes earlier so mov ah / mov dx sit in the same BB
-            if (ip >= 16)
-                leaders.insert(static_cast<uint16_t>(ip - 16));
-            if (ip >= 8)
-                leaders.insert(static_cast<uint16_t>(ip - 8));
-        }
-    }
-
-    // Heuristic: scan low image for jump tables (ICON has one at ~0090h)
-    uint16_t scan_hi = static_cast<uint16_t>(std::min(image.size(), size_t{0x200}));
-    cfg_find_near_jmp_tables(image, 0, scan_hi, leaders, table_slots);
-
-    // Also scan a bit after entry for local tables
-    if (entry_ip < image.size()) {
-        uint16_t lo = entry_ip;
-        size_t entry_plus = static_cast<size_t>(entry_ip) + 0x100u;
-        uint16_t hi = static_cast<uint16_t>(std::min(image.size(), entry_plus));
-        cfg_find_near_jmp_tables(image, lo, hi, leaders, table_slots, 6);
-    }
-
-    // --- Pass 1: discover leaders via recursive descent worklist ---
+    // Byte ownership: trusted decode claims [ip, ip+size) before any heuristic
+    // leader (INT scan, ip-8/ip-16, jump table) is allowed to split a block.
+    std::vector<uint32_t> owner(image.size(), kCfgUnowned);
+    std::set<uint16_t> decoded_from;
     std::queue<uint16_t> work;
-    for (uint16_t L : leaders) work.push(L);
-    std::set<uint16_t> visited_decode; // IPs we started decoding from in pass1
 
     auto enqueue = [&](uint16_t ip) {
         if (!cfg_ip_in_image(ip, image.size())) {
             g.unresolved.insert(ip);
             return;
         }
+        // A leader strictly inside an owned instruction is not a block start.
+        if (cfg_ip_inside_owned(owner, ip))
+            return;
         if (leaders.insert(ip).second)
             work.push(ip);
     };
 
-    while (!work.empty() && leaders.size() < max_blocks * 2) {
-        uint16_t start = work.front();
-        work.pop();
-        if (!visited_decode.insert(start).second)
-            continue;
+    auto claim = [&](uint16_t ip, uint16_t size) {
+        for (uint16_t k = 0; k < size; ++k) {
+            const size_t idx = static_cast<size_t>(ip) + k;
+            if (idx >= owner.size())
+                break;
+            if (owner[idx] == kCfgUnowned)
+                owner[idx] = ip;
+        }
+    };
+
+    // Linear trusted decode. Owns bytes. Does not restart mid-instruction.
+    auto decode_from = [&](uint16_t start) {
+        if (!cfg_ip_in_image(start, image.size()))
+            return;
+        if (owner[start] != kCfgUnowned)
+            return; // already claimed, or strictly inside another insn
+        if (!decoded_from.insert(start).second)
+            return;
 
         uint16_t ip = start;
-        // Decode linearly until a control-flow terminator
         for (int step = 0; step < 4096; ++step) {
             if (!cfg_ip_in_image(ip, image.size()))
                 break;
+            if (owner[ip] != kCfgUnowned)
+                break; // join an instruction already claimed
             size_t off = ip;
             size_t avail = image.size() - off;
-            if (avail == 0) break;
+            if (avail == 0)
+                break;
             size_t max_take = std::min(avail, size_t{16});
             const uint8_t* ptr = image.data() + off;
             size_t sz = max_take;
             uint64_t addr = static_cast<uint64_t>(cs_seg) * 16u + ip;
             if (!cs_disasm_iter(handle, &ptr, &sz, &addr, insn) || !insn->detail)
                 break;
+            if (insn->size == 0)
+                break;
+            if (static_cast<size_t>(ip) + insn->size > image.size())
+                break;
+
+            bool overlap = false;
+            for (uint16_t k = 0; k < insn->size; ++k) {
+                if (owner[static_cast<size_t>(ip) + k] != kCfgUnowned) {
+                    overlap = true;
+                    break;
+                }
+            }
+            if (overlap)
+                break;
 
             const cs_x86& x86 = insn->detail->x86;
             std::string mnem = insn->mnemonic;
             uint16_t next = static_cast<uint16_t>(ip + insn->size);
+            claim(ip, insn->size);
 
             auto imm_ip = [&](int op_i) -> bool {
                 if (op_i >= x86.op_count) return false;
@@ -315,62 +373,168 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
 
             if (cfg_is_uncond_jmp(mnem)) {
                 imm_ip(0);
-                // indirect: no static target
                 break;
             }
             if (cfg_is_jcc(mnem) || mnem == "jcxz" || mnem == "loop" ||
                 mnem == "loope" || mnem == "loopz" || mnem == "loopne" ||
                 mnem == "loopnz") {
+                // Fall-through first. A forward jcc/loop into the *next*
+                // instruction (74 01 B8 ..) must not claim that interior
+                // byte before the real opcode is owned.
+                enqueue(next);
                 imm_ip(0);
-                enqueue(next); // false / fall-through leader
                 break;
             }
             if (cfg_is_call(mnem)) {
-                if (follow_calls)
-                    imm_ip(0);
+                // Same order as jcc: own the instruction after CALL before
+                // a target that lands inside it can steal those bytes.
                 // Fall-through after CALL is real in most code, but entry stubs
                 // (Pascal MT+) often park a *data* segment table right after the
                 // call. Only enqueue continuation if it does not look like a
                 // zero/data hole and is not the middle of a jump table.
                 bool looks_data = false;
                 if (cfg_ip_in_image(next, image.size())) {
-                    // 4+ zero bytes → padding/data
                     int z = 0;
                     for (size_t k = 0; k < 8 && next + k < image.size(); ++k)
                         if (image[next + k] == 0) ++z;
                     if (z >= 6) looks_data = true;
-                    // Immediately followed by a known jmp-table E9 run
                     if (static_cast<size_t>(next) + 6 <= image.size() &&
                         image[next] == 0xE9 && image[next + 3] == 0xE9)
                         looks_data = true;
-                    // Pascal MT+ segment table words after entry CALL
                     if (static_cast<size_t>(next) + 4 <= image.size() &&
                         image[next] == 0x80 && image[next + 2] == 0xb0)
                         looks_data = true;
                 }
                 if (!looks_data)
                     enqueue(next);
+                if (follow_calls)
+                    imm_ip(0);
                 break;
             }
             if (cfg_is_ret(mnem) || mnem == "int" || mnem == "into" || mnem == "hlt") {
-                // int continues after stub in real CPU, but for static CFG treat
-                // as non-terminator for int (DOS often returns). Follow through int.
+                // int returns on DOS. An opcode CD this decode actually executed
+                // is an INT leader; keep walking so AH setup stays reachable.
                 if (mnem == "int" || mnem == "into") {
+                    leaders.insert(ip);
                     ip = next;
                     continue;
                 }
                 break;
             }
 
-            // If next IP is already a leader, stop before overlapping
-            if (leaders.count(next) && next != start) {
-                // fall-through into another block
+            // Next IP is already a real leader (insn boundary). Stop before it.
+            if (leaders.count(next) && next != start)
                 break;
-            }
 
             ip = next;
-            if (insn->size == 0) break;
         }
+    };
+
+    auto drain = [&]() {
+        while (!work.empty() && leaders.size() < max_blocks * 2) {
+            uint16_t start = work.front();
+            work.pop();
+            decode_from(start);
+        }
+    };
+
+    auto queue_new = [&](const std::set<uint16_t>& before) {
+        for (uint16_t L : leaders) {
+            if (before.count(L))
+                continue;
+            if (!cfg_ip_in_image(L, image.size()))
+                continue;
+            if (cfg_ip_inside_owned(owner, L))
+                continue;
+            work.push(L);
+        }
+    };
+
+    // --- Pass 1a: trusted flow from the entry, then call/jmp/jcc targets ---
+    enqueue(entry_ip);
+    drain();
+
+    // Jump tables only where the E9 is not an immediate inside owned code.
+    {
+        std::set<uint16_t> snap = leaders;
+        uint16_t scan_hi = static_cast<uint16_t>(std::min(image.size(), size_t{0x200}));
+        cfg_find_near_jmp_tables(image, 0, scan_hi, leaders, table_slots, 4, &owner);
+        queue_new(snap);
+        snap = leaders;
+        if (entry_ip < image.size()) {
+            uint16_t lo = entry_ip;
+            size_t entry_plus = static_cast<size_t>(entry_ip) + 0x100u;
+            uint16_t hi = static_cast<uint16_t>(std::min(image.size(), entry_plus));
+            cfg_find_near_jmp_tables(image, lo, hi, leaders, table_slots, 6, &owner);
+            queue_new(snap);
+        }
+        drain();
+    }
+
+    // INT seeds: only an opcode CD. A CD that trusted decode already consumed
+    // as an immediate or displacement is not a leader. Uncovered CD bytes are
+    // leaders only when a decode that starts there executes `int`.
+    auto decode_is_int = [&](uint16_t ip) -> bool {
+        if (static_cast<size_t>(ip) + 2 > image.size())
+            return false;
+        const uint8_t* ptr = image.data() + ip;
+        size_t sz = std::min(image.size() - static_cast<size_t>(ip), size_t{16});
+        uint64_t addr = static_cast<uint64_t>(cs_seg) * 16u + ip;
+        if (!cs_disasm_iter(handle, &ptr, &sz, &addr, insn) || !insn->detail)
+            return false;
+        return std::string_view(insn->mnemonic) == "int" && insn->size >= 2 &&
+               insn->bytes[0] == 0xCD;
+    };
+
+    for (size_t i = 0; i + 1 < image.size() && i <= 0xFFFFu; ++i) {
+        if (image[i] != 0xCD)
+            continue;
+        const uint8_t inum = image[i + 1];
+        if (!cfg_is_tracked_int(inum))
+            continue;
+        const uint16_t ip = static_cast<uint16_t>(i);
+        if (cfg_ip_inside_owned(owner, ip))
+            continue; // CD is inside an instruction we already own
+        bool opcode_int = false;
+        if (owner[ip] == ip)
+            opcode_int = true; // trusted decode executed this byte as insn start
+        else if (owner[ip] == kCfgUnowned)
+            opcode_int = decode_is_int(ip);
+        if (!opcode_int)
+            continue;
+        enqueue(ip);
+        // Nearby seeds only when they are not strictly inside an owned insn,
+        // so mov ah / mov dx can still open a block ahead of an uncovered INT.
+        // Skip 00 bytes: they are padding (and the fake PSP hole), and decoding
+        // them plants a block of "add [bx+si], al" ahead of the real entry.
+        auto enqueue_nearby = [&](uint16_t at) {
+            if (!cfg_ip_in_image(at, image.size()))
+                return;
+            if (image[at] == 0x00)
+                return;
+            enqueue(at);
+        };
+        if (ip >= 16)
+            enqueue_nearby(static_cast<uint16_t>(ip - 16));
+        if (ip >= 8)
+            enqueue_nearby(static_cast<uint16_t>(ip - 8));
+    }
+    drain();
+
+    // Drop leaders that landed strictly inside an owned instruction.
+    for (auto it = leaders.begin(); it != leaders.end(); )
+    {
+        if (cfg_ip_in_image(*it, image.size()) && cfg_ip_inside_owned(owner, *it))
+            it = leaders.erase(it);
+        else
+            ++it;
+    }
+    for (auto it = table_slots.begin(); it != table_slots.end(); )
+    {
+        if (cfg_ip_inside_owned(owner, *it))
+            it = table_slots.erase(it);
+        else
+            ++it;
     }
 
     // --- Pass 2: form blocks from each leader ---
@@ -388,6 +552,9 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
         if (g.blocks.size() >= max_blocks)
             break;
         if (!cfg_ip_in_image(L, image.size()))
+            continue;
+        // Do not disassemble from the middle of an owned instruction.
+        if (cfg_ip_inside_owned(owner, L))
             continue;
 
         CfgBlock blk;
@@ -409,6 +576,30 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             uint64_t addr = static_cast<uint64_t>(cs_seg) * 16u + ip;
             if (!cs_disasm_iter(handle, &ptr, &sz, &addr, insn) || !insn->detail)
                 break;
+            if (insn->size == 0)
+                break;
+            if (static_cast<size_t>(ip) + insn->size > image.size())
+                break;
+
+            // Refuse an insn that would cover a byte owned by a different start.
+            bool clash = false;
+            for (uint16_t k = 0; k < insn->size; ++k)
+            {
+                const uint32_t own = owner[static_cast<size_t>(ip) + k];
+                if (own != kCfgUnowned && own != ip)
+                {
+                    clash = true;
+                    break;
+                }
+            }
+            if (clash)
+                break;
+            for (uint16_t k = 0; k < insn->size; ++k)
+            {
+                const size_t idx = static_cast<size_t>(ip) + k;
+                if (owner[idx] == kCfgUnowned)
+                    owner[idx] = ip;
+            }
 
             CfgInsn ci;
             ci.ip = ip;
@@ -425,6 +616,13 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             const cs_x86& x86 = insn->detail->x86;
             std::string mnem = insn->mnemonic;
             uint16_t next = static_cast<uint16_t>(ip + insn->size);
+            // A leader strictly inside this insn is not a block boundary.
+            if (insn->size > 0 && next > limit)
+            {
+                const uint16_t advanced = next_leader_after(static_cast<uint16_t>(next - 1));
+                if (advanced > limit)
+                    limit = advanced;
+            }
 
             // Stop decoding through obvious data (00 00 → "add [bx+si], al")
             if ((insn->size == 2 && insn->bytes[0] == 0x00 && insn->bytes[1] == 0x00) ||

@@ -407,18 +407,29 @@ static inline void ne_disasm_segment(const std::vector<uint8_t>& data,
 // Top-level analyze
 //=============================================================================
 
-/// Analyze an NE file: headers always; segments/modules/resources by default;
-/// -d disassembles entry code segment (and optionally all CODE with -a).
-static inline int analyze_ne(const Options& opts,
+/**
+ * @brief Analyze an NE image and write its report.
+ *
+ * Headers are always printed. Segments, modules, and resources follow.
+ * -d disassembles the entry code segment (and, with -a, other CODE segments).
+ *
+ * @param ne_error On failure, the parse diagnostic. Not printed here.
+ * @return true when a full NE report was written (caller should exit 0).
+ *         false when the NE signature did not parse; @p ne_error is set and
+ *         the caller should warn and fall back to the MZ report.
+ */
+static inline bool analyze_ne(const Options& opts,
                              const std::vector<uint8_t>& fileData,
-                             int64_t fileSize)
+                             int64_t fileSize,
+                             std::string& ne_error)
 {
     NEParsed ne;
     if (!ne_parse(fileData, ne))
     {
-        std::cerr << "Error: " << ne.error << "\n";
-        return 1;
+        ne_error = ne.error.empty() ? std::string("NE parse failed") : ne.error;
+        return false;
     }
+    ne_error.clear();
 
     if (opts.jsonOut)
     {
@@ -439,7 +450,7 @@ static inline int analyze_ne(const Options& opts,
                   << "  \"module\": \"" << ne.module_name << "\",\n"
                   << "  \"description\": \"" << ne.description << "\"\n"
                   << "}\n";
-        return 0;
+        return true;
     }
 
     std::cout << "Display of File " << opts.filename << "\n";
@@ -496,7 +507,7 @@ static inline int analyze_ne(const Options& opts,
                      "NE/Win16 simulation is not implemented yet.\n";
     }
 
-    return 0;
+    return true;
 }
 
 #endif // NE_ANALYSIS_H

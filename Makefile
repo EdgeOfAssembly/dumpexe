@@ -9,11 +9,17 @@
 #   make -s V=0 -j$(nproc)
 
 # Prefer g++-15+ for <format> when present (host gcc may stay 12 for CUDA).
-CXX ?= g++
+# Honor a command-line or environment CXX=. g++-15 is only substituted when
+# make's built-in CXX is still the default (origin "default").
+ifeq ($(origin CXX),default)
 ifneq ($(shell command -v g++-15 2>/dev/null),)
 CXX := g++-15
 endif
+endif
+CXX ?= g++
 CXXFLAGS = -static -static-libstdc++ -no-pie -Wl,--build-id=none -std=c++23 -Wall -Wextra -O2
+# Separate non-static sanitizer binary. Do not fold these into CXXFLAGS.
+ASAN_CXXFLAGS = -std=c++23 -Wall -Wextra -O1 -g -fsanitize=address,undefined
 
 # Capstone is a hard requirement for compiling — checked only when building,
 # not for `make clean` or `make install` which don't need the library headers.
@@ -26,7 +32,7 @@ endif
 CAPSTONE_CFLAGS := $(shell pkg-config --cflags capstone 2>/dev/null)
 CAPSTONE_LIBS   := $(shell pkg-config --libs capstone 2>/dev/null)
 
-.PHONY: all clean install
+.PHONY: all clean install asan
 
 all: dumpexe
 
@@ -35,6 +41,13 @@ HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annota
 dumpexe: dumpexe.cpp $(HEADERS)
 	$(CXX) $(CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe dumpexe.cpp $(CAPSTONE_LIBS)
 	@echo "Built dumpexe with Capstone disassembly support"
+
+# ASan/UBSan cannot link -static. Capstone comes from pkg-config, shared.
+dumpexe-asan: dumpexe.cpp $(HEADERS)
+	$(CXX) $(ASAN_CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe-asan dumpexe.cpp $(CAPSTONE_LIBS)
+	@echo "Built dumpexe-asan (address,undefined)"
+
+asan: dumpexe-asan
 
 # Auto-generate interrupt annotation database from Ralph Brown's Interrupt List
 int_db.h: gen_int_db.py $(wildcard interrupts/INTERRUP.*)
@@ -48,11 +61,13 @@ install: dumpexe
 	install -m 644 dumpexe.1 $(DESTDIR)$(PREFIX)/share/man/man1/
 
 clean:
-	rm -f dumpexe *.o int_db.h
+	rm -f dumpexe dumpexe-asan *.o int_db.h
 
 .PHONY: test tests verify
 test: dumpexe
 	@bash tests/test_cli_contracts.sh
+	@bash tests/test_report_bugs.sh
+	@bash tests/test_listing_bugs.sh
 
 tests: test
 

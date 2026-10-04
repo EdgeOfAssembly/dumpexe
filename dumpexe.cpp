@@ -5,12 +5,18 @@
 
 #include "dumpexe.h"
 
-/// Print version information to stdout
-static inline void print_version() {
-    std::cout << "dumpexe 2.1 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
+/// Print version information to stdout, including the linked Capstone version.
+static inline void print_version()
+{
+    int cap_major = 0;
+    int cap_minor = 0;
+    (void)cs_version(&cap_major, &cap_minor);
+    std::cout << "dumpexe 2.2 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
                  "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n"
-                 "License: GPLv2 | Commercial (contact author)\n"
-                 "Built with Capstone disassembly support: yes\n";
+                 "License: GPLv2 | Commercial (contact author)\n";
+    std::cout << std::format(
+        "Built with Capstone disassembly support: yes (Capstone {}.{})\n",
+        cap_major, cap_minor);
 }
 
 /// Read the entire contents of a file into a byte vector.
@@ -112,11 +118,19 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        // Win 3.x NE: MZ stub + e_lfanew → "NE" (before plain MZ path)
+        // Win 3.x NE: MZ stub + e_lfanew → "NE". A planted "NE" that does not
+        // parse (truncated segment table, etc.) warns and falls through to MZ.
         {
             uint32_t e_lfanew = 0;
             if (ne_probe(fileData, e_lfanew))
-                return analyze_ne(opts, fileData, fileSize);
+            {
+                std::string ne_error;
+                if (analyze_ne(opts, fileData, fileSize, ne_error))
+                    return 0;
+                std::cerr << std::format(
+                    "Warning: {} (NE at e_lfanew 0x{:X}; falling back to MZ)\n",
+                    ne_error, e_lfanew);
+            }
         }
 
         MZHeader header;
@@ -171,7 +185,8 @@ int main(int argc, char* argv[]) {
                 turbo_pascal_print_report(tp_rep);
         }
 
-        // COM-in-EXE / JWASM / CuteMouse (skip weak asm if TP already identified)
+        // COM-in-EXE / JWASM / CuteMouse. A Turbo Pascal hit skips those
+        // heuristics (they false-positive on TP) but still scans banners.
         ToolchainReport tc_rep{};
         if (opts.toolchainDetect && !tp_rep.detected)
         {
@@ -180,9 +195,11 @@ int main(int argc, char* argv[]) {
             if (human)
                 toolchain_print_report(tc_rep);
         }
-        else if (opts.toolchainDetect && tp_rep.detected && human)
+        else if (opts.toolchainDetect && tp_rep.detected)
         {
-            // still run COM-in-EXE only if needed? skip JWASM false positives
+            tc_rep = toolchain_fingerprints_only(fileData);
+            if (human)
+                toolchain_print_report(tc_rep);
         }
 
         std::vector<RelocEntry> relocs;
@@ -191,10 +208,9 @@ int main(int argc, char* argv[]) {
             dump_relocations(opts, header, fileData, sizes, relocs);
             dump_hex(opts, fileData, sizes);
         }
-        else if (opts.showReloc || opts.showAll)
+        else
         {
-            // Still load relocs if requested for future JSON; skip for now
-            dump_relocations(opts, header, fileData, sizes, relocs);
+            load_relocations(header, fileData, relocs);
         }
 
         std::vector<ExtractedString> strs;
@@ -273,6 +289,7 @@ int main(int argc, char* argv[]) {
         {
             JsonReport rep;
             rep.set_mz(opts.filename, header, sizes, fileSize);
+            rep.set_relocs(relocs);
             if (opts.pascalMt)
             {
                 rep.pascal_mt = std::move(mt_rep);
@@ -295,24 +312,60 @@ int main(int argc, char* argv[]) {
         }
 
     } else if (sig32 == 0xFFFFFFFF) {
+        ToolchainReport tc_rep{};
+        if (opts.toolchainDetect)
+            tc_rep = toolchain_fingerprints_only(fileData);
         if (opts.jsonOut) {
             JsonReport rep;
             rep.file = opts.filename;
             rep.format = "sys";
+            if (opts.toolchainDetect)
+            {
+                rep.toolchain = std::move(tc_rep);
+                rep.toolchain_ran = true;
+            }
             rep.print(std::cout);
         } else {
             analyze_sys(opts, fileData, fileSize);
+            if (opts.toolchainDetect)
+                toolchain_print_report(tc_rep);
         }
 
     } else {
+        // Same PSP order as analyze_com: --psp, --no-psp, else detect_psp.
+        bool has_psp = false;
+        if (opts.comForcePsp)
+            has_psp = true;
+        else if (opts.comForceNoPsp)
+            has_psp = false;
+        else
+            has_psp = detect_psp(fileData);
+        const size_t entry_offset = has_psp ? static_cast<size_t>(COM_PSP_SIZE) : 0;
+
+        ToolchainReport tc_rep{};
+        if (opts.toolchainDetect)
+            tc_rep = toolchain_fingerprints_only(fileData);
+
         if (opts.jsonOut) {
             JsonReport rep;
             rep.file = opts.filename;
             rep.format = "com";
             rep.file_size = static_cast<uint32_t>(fileSize);
+            // In memory CS:IP is always load_segment:0100h. The file offset
+            // follows the human report: 0x100 with an embedded PSP, else 0.
+            rep.entry_ip = COM_ENTRY_IP;
+            rep.entry_file_offset = entry_offset;
+            rep.load_model = has_psp ? "psp" : "org100";
+            if (opts.toolchainDetect)
+            {
+                rep.toolchain = std::move(tc_rep);
+                rep.toolchain_ran = true;
+            }
             rep.print(std::cout);
         } else {
             analyze_com(opts, fileData, fileSize);
+            if (opts.toolchainDetect)
+                toolchain_print_report(tc_rep);
         }
     }
 
