@@ -9,6 +9,7 @@
 #define NE_ANALYSIS_H
 
 #include "ne.h"
+#include "ne_shift.h"
 #include "options.h"
 #include "formatting.h"
 #include "disasm.h"
@@ -212,31 +213,14 @@ static inline bool ne_parse(const std::vector<uint8_t>& data, NEParsed& out)
 }
 
 /**
- * @brief Report whether an NE alignment shift count may be applied.
- *
- * Real NE linkers use a small shift (commonly 9, a 512-byte sector). A count
- * above 16 is not a sector size this tool applies. `1u << n` is undefined for
- * `n >= 32`, and a `size_t` shift is undefined when the count is at least the
- * width of `size_t`. Callers must not evaluate `<<` when this returns false.
- *
- * @param[in] shift Alignment shift from @c NEHeader::align or a resource
- *                  table's @c align_shift.
- * @return true when @p shift is usable.
- * @retval true  @p shift is at most 16 and may be applied.
- * @retval false @p shift is out of range. Do not shift.
- */
-static inline bool ne_align_shift_ok(uint16_t shift)
-{
-    return shift <= 16;
-}
-
-/**
  * @brief File offset of one NE segment's bytes.
+ *
+ * Sector 0 is the no-data sentinel and returns 0 before any shift. Any other
+ * sector uses @c ne_shift_left, which is 0 when the alignment shift is above 16.
  *
  * @param[in] hdr NE header. @c hdr.align is the sector shift.
  * @param[in] seg Segment table entry. @c seg.sector is the sector index.
- * @return @c size_t(seg.sector) << hdr.align when the sector is non-zero and
- *         the shift is usable.
+ * @return File offset of the segment bytes.
  * @retval 0 @c seg.sector is 0, or @c hdr.align is greater than 16.
  */
 static inline size_t ne_seg_file_offset(const NEHeader& hdr, const NESegment& seg)
@@ -245,11 +229,7 @@ static inline size_t ne_seg_file_offset(const NEHeader& hdr, const NESegment& se
     {
         return 0;
     }
-    if (!ne_align_shift_ok(hdr.align))
-    {
-        return 0;
-    }
-    return static_cast<size_t>(seg.sector) << hdr.align;
+    return ne_shift_left(seg.sector, hdr.align);
 }
 
 /// On-disk length of segment (0 in header means 65536).
@@ -290,7 +270,7 @@ static inline void ne_print_header(const NEParsed& ne, int64_t fileSize)
               << h.align;
     if (ne_align_shift_ok(h.align))
     {
-        std::cout << "  (sector size " << (1u << h.align) << ")\n";
+        std::cout << "  (sector size " << ne_shift_left(1, h.align) << ")\n";
     }
     else
     {
@@ -404,8 +384,8 @@ static inline void ne_print_resources(const std::vector<uint8_t>& data,
             size_t file_len = 0;
             if (align_ok)
             {
-                file_off = static_cast<size_t>(res.offset) << align_shift;
-                file_len = static_cast<size_t>(res.length) << align_shift;
+                file_off = ne_shift_left(res.offset, align_shift);
+                file_len = ne_shift_left(res.length, align_shift);
             }
 
             std::string id_label;
