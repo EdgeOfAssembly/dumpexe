@@ -44,16 +44,19 @@ static inline std::string symbols_trim(std::string_view s)
 
 static inline bool symbols_parse_hex(std::string_view s, uint32_t& out)
 {
-    s = symbols_trim(s);
-    if (s.empty())
+    // symbols_trim() returns a temporary string. Keep it alive; a string_view
+    // bound to that temporary dangles at the end of the assignment statement.
+    std::string trimmed = symbols_trim(s);
+    std::string_view v = trimmed;
+    if (v.empty())
         return false;
-    if (s.size() > 1 && (s.back() == 'h' || s.back() == 'H'))
-        s.remove_suffix(1);
-    if (s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
-        s.remove_prefix(2);
+    if (v.size() > 1 && (v.back() == 'h' || v.back() == 'H'))
+        v.remove_suffix(1);
+    if (v.size() > 2 && v[0] == '0' && (v[1] == 'x' || v[1] == 'X'))
+        v.remove_prefix(2);
     try
     {
-        out = static_cast<uint32_t>(std::stoul(std::string(s), nullptr, 16));
+        out = static_cast<uint32_t>(std::stoul(std::string(v), nullptr, 16));
         return true;
     }
     catch (...)

@@ -155,34 +155,62 @@ static inline size_t dext_mz_declared_size(const MZHeader& h)
     return (static_cast<size_t>(h.num_blocks) - 1u) * 512u + h.final_len;
 }
 
+/**
+ * @brief True when @p off holds a plausible LE/LX header, not a data string.
+ *
+ * OS/2 linear header: signature at +0, byte order at +2, word order at +3,
+ * CPU type word at +8, page size dword at +0x28. Byte and word order must be
+ * little-endian (0). CPU type must be 1..5. Page size must be a non-zero
+ * power of two no larger than 1 MiB.
+ *
+ * @param data File bytes.
+ * @param off  Candidate header offset (normally MZ e_lfanew).
+ * @return true if the fields above are in range.
+ */
+static inline bool dext_le_header_sane(const std::vector<uint8_t>& data, size_t off)
+{
+    constexpr size_t kPageOff = 0x28;
+    constexpr size_t kNeed = kPageOff + 4;
+    if (off + kNeed > data.size())
+        return false;
+    if (data[off] != 'L' || (data[off + 1] != 'E' && data[off + 1] != 'X'))
+        return false;
+    if (data[off + 2] != 0 || data[off + 3] != 0)
+        return false;
+    const uint16_t cpu = static_cast<uint16_t>(data[off + 8]) |
+                         (static_cast<uint16_t>(data[off + 9]) << 8);
+    if (cpu < 1 || cpu > 5)
+        return false;
+    const uint32_t page =
+        static_cast<uint32_t>(data[off + kPageOff]) |
+        (static_cast<uint32_t>(data[off + kPageOff + 1]) << 8) |
+        (static_cast<uint32_t>(data[off + kPageOff + 2]) << 16) |
+        (static_cast<uint32_t>(data[off + kPageOff + 3]) << 24);
+    if (page == 0 || page > (1u << 20))
+        return false;
+    if ((page & (page - 1u)) != 0)
+        return false;
+    return true;
+}
+
+/**
+ * @brief Accept LE/LX only at MZ e_lfanew (file offset 0x3C) when the header
+ *        fields are sane. Do not scan image bytes for 'LE'/'LX' 00 00.
+ */
 static inline bool dext_find_le_lx(const std::vector<uint8_t>& data, size_t& out_off)
 {
-    if (data.size() >= 0x40)
-    {
-        const uint32_t e = static_cast<uint32_t>(data[0x3C]) |
-                           (static_cast<uint32_t>(data[0x3D]) << 8) |
-                           (static_cast<uint32_t>(data[0x3E]) << 16) |
-                           (static_cast<uint32_t>(data[0x3F]) << 24);
-        if (e >= 0x40 && e + 4 <= data.size())
-        {
-            if (data[e] == 'L' && (data[e + 1] == 'E' || data[e + 1] == 'X'))
-            {
-                out_off = e;
-                return true;
-            }
-        }
-    }
-    const size_t lim = std::min(data.size(), size_t{0x40000});
-    for (size_t i = 0; i + 4 <= lim; i += 4)
-    {
-        if (data[i] == 'L' && (data[i + 1] == 'E' || data[i + 1] == 'X') &&
-            data[i + 2] == 0 && data[i + 3] == 0)
-        {
-            out_off = i;
-            return true;
-        }
-    }
-    return false;
+    if (data.size() < 0x40)
+        return false;
+    const uint32_t e = static_cast<uint32_t>(data[0x3C]) |
+                       (static_cast<uint32_t>(data[0x3D]) << 8) |
+                       (static_cast<uint32_t>(data[0x3E]) << 16) |
+                       (static_cast<uint32_t>(data[0x3F]) << 24);
+    if (e < 0x40)
+        return false;
+    if (!dext_le_header_sane(data, static_cast<size_t>(e)))
+        return false;
+    out_off = static_cast<size_t>(e);
+    return true;
 }
 
 static inline void dext_set_payload_from_nested_mz(const std::vector<uint8_t>& data,

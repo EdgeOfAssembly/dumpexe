@@ -146,6 +146,28 @@ static inline ExeSizes calculate_sizes(const MZHeader& header, int64_t dosFileSi
     if (loadImageSize64 < 0)
         loadImageSize64 = 0;
 
+    // e_cblp > 511 is not a legal last-page length. Warn; do not reject
+    // (PKLITE-style CS=FFF0 images must still analyze).
+    if (header.final_len > 511)
+    {
+        std::cerr << std::format(
+            "Warning: e_cblp (final_len) is {} which is greater than 511\n",
+            header.final_len);
+    }
+
+    // A declared size past EOF used to print a load image larger than the
+    // bytes on disk. Clamp to the bytes present after the header.
+    if (declaredFileSize64 > dosFileSize)
+    {
+        std::cerr << std::format(
+            "Warning: declared MZ file size {} exceeds actual file size {} bytes; "
+            "load image clamped to bytes present\n",
+            declaredFileSize64, dosFileSize);
+        const int64_t present = dosFileSize - headerSizeBytes64;
+        if (present < loadImageSize64)
+            loadImageSize64 = present > 0 ? present : static_cast<int64_t>(0);
+    }
+
     s.headerSizeBytes         = static_cast<size_t>(headerSizeBytes64);
     s.entryPointFileOffset    = static_cast<size_t>(entryPointFileOffset64);
     s.entryPointImageOffset   = entryPointImageOffset64;
@@ -157,6 +179,24 @@ static inline ExeSizes calculate_sizes(const MZHeader& header, int64_t dosFileSi
 //=============================================================================
 // Header printing
 //=============================================================================
+
+/**
+ * @brief Print an MZ min/max allocation field in paragraphs and bytes.
+ *
+ * Both e_minalloc and e_maxalloc are paragraph counts. The byte figure is
+ * paragraphs * 16 on the same line.
+ *
+ * @param name        Field label (TDUMP column).
+ * @param paragraphs  Header value, not a byte count.
+ */
+static inline void print_alloc_paragraphs(const char* name, uint16_t paragraphs)
+{
+    const uint32_t bytes = static_cast<uint32_t>(paragraphs) * 16u;
+    std::cout << std::format("{:<50}{} paragraphs ({} bytes)\n",
+                             name,
+                             hex_format(paragraphs, 4),
+                             bytes);
+}
 
 /// Print EXE header fields in TDUMP style.
 /// @param opts Parsed command-line options (filename used for display)
@@ -170,13 +210,13 @@ static inline void print_header_info(const Options& opts, const MZHeader& header
     print_field("Relocation Table entry count",  header.num_reloc,                               4);
     print_field("Relocation Table address",      header.off_reloc,                               4);
     print_field("Header Size",                   static_cast<uint32_t>(s.headerSizeBytes),       4);
-    print_field("Minimum Extra Memory",          header.mem_extra,                               4);
+    print_alloc_paragraphs("Minimum Extra Memory", header.mem_extra);
 
     if (header.mem_max == 0xFFFF) {
         std::cout << std::format("{:<50}{:>5}  ( 65535. paragraphs = 1048560 bytes, all available )\n",
                                  "Maximum Memory Requirement", "FFFFh");
     } else {
-        print_field("Maximum Memory Requirement", header.mem_max * 16,                           4);
+        print_alloc_paragraphs("Maximum Memory Requirement", header.mem_max);
     }
 
     print_field("File load checksum",            header.checksum,                                4);

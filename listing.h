@@ -67,6 +67,55 @@ static inline std::string listing_symbol_name(uint16_t ip)
     return std::format("func_{:04X}", ip);
 }
 
+/**
+ * @brief True for a near control transfer whose operand is a code target.
+ *
+ * @param m Lowercase mnemonic (`call`, `jmp`, `je`, `loop`, …).
+ * @return true when the operand should be a label or an IP, not a linear address.
+ */
+static inline bool listing_is_near_xfer(std::string_view m)
+{
+    if (m == "call" || m == "jmp" || m == "ljmp" || m == "lcall" || m == "callf" ||
+        m == "jmpf" || m == "loop" || m == "loope" || m == "loopz" || m == "loopne" ||
+        m == "loopnz" || m == "jcxz" || m == "jecxz")
+    {
+        return true;
+    }
+    return m.size() >= 2 && m[0] == 'j';
+}
+
+/**
+ * @brief Define loc_XXXX for jcc/loop targets that are real instruction starts.
+ *
+ * Call, jmp, and entry symbols already in @p sym are left alone (`func_` wins).
+ * A target that is not on an instruction boundary is not labeled; the emitter
+ * prints it as a numeric IP in the same base as the address column.
+ *
+ * @param g   CFG whose blocks hold the owned instruction starts.
+ * @param sym Symbol table updated in place.
+ */
+static inline void listing_add_loc_labels(const CfgGraph& g,
+                                         std::map<uint16_t, std::string>& sym)
+{
+    std::set<uint16_t> starts;
+    for (const auto& kv : g.blocks)
+    {
+        for (const CfgInsn& in : kv.second.insns)
+            starts.insert(in.ip);
+    }
+    for (const auto& kv : g.blocks)
+    {
+        for (const CfgEdge& e : kv.second.outs)
+        {
+            if (!e.has_target || e.kind != CfgEdgeKind::CondTrue)
+                continue;
+            if (!starts.count(e.to_ip) || sym.count(e.to_ip))
+                continue;
+            sym[e.to_ip] = std::format("loc_{:04X}", e.to_ip);
+        }
+    }
+}
+
 //=============================================================================
 // Symbol discovery (pass 3)
 //=============================================================================
@@ -139,10 +188,14 @@ static inline void listing_collect_symbols(const CfgGraph& g,
 //=============================================================================
 
 /// Replace immediate near targets in Capstone op text with symbol when possible.
+/// @param ip_numeric When true (human listing), a branch with no label is printed
+///        as the segment IP (`0x14d`), the same base as the address column — not
+///        Capstone's CS*16+IP linear form. JWASM/TP export leaves this false.
 static inline std::string listing_rewrite_ops(std::string_view mnem,
                                               std::string_view op_str,
                                               const CfgBlock& blk,
-                                              const std::map<uint16_t, std::string>& sym)
+                                              const std::map<uint16_t, std::string>& sym,
+                                              bool ip_numeric = false)
 {
     // Prefer CFG edge targets for call / uncond jmp / table
     uint16_t edge_tgt = 0;
@@ -163,38 +216,41 @@ static inline std::string listing_rewrite_ops(std::string_view mnem,
         }
     }
 
-    if (!have_edge || !sym.count(edge_tgt))
-        return std::string(op_str);
-
-    const std::string& name = sym.at(edge_tgt);
     std::string m(mnem);
     for (char& c : m)
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
-    const bool is_xf =
-        m == "call" || m == "jmp" || m == "ljmp" || m == "lcall" || m == "callf" ||
-        m == "jmpf" || (m.size() >= 2 && m[0] == 'j'); // jcc
-
-    if (!is_xf)
-        return std::string(op_str);
-
-    // If op_str is a simple imm / segment:off, replace wholesale with name
-    // Capstone often: "0x652b" or "0x1652b" (linear) or "word ptr [0x..]"
-    std::string op(op_str);
     // word ptr / byte ptr — leave memory ops alone
+    std::string op(op_str);
     if (op.find('[') != std::string::npos)
         return op;
 
-    // Far pointer "seg:off" — leave
+    // Human listing: labels when the target is known, else the IP itself.
+    if (ip_numeric && have_edge && listing_is_near_xfer(m) &&
+        op.find(':') == std::string::npos)
+    {
+        const auto it = sym.find(edge_tgt);
+        if (it != sym.end())
+            return it->second;
+        return std::format("0x{:x}", edge_tgt);
+    }
+
+    if (!have_edge || !sym.count(edge_tgt))
+        return std::string(op_str);
+
+    if (!listing_is_near_xfer(m))
+        return std::string(op_str);
+
+    // Far pointer "seg:off" — historical path still rewrites near call/jmp/jcc.
     if (op.find(':') != std::string::npos && op.find("ptr") == std::string::npos)
     {
         // still try near-only rewrite if no second colon issues
     }
 
-    // Replace any hex token that equals target IP or CS*16+IP forms is hard;
-    // use edge: entire operand becomes the label for near call/jmp/jcc.
-    if (m == "call" || m == "jmp" || m.starts_with("j"))
-        return name;
+    // use edge: entire operand becomes the label for near call/jmp/jcc/loop.
+    if (m == "call" || m == "jmp" || m.starts_with("j") || m == "loop" || m == "loope" ||
+        m == "loopz" || m == "loopne" || m == "loopnz")
+        return sym.at(edge_tgt);
 
     return op;
 }
@@ -221,6 +277,7 @@ static inline std::string listing_emit_text(const CfgGraph& g,
     std::set<uint16_t> proc_starts;
     listing_collect_symbols(g, entry_ip, sym, proc_starts, external);
     n_procs = proc_starts.size();
+    listing_add_loc_labels(g, sym);
     n_insns = 0;
 
     std::ostringstream out;
@@ -228,8 +285,8 @@ static inline std::string listing_emit_text(const CfgGraph& g,
     out << std::format("; source: {}\n", source_name);
     out << std::format("; CS={:04X}h  entry={:04X}h  blocks={}  symbols={}\n",
                        g.cs_seg, entry_ip, g.blocks.size(), sym.size());
-    out << "; labels: func_<IP> (+ names from --map / <stem>.sym when present)\n";
-    out << "; call/jmp/jcc near targets rewritten to labels when known\n";
+    out << "; labels: func_<IP> for entry/call/jmp; loc_<IP> for jcc/loop on insn boundaries\n";
+    out << "; call/jmp/jcc/loop near targets rewritten to labels when known\n";
     out << "; blank line after procedure regions ending in ret/retf/iret\n";
     if (external && !external->source_path.empty())
         out << std::format("; symbol map: {} ({} names)\n", external->source_path,
@@ -297,6 +354,9 @@ static inline std::string listing_emit_text(const CfgGraph& g,
         for (const auto& in : b.insns)
         {
             ++n_insns;
+            // loc_ (or other sym) that is not the block-start label already printed.
+            if (in.ip != b.start_ip && sym.count(in.ip))
+                out << sym[in.ip] << ":\n";
             // bytes
             std::string hex;
             for (uint8_t i = 0; i < in.size && i < 8; ++i)
@@ -315,7 +375,7 @@ static inline std::string listing_emit_text(const CfgGraph& g,
             for (char& c : mlow)
                 c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
-            std::string rops = listing_rewrite_ops(mlow, ops, b, sym);
+            std::string rops = listing_rewrite_ops(mlow, ops, b, sym, true);
 
             out << std::format("    {:04X}  {:<16}  {:<8} {}", in.ip, hex, mnem,
                                rops);
@@ -682,7 +742,15 @@ static inline std::string listing_emit_turbo_pascal(const CfgGraph& g,
     out << std::format("; memory model: {}{}\n", model, model_why);
     out << "; frames: 55 89 E5 (TP near) / 55 8B EC; RTL \"Runtime error \"\n";
     out << "; assemble (bytes): tasm /ml this.asm   →  this.obj\n";
-    out << "; original rebuild: TPC 5.5 + TASM {$L} units (see MAKECAT.BAT)\n";
+    if (tp.version == "5.5")
+    {
+        out << "; original rebuild: TPC 5.5 + TASM {$L} units (see MAKECAT.BAT)\n";
+    }
+    else
+    {
+        out << std::format("; detected compiler version: {} (not a proven 5.5 rebuild)\n",
+                           tp.version);
+    }
     if (external && !external->source_path.empty())
         out << std::format("; symbols: {}\n", external->source_path);
     out << ";\n";
@@ -1082,8 +1150,10 @@ static inline void disassemble(const std::vector<uint8_t>& data, size_t offset,
     }
     else
     {
-        // window starts at entry; remap entry to 0 for CFG — BAD for labels.
+        // Slice mode (SYS strategy/interrupt windows, some NE segments): the
+        // file offset is the entry byte and IP is not an index into this slice.
         // Keep entry as 0 and accept func_0000 as entry for slice mode.
+        // .COM is not this path — analyze_com() builds an org-0100h image.
         img_off = offset;
         entry = 0;
     }

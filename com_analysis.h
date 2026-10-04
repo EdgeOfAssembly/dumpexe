@@ -206,6 +206,38 @@ static inline void run_com_simulation(const Options& opts,
 }
 
 //=============================================================================
+// Listing image (org 0100h)
+//=============================================================================
+
+/**
+ * @brief Build the CS-relative image used for a .COM listing.
+ *
+ * With no embedded PSP, file byte 0 is DOS IP 0100h. The returned image is
+ * prefixed with a 256-byte hole so instruction addresses and labels match the
+ * header's CS:IP (1000:0100), not file offset 0. An embedded PSP is already a
+ * segment image and is copied unchanged.
+ *
+ * @param data    File bytes.
+ * @param has_psp True when the file begins with a PSP.
+ * @param out     Image whose index equals the DOS IP. Cleared and replaced.
+ */
+static inline void com_listing_image(const std::vector<uint8_t>& data,
+                                     bool has_psp,
+                                     std::vector<uint8_t>& out)
+{
+    if (has_psp)
+    {
+        out = data;
+        return;
+    }
+    out.assign(static_cast<size_t>(COM_PSP_SIZE) + data.size(), 0);
+    if (!data.empty())
+    {
+        std::memcpy(out.data() + COM_PSP_SIZE, data.data(), data.size());
+    }
+}
+
+//=============================================================================
 // Main COM Analysis Entry Point
 //=============================================================================
 
@@ -254,10 +286,13 @@ static inline void analyze_com(const Options& opts,
         }
     }
 
-    // Disassembly from entry point.
+    // Disassembly from entry point. No-PSP images are org 0100h (see
+    // com_listing_image); the filename is the listing "; source:" line.
     if (opts.showDisasm || opts.showAll) {
-        disassemble(data, entry_offset,
-                    opts.loadBase, COM_ENTRY_IP, opts);
+        std::vector<uint8_t> image;
+        com_listing_image(data, has_psp, image);
+        listing_run(image, 0, image.size(), COM_ENTRY_IP, opts.loadBase, opts,
+                    opts.filename);
     }
 
     if (opts.showCfg) {

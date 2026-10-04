@@ -7,6 +7,14 @@
  *     (`bin/jwasm/jwasm-1.8.exe` + wlink + exe2bin + com2exe-style wrap).
  *   - JWASM even-padding uses 0xFC (vs TASM 0x00) — weak encoding hint.
  *
+ * Also reports packer/compiler banners when the characteristic string is
+ * present: PKLITE, LZEXE (LZ91/LZ09 at 0x1C), Microsoft EXEPACK
+ * ("Packed file is corrupt"), DIET (signature at 0x1C, file(1) Magdir/msdos),
+ * LHarc / "LHA ", Turbo C, Turbo C++, Borland C++, Microsoft C, QuickBASIC,
+ * Clipper, TopSpeed, Watcom. BRUN alone is not QuickBASIC. No guessed
+ * binary signatures. The same string scan runs for MZ, COM, and SYS.
+ * Does not replace Pascal MT+ or Turbo Pascal reports.
+ *
  * Default ON (disable with --no-toolchain). Complements pascal_mt.h.
  */
 #ifndef TOOLCHAIN_H
@@ -36,6 +44,14 @@ struct ToolchainReport
     bool cute_mouse = false;       ///< CuteMouse driver strings
     bool jwasm_tasm_hint = false;  ///< assembler-built (not HLL RTL)
     bool jwasm_1_8 = false;        ///< JWASM 1.80 class (proven / high conf)
+
+    bool pklite = false;
+    bool lzexe = false;
+    bool exepack = false;
+    bool diet = false;
+    bool lharc = false;
+    std::string packer;            ///< PKLITE / LZEXE / Microsoft EXEPACK / DIET / LHarc
+    std::string compiler_fp;       ///< Turbo C / Borland C++ / Microsoft C / …
 
     uint16_t header_bytes = 0;
     uint16_t entry_cs = 0;
@@ -113,11 +129,163 @@ static inline size_t toolchain_count_fc_pad_runs(const std::vector<uint8_t>& dat
 }
 
 //=============================================================================
+// Packer / compiler fingerprints
+//=============================================================================
+
+/**
+ * @brief Record packer and compiler fingerprints from known strings.
+ *
+ * LZEXE and DIET are the 4-byte stubs at file offset 0x1C (file(1)
+ * Magdir/msdos: "LZ91", "LZ09", "diet"). PKLITE is the ASCII banner
+ * "PKLITE" / "PKLITE Copr." anywhere in the image. Microsoft EXEPACK is the
+ * stub text "Packed file is corrupt" (the bare "RB" byte pattern is not
+ * used). Compiler hits are literal banners only: "Turbo C++", "Borland C++",
+ * "Turbo-C - Copyright", "MS Run-Time Library", "QuickBASIC", "Clipper",
+ * "TopSpeed", "Watcom". LHarc is the literal "LHarc" or "LHA " (trailing
+ * space). "BRUN" alone is ignored. The first packer and the first compiler
+ * name win; later banners are still recorded as evidence.
+ *
+ * @param fileData Image bytes.
+ * @param rep      Report to fill. Existing fields are left intact.
+ */
+static inline void toolchain_scan_fingerprints(const std::vector<uint8_t>& fileData,
+                                               ToolchainReport& rep)
+{
+    size_t off = 0;
+    if (toolchain_find_ascii(fileData, "PKLITE", off))
+    {
+        rep.pklite = true;
+        rep.packer = "PKLITE";
+        rep.evidence.push_back(
+            std::format("PKLITE banner at file 0x{:X}", off));
+    }
+    if (fileData.size() >= 0x1C + 4)
+    {
+        const uint8_t* p = fileData.data() + 0x1C;
+        if (std::memcmp(p, "LZ91", 4) == 0 || std::memcmp(p, "LZ09", 4) == 0)
+        {
+            rep.lzexe = true;
+            if (rep.packer.empty())
+                rep.packer = "LZEXE";
+            rep.evidence.push_back(std::format(
+                "LZEXE signature \"{}{}{}{}\" at file 0x1C",
+                static_cast<char>(p[0]), static_cast<char>(p[1]),
+                static_cast<char>(p[2]), static_cast<char>(p[3])));
+        }
+        if (std::memcmp(p, "diet", 4) == 0 || std::memcmp(p, "DIET", 4) == 0)
+        {
+            rep.diet = true;
+            if (rep.packer.empty())
+                rep.packer = "DIET";
+            rep.evidence.push_back("DIET signature at file 0x1C");
+        }
+    }
+    if (toolchain_find_ascii(fileData, "Packed file is corrupt", off))
+    {
+        rep.exepack = true;
+        if (rep.packer.empty())
+            rep.packer = "Microsoft EXEPACK";
+        rep.evidence.push_back(std::format(
+            "EXEPACK stub \"Packed file is corrupt\" at file 0x{:X}", off));
+    }
+    if (toolchain_find_ascii(fileData, "LHarc", off))
+    {
+        rep.lharc = true;
+        if (rep.packer.empty())
+            rep.packer = "LHarc";
+        rep.evidence.push_back(std::format("LHarc banner at file 0x{:X}", off));
+    }
+    else if (toolchain_find_ascii(fileData, "LHA ", off))
+    {
+        rep.lharc = true;
+        if (rep.packer.empty())
+            rep.packer = "LHarc";
+        rep.evidence.push_back(std::format("LHA banner at file 0x{:X}", off));
+    }
+
+    struct CompilerBanner
+    {
+        const char* needle;
+        const char* name;
+    };
+    static const CompilerBanner kCompilers[] = {
+        {"Turbo C++", "Turbo C++"},
+        {"Borland C++", "Borland C++"},
+        {"Turbo-C - Copyright", "Turbo C"},
+        {"MS Run-Time Library", "Microsoft C"},
+        {"QuickBASIC", "QuickBASIC"},
+        {"Clipper", "Clipper"},
+        {"TopSpeed", "TopSpeed"},
+        {"Watcom", "Watcom"},
+    };
+    for (const CompilerBanner& b : kCompilers)
+    {
+        if (!toolchain_find_ascii(fileData, b.needle, off))
+            continue;
+        if (rep.compiler_fp.empty())
+            rep.compiler_fp = b.name;
+        rep.evidence.push_back(std::format(
+            "{} banner \"{}\" at file 0x{:X}", b.name, b.needle, off));
+    }
+}
+
+/// True when a packer banner or stub signature was recorded.
+static inline bool toolchain_is_packed(const ToolchainReport& rep)
+{
+    return rep.pklite || rep.lzexe || rep.exepack || rep.diet || rep.lharc;
+}
+
+/**
+ * @brief Mark the report detected from packer/compiler banners alone.
+ *
+ * Leaves an already-detected JWASM / COM-in-EXE classification in place.
+ * Clears the JWASM tool-path hint when the hit is a packer or compiler
+ * and not the CuteMouse JWASM rebuild.
+ *
+ * @param rep Report after @c toolchain_scan_fingerprints.
+ */
+static inline void toolchain_finish_fingerprints(ToolchainReport& rep)
+{
+    const bool packed = toolchain_is_packed(rep);
+    if (!rep.detected && (packed || !rep.compiler_fp.empty()))
+    {
+        rep.detected = true;
+        rep.confidence = packed ? 0.90 : 0.86;
+        if (!rep.packer.empty() && !rep.compiler_fp.empty())
+            rep.toolchain = rep.packer + " / " + rep.compiler_fp;
+        else if (!rep.packer.empty())
+            rep.toolchain = rep.packer + " packed executable";
+        else
+            rep.toolchain = rep.compiler_fp;
+    }
+    if (!rep.jwasm_1_8 && (packed || !rep.compiler_fp.empty()))
+        rep.tool_path_hint.clear();
+}
+
+/**
+ * @brief String fingerprints only (no MZ layout or JWASM heuristics).
+ *
+ * COM, SYS, and an MZ already identified as Turbo Pascal use this so a
+ * banner is reported without replacing Pascal MT+ or Turbo Pascal.
+ *
+ * @param fileData Image bytes.
+ * @return Report. @c detected is true when a packer or compiler banner hit.
+ */
+static inline ToolchainReport toolchain_fingerprints_only(
+    const std::vector<uint8_t>& fileData)
+{
+    ToolchainReport rep;
+    toolchain_scan_fingerprints(fileData, rep);
+    toolchain_finish_fingerprints(rep);
+    return rep;
+}
+
+//=============================================================================
 // Analyze
 //=============================================================================
 
 /**
- * @brief Detect COM-in-EXE, JWASM 1.8-class builds, and known products.
+ * @brief Detect COM-in-EXE, JWASM 1.8-class builds, packers, and RTL banners.
  */
 static inline ToolchainReport toolchain_analyze(const std::vector<uint8_t>& fileData,
                                                 const MZHeader& header,
@@ -129,13 +297,17 @@ static inline ToolchainReport toolchain_analyze(const std::vector<uint8_t>& file
     rep.entry_ip = header.ip;
     rep.tool_path_hint = "bin/jwasm/jwasm-1.8.exe (Win32) / jwasmd-1.8.exe (DOS)";
 
+    toolchain_scan_fingerprints(fileData, rep);
+    const bool packed = toolchain_is_packed(rep);
+
     // --- com2exe / COM-in-EXE heuristic ---
+    // PKLITE and other packers also use CS=FFF0; do not call those com2exe.
     const bool cs_fff0 = (static_cast<uint16_t>(header.cs) == 0xFFF0);
     const bool ip_100 = (header.ip == 0x0100);
     const bool small_hdr = (header_bytes > 0 && header_bytes <= 0x40);
     const bool few_relocs = (header.num_reloc == 0);
 
-    if (cs_fff0 && ip_100 && small_hdr)
+    if (!packed && cs_fff0 && ip_100 && small_hdr)
     {
         rep.com_in_exe = true;
         rep.com_org = 0x100;
@@ -147,7 +319,7 @@ static inline ToolchainReport toolchain_analyze(const std::vector<uint8_t>& file
         if (header_bytes == 0x20)
             rep.evidence.push_back("32-byte MZ header (com2exe -s512 style)");
     }
-    else if (ip_100 && small_hdr && few_relocs &&
+    else if (!packed && ip_100 && small_hdr && few_relocs &&
              static_cast<uint16_t>(header.ss) == 0xFFF0u)
     {
         rep.com_in_exe = true;
@@ -257,6 +429,9 @@ static inline ToolchainReport toolchain_analyze(const std::vector<uint8_t>& file
     // NOTE: do NOT claim JWASM from 0xFC padding alone — Turbo Pascal EXEs
     // often contain many 0xFC bytes and false-positive (see Catacomb/TP5.5).
 
+    // The JWASM path hint is only evidence for that rebuild, not for packers.
+    toolchain_finish_fingerprints(rep);
+
     return rep;
 }
 
@@ -268,6 +443,10 @@ static inline void toolchain_print_report(const ToolchainReport& rep)
     std::cout << std::format("Confidence:  {:.0f}%\n", rep.confidence * 100.0);
     if (!rep.toolchain.empty())
         std::cout << std::format("Toolchain:   {}\n", rep.toolchain);
+    if (!rep.packer.empty())
+        std::cout << std::format("Packer:      {}\n", rep.packer);
+    if (!rep.compiler_fp.empty())
+        std::cout << std::format("Compiler:    {}\n", rep.compiler_fp);
     if (!rep.assembler.empty())
     {
         std::cout << std::format("Assembler:   {} {}\n", rep.assembler,

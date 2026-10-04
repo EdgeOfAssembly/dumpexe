@@ -61,7 +61,7 @@ static inline std::string json_escape(std::string_view s)
 struct JsonReport
 {
     std::string tool = "dumpexe";
-    std::string version = "1.5";
+    std::string version = "2.2";
     std::string file;
     std::string format; ///< "mz" | "com" | "sys"
 
@@ -75,8 +75,17 @@ struct JsonReport
     uint16_t ss = 0;
     uint16_t sp = 0;
     uint16_t reloc_count = 0;
-    uint16_t overlay = 0;
+    uint16_t min_alloc = 0;       ///< e_minalloc paragraphs
+    uint16_t max_alloc = 0;       ///< e_maxalloc paragraphs
+    uint16_t checksum = 0;
+    uint16_t overlay_number = 0;  ///< e_ovno (not the extra-byte tail)
+    int64_t extra_bytes = 0;      ///< bytes past the declared MZ size (0 if short)
     size_t entry_file_offset = 0;
+    /// COM only: "psp" (PSP embedded, entry at file 0x100) or "org100"
+    /// (no PSP; code starts at file offset 0, loaded at IP 0100h).
+    std::string load_model;
+    std::vector<RelocEntry> relocs;
+    bool relocs_truncated = false; ///< true when num_reloc exceeded the JSON cap
 
     PascalMtReport pascal_mt{};
     bool pascal_mt_ran = false;
@@ -107,8 +116,29 @@ struct JsonReport
         ss = static_cast<uint16_t>(h.ss);
         sp = h.sp;
         reloc_count = h.num_reloc;
-        overlay = h.overlay_index;
+        min_alloc = h.mem_extra;
+        max_alloc = h.mem_max;
+        checksum = h.checksum;
+        overlay_number = h.overlay_index;
+        extra_bytes = sizes.extraBytes > 0 ? sizes.extraBytes : static_cast<int64_t>(0);
         entry_file_offset = static_cast<size_t>(sizes.entryPointFileOffset);
+    }
+
+    /**
+     * @brief Keep relocation entries for the JSON `relocs` array.
+     *
+     * At most 4096 entries are stored. A longer table sets
+     * @c relocs_truncated so the printer can flag the cut.
+     *
+     * @param all Entries from @c load_relocations (may be empty).
+     */
+    void set_relocs(const std::vector<RelocEntry>& all)
+    {
+        constexpr size_t kCap = 4096;
+        relocs_truncated = all.size() > kCap;
+        const size_t n = relocs_truncated ? kCap : all.size();
+        relocs.assign(all.begin(),
+                      all.begin() + static_cast<std::ptrdiff_t>(n));
     }
 
     void print(std::ostream& os) const
@@ -118,6 +148,16 @@ struct JsonReport
         os << std::format("  \"version\": \"{}\",\n", json_escape(version));
         os << std::format("  \"file\": \"{}\",\n", json_escape(file));
         os << std::format("  \"format\": \"{}\",\n", json_escape(format));
+
+        if (format == "com")
+        {
+            os << "  \"com\": {\n";
+            os << std::format("    \"file_size\": {},\n", file_size);
+            os << std::format("    \"entry_ip\": \"{:04X}\",\n", entry_ip);
+            os << std::format("    \"entry_file_offset\": {},\n", entry_file_offset);
+            os << std::format("    \"load_model\": \"{}\"\n", json_escape(load_model));
+            os << "  },\n";
+        }
 
         if (has_mz)
         {
@@ -130,8 +170,37 @@ struct JsonReport
             os << std::format("    \"ss\": \"{:04X}\",\n", ss);
             os << std::format("    \"sp\": \"{:04X}\",\n", sp);
             os << std::format("    \"reloc_count\": {},\n", reloc_count);
-            os << std::format("    \"overlay\": {},\n", overlay);
-            os << std::format("    \"entry_file_offset\": {}\n", entry_file_offset);
+            os << std::format("    \"min_alloc\": {},\n", min_alloc);
+            os << std::format("    \"max_alloc\": {},\n", max_alloc);
+            os << std::format("    \"checksum\": {},\n", checksum);
+            os << std::format("    \"overlay_number\": {},\n", overlay_number);
+            os << std::format("    \"extra_bytes\": {},\n", extra_bytes);
+            os << std::format("    \"entry_file_offset\": {},\n", entry_file_offset);
+            os << "    \"relocs\": [";
+            if (!relocs.empty())
+            {
+                os << "\n";
+                for (size_t i = 0; i < relocs.size(); ++i)
+                {
+                    const RelocEntry& r = relocs[i];
+                    const uint32_t file_off =
+                        static_cast<uint32_t>(header_bytes) +
+                        static_cast<uint32_t>(r.segment) * 16u + r.offset;
+                    os << std::format(
+                        "      {{\"file_offset\": {}, \"segment\": \"{:04X}\", "
+                        "\"offset\": \"{:04X}\"}}{}",
+                        file_off, r.segment, r.offset,
+                        (i + 1 < relocs.size()) ? ",\n" : "\n");
+                }
+                os << "    ]";
+            }
+            else
+            {
+                os << "]";
+            }
+            if (relocs_truncated)
+                os << ",\n    \"relocs_truncated\": true";
+            os << "\n";
             os << "  },\n";
         }
 
