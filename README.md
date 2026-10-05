@@ -7,7 +7,9 @@ A comprehensive command-line utility for analyzing MS-DOS 16-bit binary files: M
 ## Features
 
 - **MZ EXE / COM / SYS**: Header decode, relocations, entry, memory requirements
-- **Multi-pass listing** (`-d`): `func_*` labels, INT notes, call/jmp rewrite; default write `<stem>.asm`
+- **Multi-pass listing** (`-d` and `-a`): `func_*` labels, INT notes, call/jmp rewrite; default write `<stem>.asm`
+- **Unpack** on `-d` and `-a` for Microsoft EXEPACK, LZEXE 0.91, LZEXE 0.90, PKLITE, DIET, and LHarc. Writes `<stem>_UNPACKED.EXE` (or `.COM` when the image is not MZ) and `<stem>_UNPACKED.asm`. An existing `.asm`, `.repack.exe`, or `_UNPACKED` output is kept. `-o -` writes none of those files. `--json` and `--no-toolchain` skip unpack. There is no `--unpack` switch.
+- **Packer detect** is structural. DIET follows Deark `identify_diet_fmt` (EXE bytes `8E DB 8E C0 33 F6 33 FF` at `codestart-32+{77,72,52,55}`, plus the COM and data patterns). `DIET` at file `0x1C` is not enough. LHarc follows `de_identify_lha` (recognized method, header level 0..3, and that level's size checks). An `LHA` sentence is not enough. LZEXE 0.91/0.90 suppresses LHarc.
 - **Toolchain detect** (default on): Pascal MT+ 3.1.1; JWASM 1.80 / COM-in-EXE / CuteMouse
 - **JWASM export**: When JWASM is detected, `-d` emits JWASM-oriented assemblable layout (`.model`; **.COM / COM-in-EXE always tiny**)
 - **CFG / Graphviz**: `--cfg`, `--cfg-dot=FILE`
@@ -57,10 +59,15 @@ dumpexe [options] <file>
 - `-v, --version` — Show version information
 - `-r, --relocation` — Show relocation table with padding *(MZ EXE only)*
 - `-x, --hexdump` — Show hex+ASCII dump from entry point to EOF
-- `-d, --disassemble` — Show x86-16 disassembly from entry point to EOF
-- `-a, --all` — Show all sections (relocation + hexdump + disassembly)
+- `-d, --disassemble` — Multi-pass listing from the entry point; also writes `<stem>.asm` and, for a structural packer, `<stem>_UNPACKED.EXE` or `.COM` plus `<stem>_UNPACKED.asm`
+- `-a, --all` — Show all sections (relocation + hexdump + disassembly + strings) and unpack the same packers as `-d`
+- `-o, --output PATH` — Packed listing path. `-` means stdout only: no `.asm`, no `_UNPACKED.EXE`, no `_UNPACKED.asm`
 - `-n, --no-int-annotations` — Suppress INT annotation comments in disassembly
-- `--simulate` — Enable DOS load simulation with register tracking
+- `--simulate` — In-memory DOS sandbox. Guest data files start empty. Guest I/O does not open host files. A write to handle 1 or 2 returns CF=1 and AX=6
+- `--no-toolchain` — Disable toolchain and packer detection (default on). Also skips unpack
+- `--json` — JSON report on stdout. Does not unpack
+- `--cfg-max=N` — CFG full-dump block cap (default 500). The `-d` listing cap is `max(N, 2000)`
+- `--no-repack` — Do not write `<stem>.repack.exe` (auto-repack stays on otherwise)
 - `--base=XXXX` — Set load base segment (hex, default: `1000h`)
 - `--psp` — Force `.COM` to be treated as having an embedded PSP (entry at file offset `0100h`)
 - `--no-psp` — Force `.COM` to be treated as having no embedded PSP (entry at file offset `0000h`)
@@ -139,11 +146,12 @@ To test dumpexe, you need to provide your own binary files. Good sources include
 
 ### Recommended Test Cases
 
-For comprehensive testing, consider using files that demonstrate:
+Packed files are programs to analyze, not only fixtures. `-d` and `-a` name the packer and, when the unpacker accepts the image, write the unpacked program beside the input.
 
-- **Packed executables**: Files compressed with EXEPACK or similar packers
-  - Typically have no or few relocation entries
-  - Smaller file size
+- **Packed executables**: EXEPACK, LZEXE 0.90/0.91, PKLITE, DIET, or LHarc
+  - Detection is structural. `DIET` at offset `0x1C`, or a sentence that mentions LHA, is not a packer
+  - `-d` writes `<stem>.asm` plus `<stem>_UNPACKED.EXE` or `.COM` and `<stem>_UNPACKED.asm` when unpack succeeds
+  - An output that already exists is left unchanged
 
 - **Unpacked executables**: Standard MZ format files
   - Contains relocation table entries
@@ -179,15 +187,19 @@ Canonical format matching `hexdump -C`:
 - ASCII panel with `|` delimiters
 - Zero-compression: repeated lines shown as `*`
 
-### Disassembly (`-d`)
+### Disassembly (`-d`, also `-a`)
 
 Static code analysis:
 - File offset for each instruction
 - Raw instruction bytes (up to 8 bytes)
 - x86-16 mnemonic and operands
 - INT annotation comments (INT 21h, INT 10h, etc.) from RBIL database
+- Default `<stem>.asm` next to the input. An existing file is kept unless `-o` names it
+- Structural EXEPACK, LZEXE 0.90/0.91, PKLITE, DIET, and LHarc also produce `<stem>_UNPACKED.EXE` or `<stem>_UNPACKED.COM` and `<stem>_UNPACKED.asm`. An existing unpacked file is kept
 
 ### Simulation (`--simulate`)
+
+In-memory sandbox. Guest data files start empty, and guest I/O does not open host files. A write to DOS handle 1 (stdout) or handle 2 (stderr) fails with CF=1 and AX=6.
 
 Dynamic execution trace:
 - Initial CPU register state (CS:IP, SS:SP, DS, ES, FLAGS, etc.)

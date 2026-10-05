@@ -1,4 +1,4 @@
-.TH DUMPEXE 1 "March 2026" "RetroCodeMess" "User Commands"
+.TH DUMPEXE 1 "October 2026" "RetroCodeMess" "User Commands"
 .SH NAME
 dumpexe \- MS-DOS / Win16 binary analyzer: MZ EXE, NE, .COM, and .SYS
 .SH SYNOPSIS
@@ -86,6 +86,7 @@ This is
 .TP
 .BR \-a ", " \-\-all
 Show all sections in order: static info, relocation table (EXE), hexdump, and disassembly.
+Also unpacks the same packers as \-d.
 .TP
 .BR \-n ", " \-\-no-int-annotations
 Suppress INT annotation comments in disassembly output.
@@ -103,7 +104,9 @@ Only a disable switch is provided (sane-defaults CLI policy).
 .B \-\-json
 Emit a machine-readable JSON report on stdout (default: off).
 Includes MZ header, Pascal MT+ report, strings, and CFG summary.
-Human text sections are suppressed. Combine with
+Human text sections are suppressed.
+Does not unpack.
+Combine with
 .B \-\-cfg-dot
 to also write a Graphviz file (path recorded in JSON).
 .TP
@@ -144,18 +147,192 @@ when the image is not MZ) and
 of the unpacked program.
 .B \-o
 names only the packed listing.
+DIET matches Deark
+.B identify_diet_fmt
+(EXE stub at
+.I codestart\-32+{77,72,52,55}
+plus the COM and data patterns).
+The four bytes
+.B DIET
+at file offset 1Ch are not enough.
+LHarc matches an embedded header that would pass Deark
+.B de_identify_lha
+(recognized method, header level 0..3, and that level's size checks).
+An
+.B LHA
+sentence is not enough.
+LZEXE 0.91 or 0.90 suppresses LHarc.
 .TP
 .BR \-o ", " \-\-output " PATH"
 Override the listing output path (default:
 .IR <stem>.asm ).
+.B \-\-output=PATH
+is the same switch.
 Use
 .B \-
-for stdout only (still prints listing on stdout in human mode).
+for stdout only.
+.B \-o \-
+writes no
+.IR <stem>.asm ,
+no
+.IR <stem>_UNPACKED.EXE ,
+and no
+.IR <stem>_UNPACKED.asm .
+Both listings still go to stdout.
 .TP
 .B \-\-no-asm-file
 Do not write an
 .B .asm
 file (default when disassembling is to write one).
+.PP
+An existing default
+.I <stem>.asm
+or
+.I <stem>.repack.exe
+is kept.
+.B \-o
+or
+.B \-\-repack-output
+may replace the path it names.
+An existing
+.IR <stem>_UNPACKED.EXE ,
+.IR .COM ,
+or
+.I .asm
+is kept.
+A kept unpacked image is not paired with a new
+.I _UNPACKED.asm .
+.PP
+.B \-\-no-toolchain
+and
+.B \-\-json
+skip unpack.
+There is no
+.B \-\-unpack
+switch. Auto-repack stays on;
+.B \-\-no-repack
+turns it off.
+
+.SS CFG, toolchain, and trace options
+These flags are parsed by
+.BR \-\-help .
+Defaults that are already on have only a
+.B \-\-no-*
+form.
+.TP
+.B \-\-cfg
+Build and print the static CFG with INT and string cross-references.
+.TP
+.B \-\-cfg-interesting
+Print only the interesting-block summary. No full dump.
+.TP
+.B \-\-cfg-no-insns
+CFG edges and tags only. No per-block disassembly.
+.TP
+.B \-\-cfg-no-calls
+Do not follow near call targets as new leaders.
+.TP
+.BI \-\-cfg-max= N
+Maximum basic blocks in the CFG full dump.
+Default 500.
+The
+.B \-d
+listing cap is the greater of
+.I N
+and 2000.
+.TP
+.BI \-\-cfg-insns= N
+Instructions shown per CFG block (default 12; 0 means all).
+.TP
+.BI \-\-cfg-interesting-max= N
+Maximum interesting blocks to expand (default 80).
+.TP
+.BI \-\-cfg-load-depth= N
+Reverse-walk depth for the load and I/O graph (default 6).
+.TP
+.BI \-\-cfg-load-max= N
+Maximum path and FCB seeds in the load graph (default 40).
+.TP
+.B \-\-no-toolchain
+Disable JWASM 1.8, COM-in-EXE, CuteMouse, and packer detection
+(default on). Also skips unpack.
+.TP
+.B \-\-no-dos-extender
+Disable DOS extender and DPMI stub detection (default on).
+.TP
+.BR \-\-bits= 16|32
+Force the Capstone x86 width. Default is auto (32 when an extender is detected).
+.TP
+.BI \-\-map= FILE
+Load a symbol map. Disables the need for auto-load.
+.TP
+.B \-\-no-map
+Do not auto-load
+.I <stem>.sym
+or
+.I <stem>.map
+(default is auto on).
+.TP
+.BI \-\-model= M
+JWASM export memory model:
+tiny, small, medium, compact, large, or huge.
+Default small when unknown.
+.B .COM
+and COM-in-EXE stay tiny.
+.TP
+.B \-\-no-repack
+Do not write
+.I <stem>.repack.exe
+after a Turbo Pascal or JWASM export (default on).
+.TP
+.BI \-\-repack-output= PATH
+Override the repack EXE path. Implies repack on.
+.TP
+.B \-\-trace
+Print every executed instruction. Implies
+.BR \-\-simulate .
+.TP
+.B \-\-sim-quiet
+Print only breakpoint hits and a final summary. Implies
+.BR \-\-simulate .
+.TP
+.BI \-\-max-insns= N
+Stop after
+.I N
+instructions (default 64, or 1000000 with
+.BR \-\-bp ).
+Implies
+.BR \-\-simulate .
+.TP
+.BI \-\-loop-limit= N
+Take a short backward jmp or jcc at most
+.I N
+times, then fall through
+(default 10000; 0 disables). Implies
+.BR \-\-simulate .
+.TP
+.BI \-\-loop-span= XX
+Maximum IP distance of a tight loop, in hex (default 100h).
+Implies
+.BR \-\-simulate .
+.TP
+.BI \-\-bp= SPEC
+Add a breakpoint. Repeatable. Implies
+.BR \-\-simulate .
+Forms:
+.IR ip:XXXX ,
+.IR CS:IP ,
+.IR int:21 ,
+.IR int:21,ah=0F .
+.TP
+.BI \-\-dump= seg:off:len
+Hex-dump memory on each breakpoint hit.
+.I seg
+is hex or cs, ds, es, or ss.
+.I len
+is hex and defaults to 40h.
+Implies
+.BR \-\-simulate .
 
 .SS Simulation Options
 .TP
@@ -163,7 +340,10 @@ file (default when disassembling is to write one).
 Enable DOS load simulation mode. This performs
 .B dynamic analysis
 by simulating how DOS loads and starts the program.
-Guest file I/O stays inside the simulator and does not read or write the host.
+The simulator is an in-memory sandbox.
+Guest data files start empty.
+Guest I/O does not open host files.
+A write to handle 1 (stdout) or handle 2 (stderr) returns CF=1 and AX=6.
 Shows:
 .RS
 .IP \(bu 2
@@ -281,8 +461,10 @@ are annotated with descriptions from the Ralf Brown Interrupt List (RBIL) databa
 .SS Simulation (--simulate)
 .B Dynamic execution trace
 that simulates DOS loading and program startup.
-Guest file create, open, read, and write stay inside the simulator and do not
-read or write the host filesystem:
+Guest data files start empty.
+Create, open, read, and write stay inside the simulator and do not
+open host files.
+A write to handle 1 or handle 2 returns CF=1 and AX=6:
 
 .B Initial Register State:
 .RS
@@ -375,7 +557,7 @@ Umbrella header that includes all modular sub-headers
 MS-DOS .COM format constants (PSP size, entry offset, command-tail offsets)
 .TP
 .B com_analysis.h
-.COM analysis functions: PSP heuristic detection and full analysis output
+COM analysis functions: PSP heuristic detection and full analysis output
 .TP
 .B dumpexe.cpp
 Main implementation file

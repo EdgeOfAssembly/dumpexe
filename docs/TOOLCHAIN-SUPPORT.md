@@ -134,6 +134,22 @@ dumpexe -d CATACOMB.EXE
 dumpexe -d --no-repack CATACOMB.EXE   # asm only
 ```
 
+## Packers (structural)
+
+`-d` and `-a` report a packer and try to unpack it. `--json` and
+`--no-toolchain` skip unpack. There is no `--unpack` switch. The first
+name wins, in this order: PKLITE, LZEXE, DIET, EXEPACK, LHarc.
+
+| Packer | What matches | What does not |
+|--------|----------------|---------------|
+| **PKLITE** | `e_ip` 256, CS −16, `e_crlc` ≤ 2, entry at the header end, one normal prologue. Version word is the little-endian value at file `0x1C` (`PKLITE M.mm`, or `PKLITE` when that word's low 12 bits are 0). | An ASCII `PKLITE` banner |
+| **LZEXE 0.91 / 0.90** | `LZ91` or `LZ09` at file `0x1C`, `e_crlc` 0, `e_lfarlc` `0x1C`, `e_ovno` 0, and `06 0E 1F 8B` at the entry or one byte after a `50` (push ax). `LZ91` is 0.91. `LZ09` is 0.90. | `LZ90`. A later LHarc header is suppressed once LZEXE matched (Gold of the Aztecs stays LZEXE 0.91) |
+| **Microsoft EXEPACK** | `e_crlc` 0, `e_ip` 16 or 18, `e_sp` `0x80`, bytes `52 42` at entry−2, and epilog `CD 21 B8 FF 4C CD 21` in `[entry+200, entry+300)` | The sentence "Packed file is corrupt". No stub CRC bypass |
+| **DIET** | Deark `identify_diet_fmt`. EXE: MZ or ZM, `codestart = 16 * le16(file+8)`, and the 8-byte prefix of `8E DB 8E C0 33 F6 33 FF B9` at `codestart-32+{77,72,52,55}`. The following `0x95` (`maybe_lglz`) does not reject the hit. COM/data: `be` + `dlz` at 35 and the old stub at 17; `bf` + that old stub; `f9` + `dlz` at 65 and `9D 89` at 10; `B4 4C CD 21` + `9D 89`; `9D 89` + `dlz` | The four bytes `DIET` or `diet` at file `0x1C` |
+| **LHarc** | A 22-byte window that would pass Deark `de_identify_lha`: a `BASEFMT_LHA` method from `cmpr_meth_arr` or an id in `other_known_cmpr_methods`, at byte 2, header level `b[20]` in 0..3, and that level's size checks | `LHarc` or `LHA ` text. `is_possible_cmpr_meth` alone (`-the-`). SWG, AFX, TPK, and PAKLEO methods. A bare `-lh5-` with no valid header |
+
+Deark's MIT modules unpack in-process. dumpexe does not shell out to `deark`,
+`unlzexe`, or `unexepack`.
 
 ## Related paths
 
@@ -143,7 +159,7 @@ dumpexe -d --no-repack CATACOMB.EXE   # asm only
 | `games/cutemouse/` | CuteMouse fixture + RE-NOTES |
 | `games/icon-quest-for-the-ring/` | ICON / Pascal MT+ campaign |
 | `pascal_mt.h` | Pascal MT+ 3.1.1 |
-| `toolchain.h` | COM-in-EXE, JWASM 1.8, CuteMouse |
+| `toolchain.h` | COM-in-EXE, JWASM 1.8, CuteMouse, structural packers |
 | `listing.h` | Multi-pass listing + JWASM export |
 | `/mnt/re-tools/jwasm/` | Durable tool backup |
 

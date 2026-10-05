@@ -10,7 +10,9 @@
  * Also reports packers and compiler banners. PKLITE, LZEXE, and Microsoft
  * EXEPACK are structural MZ matches (signed CS, entry in-file), not a
  * whole-file scan for "PKLITE", "RB", or "Packed file is corrupt".
- * DIET is the 4-byte stub at file offset 0x1C. LHarc / "LHA ", Turbo C,
+ * DIET follows Deark identify_diet_fmt (EXE stub offsets plus the COM and
+ * data patterns). LHarc follows de_identify_lha on an embedded header.
+ * "DIET" at 0x1C and an "LHA " sentence are not enough. Turbo C,
  * Turbo C++, Borland C++, Microsoft C, QuickBASIC, Clipper, TopSpeed, and
  * Watcom are literal banners. BRUN alone is not QuickBASIC. The same scan
  * runs for MZ, COM, and SYS. Does not replace Pascal MT+ or Turbo Pascal.
@@ -383,6 +385,247 @@ static inline std::string toolchain_pklite_name(uint16_t info)
 }
 
 /**
+ * @brief True when @p n bytes at @p off match @p sig.
+ *
+ * A negative offset or a read past the end of @p data is a miss.
+ * Deark's DIET EXE probe uses signed offsets that can land before the file.
+ *
+ * @param data File bytes.
+ * @param off  File offset. Negative means the probe is outside the file.
+ * @param sig  Bytes to compare. Not null when @p n is nonzero.
+ * @param n    Length of @p sig.
+ * @return true when the range is inside @p data and the bytes match.
+ */
+static inline bool toolchain_bytes_at(const std::vector<uint8_t>& data,
+                                      int64_t off,
+                                      const uint8_t* sig,
+                                      size_t n)
+{
+    if (off < 0 || sig == nullptr || n == 0)
+    {
+        return false;
+    }
+    const uint64_t u = static_cast<uint64_t>(off);
+    if (u > data.size() || n > data.size() - static_cast<size_t>(u))
+    {
+        return false;
+    }
+    return std::memcmp(data.data() + static_cast<size_t>(u), sig, n) == 0;
+}
+
+/**
+ * @brief Match Deark @c identify_diet_fmt, including the EXE stubs.
+ *
+ * EXE: MZ or ZM, @c codestart = 16 * the little-endian word at file offset 8,
+ * and the 8-byte prefix of @c 8E DB 8E C0 33 F6 33 FF B9 at one of
+ * @c codestart-32+{77,72,52,55}. Deark's compare length is 8; the ninth
+ * constant byte @c 0xB9 is not required. The @c 0x95 byte Deark stores as
+ * @c maybe_lglz does not accept or reject the hit.
+ *
+ * COM and data hits are that function's checks at the start of the file:
+ * @c be plus @c dlz at 35 and the old stub at 17, @c bf plus the old stub,
+ * @c f9 plus @c dlz at 65 and @c 9D 89 at 10, @c B4 4C CD 21 plus @c 9D 89,
+ * and @c 9D 89 plus @c dlz. No other patterns are accepted.
+ * The four ASCII bytes "DIET" or "diet" at file 0x1C are not a match.
+ *
+ * @param data File bytes.
+ * @param hit_off File offset of the deciding signature when this returns true.
+ * @return true when a Deark DIET format matches.
+ */
+static inline bool toolchain_diet_match(const std::vector<uint8_t>& data,
+                                        size_t& hit_off)
+{
+    static constexpr uint8_t kDlz[] = {'d', 'l', 'z'};
+    static constexpr uint8_t kOld[] = {
+        0xFD, 0xF3, 0xA5, 0xFC, 0x8B, 0xF7, 0xBF, 0x00};
+    static constexpr uint8_t k9d89[] = {0x9D, 0x89};
+    static constexpr uint8_t kInt21[] = {0xB4, 0x4C, 0xCD, 0x21};
+    static constexpr uint8_t k8edb[] = {
+        0x8E, 0xDB, 0x8E, 0xC0, 0x33, 0xF6, 0x33, 0xFF};
+
+    if (!data.empty() && data[0] == 0xBE &&
+        toolchain_bytes_at(data, 35, kDlz, sizeof(kDlz)) &&
+        toolchain_bytes_at(data, 17, kOld, sizeof(kOld)))
+    {
+        hit_off = 0;
+        return true;
+    }
+    if (!data.empty() && data[0] == 0xBF &&
+        toolchain_bytes_at(data, 17, kOld, sizeof(kOld)))
+    {
+        hit_off = 0;
+        return true;
+    }
+    if (!data.empty() && data[0] == 0xF9 &&
+        toolchain_bytes_at(data, 65, kDlz, sizeof(kDlz)) &&
+        toolchain_bytes_at(data, 10, k9d89, sizeof(k9d89)))
+    {
+        hit_off = 0;
+        return true;
+    }
+    if (toolchain_bytes_at(data, 0, kInt21, sizeof(kInt21)) &&
+        toolchain_bytes_at(data, 4, k9d89, sizeof(k9d89)))
+    {
+        hit_off = 0;
+        return true;
+    }
+    if (toolchain_bytes_at(data, 0, k9d89, sizeof(k9d89)) &&
+        toolchain_bytes_at(data, 2, kDlz, sizeof(kDlz)))
+    {
+        hit_off = 0;
+        return true;
+    }
+
+    if (data.size() < 10)
+    {
+        return false;
+    }
+    const bool mz = (data[0] == 'M' && data[1] == 'Z') ||
+                    (data[0] == 'Z' && data[1] == 'M');
+    if (!mz)
+    {
+        return false;
+    }
+    const int64_t codestart = 16 * static_cast<int64_t>(
+        static_cast<uint16_t>(data[8] | (static_cast<uint16_t>(data[9]) << 8)));
+    static constexpr int kRel[] = {77, 72, 52, 55};
+    for (const int rel : kRel)
+    {
+        const int64_t pos = codestart - 32 + rel;
+        if (!toolchain_bytes_at(data, pos, k8edb, sizeof(k8edb)))
+        {
+            continue;
+        }
+        hit_off = static_cast<size_t>(pos);
+        return true;
+    }
+    return false;
+}
+
+/**
+ * @brief True when five bytes are an LHA method @c de_identify_lha accepts.
+ *
+ * The set is the @c BASEFMT_LHA rows of @c cmpr_meth_arr plus
+ * @c other_known_cmpr_methods. @c is_possible_cmpr_meth alone is not enough
+ * ("-the-" is possible and is not LHA). SWG, AFX, TPK, and PAKLEO methods
+ * are not in this list.
+ *
+ * @param meth Five method bytes (the id at offset 2 of a header window).
+ * @return true when Deark would set @c is_recognized for @c BASEFMT_LHA.
+ */
+static inline bool toolchain_lha_method(const uint8_t meth[5])
+{
+    static constexpr std::string_view kMethods[] = {
+        "-lhd-", "-lh0-", "-lh1-", "-lh2-", "-lh3-", "-lh4-", "-lh5-",
+        "-lh6-", "-lh7-", "-lh8-", "-lh9-", "-lha-", "-lhb-", "-lhc-",
+        "-lhe-", "-lhx-", "-lx1-",
+        "-lz2-", "-lz3-", "-lz4-", "-lz5-", "-lz7-", "-lz8-", "-lzs-",
+        "-pm0-", "-pm1-", "-pm2-",
+        "-ah0-", "-ari-", "-hf0-",
+        "-lZ0-", "-lZ1-", "-lZ5-",
+        " LH0 ", " LH5 ",
+    };
+    if (meth == nullptr)
+    {
+        return false;
+    }
+    for (const std::string_view id : kMethods)
+    {
+        if (std::memcmp(meth, id.data(), 5) == 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * @brief True when a 22-byte window would pass Deark @c de_identify_lha.
+ *
+ * Header level is byte 20 and must be 0..3. That level's size checks are
+ * the same comparisons as @c lha.c. A recognized method id has to sit at
+ * byte 2. File-extension confidence is ignored: an embedded header has none.
+ *
+ * @param win Twenty-two header bytes. The caller guarantees the length.
+ * @return true when the window is a recognized LHA local header.
+ */
+static inline bool toolchain_lha_window(const uint8_t win[22])
+{
+    if (win == nullptr || win[20] > 3)
+    {
+        return false;
+    }
+    if (!toolchain_lha_method(win + 2))
+    {
+        return false;
+    }
+    if (win[20] == 0)
+    {
+        if (win[0] < 22)
+        {
+            return false;
+        }
+        if (22 + static_cast<int>(win[21]) + 2 > 2 + static_cast<int>(win[0]))
+        {
+            return false;
+        }
+    }
+    else if (win[20] == 1)
+    {
+        if (win[0] < 25)
+        {
+            return false;
+        }
+        if (22 + static_cast<int>(win[21]) + 5 > 2 + static_cast<int>(win[0]))
+        {
+            return false;
+        }
+    }
+    else if (win[20] == 2)
+    {
+        const int hsize = static_cast<int>(win[0]) |
+                          (static_cast<int>(win[1]) << 8);
+        if (hsize < 26)
+        {
+            return false;
+        }
+    }
+    else if ((win[0] != 4 && win[0] != 8) || win[1] != 0)
+    {
+        return false;
+    }
+    return true;
+}
+
+/**
+ * @brief Find an embedded header that would pass @c de_identify_lha.
+ *
+ * Slides a 22-byte window across @p data. The first hit wins.
+ *
+ * @param data File bytes.
+ * @param hit_off Window start when this returns true.
+ * @return true when some window is a recognized LHA header.
+ */
+static inline bool toolchain_lha_match(const std::vector<uint8_t>& data,
+                                       size_t& hit_off)
+{
+    if (data.size() < 22)
+    {
+        return false;
+    }
+    for (size_t i = 0; i + 22 <= data.size(); ++i)
+    {
+        if (!toolchain_lha_window(data.data() + i))
+        {
+            continue;
+        }
+        hit_off = i;
+        return true;
+    }
+    return false;
+}
+
+/**
  * @brief Record structural packer hits and literal compiler banners.
  *
  * PKLITE matches only the typical header (e_ip 256, signed CS -16, e_crlc
@@ -393,16 +636,17 @@ static inline std::string toolchain_pklite_name(uint16_t info)
  * LZEXE matches LZ91 or LZ09 at file 0x1C, with e_crlc 0, e_lfarlc 0x1C,
  * e_ovno 0, and the bytes 06 0E 1F 8B at the entry or one byte later when
  * that byte is 50 (push ax). LZ91 is "LZEXE 0.91" and LZ09 is "LZEXE 0.90".
- * LZ90 is not matched. An LZ91 or LZ09 marker suppresses a later LHarc banner.
+ * LZ90 is not matched. A completed LZEXE match suppresses LHarc.
  *
  * Microsoft EXEPACK matches e_crlc 0, e_ip 16 or 18 (not 20), e_sp 0x80,
  * the bytes 52 42 at entry-2, and the epilog CD 21 B8 FF 4C CD 21 starting
  * in [entry+200, entry+300). The English sentence "Packed file is corrupt"
  * is neither required nor sufficient. No stub CRC bypass.
  *
- * DIET remains the 4-byte "diet" or "DIET" at file 0x1C. LHarc and the
- * compiler banners are unchanged literal strings. The first packer name
- * wins; later hits stay in the evidence list.
+ * DIET is @c toolchain_diet_match. LHarc is @c toolchain_lha_match, and it
+ * is not set when LZEXE already matched. Compiler banners stay literal
+ * strings. The first packer name wins (PKLITE, LZEXE, DIET, EXEPACK, LHarc);
+ * later hits stay in the evidence list.
  *
  * @param fileData Image bytes.
  * @param rep      Report to fill. Existing fields are left intact.
@@ -474,18 +718,16 @@ static inline void toolchain_scan_fingerprints(const std::vector<uint8_t>& fileD
             name, static_cast<uint64_t>(mz.entry)));
     }
 
-    if (fileData.size() >= 0x1C + 4)
+    size_t diet_off = 0;
+    if (toolchain_diet_match(fileData, diet_off))
     {
-        const uint8_t* p = fileData.data() + 0x1C;
-        if (std::memcmp(p, "diet", 4) == 0 || std::memcmp(p, "DIET", 4) == 0)
+        rep.diet = true;
+        if (rep.packer.empty())
         {
-            rep.diet = true;
-            if (rep.packer.empty())
-            {
-                rep.packer = "DIET";
-            }
-            rep.evidence.push_back("DIET signature at file 0x1C");
+            rep.packer = "DIET";
         }
+        rep.evidence.push_back(std::format(
+            "DIET signature at file 0x{:X}", diet_off));
     }
 
     static constexpr uint8_t kRb[] = {0x52, 0x42};
@@ -508,21 +750,18 @@ static inline void toolchain_scan_fingerprints(const std::vector<uint8_t>& fileD
             static_cast<uint64_t>(mz.entry),
             static_cast<uint64_t>(mz.entry - 2)));
     }
-    // LZ91/LZ09 at file 0x1C wins over a later "LHA " banner inside the
-    // compressed bytes (Gold of the Aztecs INSTALL.EXE).
-    if (!lz_marker && toolchain_find_ascii(fileData, "LHarc", off))
+    // LZEXE 0.91/0.90 already matched: do not also set LHarc.
+    // Gold of the Aztecs INSTALL.EXE stays "LZEXE 0.91".
+    size_t lha_off = 0;
+    if (!rep.lzexe && toolchain_lha_match(fileData, lha_off))
     {
         rep.lharc = true;
         if (rep.packer.empty())
+        {
             rep.packer = "LHarc";
-        rep.evidence.push_back(std::format("LHarc banner at file 0x{:X}", off));
-    }
-    else if (!lz_marker && toolchain_find_ascii(fileData, "LHA ", off))
-    {
-        rep.lharc = true;
-        if (rep.packer.empty())
-            rep.packer = "LHarc";
-        rep.evidence.push_back(std::format("LHA banner at file 0x{:X}", off));
+        }
+        rep.evidence.push_back(std::format(
+            "LHarc header at file 0x{:X}", lha_off));
     }
 
     struct CompilerBanner
