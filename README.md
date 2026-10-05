@@ -16,6 +16,7 @@ A comprehensive command-line utility for analyzing MS-DOS 16-bit binary files: M
 - **JSON**: `--json` machine-readable report
 - **Symbol maps**: auto `<stem>.sym`/`.map` or `--map=FILE`
 - **Era tools**: versioned assemblers under `bin/jwasm/` (see `docs/TOOLCHAIN-SUPPORT.md`)
+- **bin2exe**: sibling program in this repo (`make` builds it, `make install` installs it). Wraps a `uasm -bin` flat image. The default header runs that image as a COM program. `--header ORIGINAL.EXE` copies that MZ header unchanged, which is how a `--uasm` round trip keeps relocations and SS:SP. dumpexe does not run bin2exe.
 - **Cross-Platform**: Analyze DOS binaries on Linux/Unix
 
 ## Adding a new compiler/assembler
@@ -42,6 +43,8 @@ sudo apt-get install -y build-essential libcapstone-dev
 ```bash
 make
 ```
+
+That builds `dumpexe` and `bin2exe`. `make test` runs both suites. `make install` installs both programs and their man pages.
 
 > The build will fail with a clear error if `libcapstone-dev` is not installed.
 

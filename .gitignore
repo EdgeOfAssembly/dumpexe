@@ -1,5 +1,7 @@
 # Build artifacts
 dumpexe
+/bin2exe
+tools/bin2exe/test_header
 *.o
 *.obj
 
