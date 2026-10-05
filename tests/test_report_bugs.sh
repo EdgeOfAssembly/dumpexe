@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for dumpexe 2.8 report/header bugs.
+# Regression tests for dumpexe 2.9 report/header bugs.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="${DUMPEXE_BIN:-$ROOT/dumpexe}"
@@ -266,10 +266,64 @@ bc_hdr = struct.pack("<14H", 0x5A4D, (32 + len(bc)) % 512, 1, 0, 2, 0, 0xFFFF,
 (td / "diet4.exe").write_bytes(build_mz(
     b"\x90" * 16, crlc=0, paras=2, ip=0, cs=0, lfarlc=0x1C, ovno=0, at_1c=b"DIET"))
 
-# LHarc banner without an -lh?- / -lz?- header.
+# e_cparhdr == 2, Deark EXE stub at file offset 77 (codestart-32+77).
+diet_sig = bytes([0x8E, 0xDB, 0x8E, 0xC0, 0x33, 0xF6, 0x33, 0xFF, 0xB9])
+diet_image = b"\x90" * (77 - 32) + diet_sig + b"\x90" * 8
+diet_exe = build_mz(diet_image, crlc=0, paras=2, ip=0, cs=0, lfarlc=0x1C, ovno=0)
+assert diet_exe[8:10] == struct.pack("<H", 2)
+assert diet_exe[77:77 + len(diet_sig)] == diet_sig
+(td / "diet_exe.exe").write_bytes(diet_exe)
+
+# COM 1.00: BF plus the old stub at offset 17. Not an MZ.
+diet_old = bytes([0xFD, 0xF3, 0xA5, 0xFC, 0x8B, 0xF7, 0xBF, 0x00])
+diet_com = bytearray(40)
+diet_com[0] = 0xBF
+diet_com[17:25] = diet_old
+(td / "diet_com.com").write_bytes(diet_com)
+
+# Data 1.02: 9D 89 + dlz at the start. A leading BE without the stubs is not DIET.
+diet_data = bytearray(16)
+diet_data[0:2] = bytes([0x9D, 0x89])
+diet_data[2:5] = b"dlz"
+(td / "diet_data.bin").write_bytes(diet_data)
+(td / "diet_be_only.com").write_bytes(bytes([0xBE]) + b"\x00" * 48)
+
+# LHA sentence without a header window.
 (td / "lharc_banner.exe").write_bytes(build_mz(
-    b"LHarc's SFX" + b"\x90" * 16, crlc=0, paras=2, ip=0, cs=0,
-    lfarlc=0x1C, ovno=0))
+    b"Archive created with LHA Version 2.13" + b"\x90" * 16,
+    crlc=0, paras=2, ip=0, cs=0, lfarlc=0x1C, ovno=0))
+
+def lha_window(method, level, hsize, fnlen=0):
+    win = bytearray(22)
+    win[0] = hsize & 0xFF
+    win[1] = (hsize >> 8) & 0xFF
+    win[2:7] = method
+    win[20] = level
+    win[21] = fnlen
+    return bytes(win)
+
+# Level 0: hsize 22, fnlen 0, method -lh5-. Sits at file offset 32.
+lha_l0 = build_mz(lha_window(b"-lh5-", 0, 22) + b"\x90" * 8,
+                  crlc=0, paras=2, ip=0, cs=0, lfarlc=0x1C, ovno=0)
+assert lha_l0[34:39] == b"-lh5-"
+assert lha_l0[32 + 20] == 0
+(td / "lha_l0.exe").write_bytes(lha_l0)
+
+# Level 1: hsize 25, fnlen 0. 22+0+5 <= 2+25.
+(td / "lha_l1.exe").write_bytes(build_mz(
+    lha_window(b"-lh0-", 1, 25) + b"\x90" * 8,
+    crlc=0, paras=2, ip=0, cs=0, lfarlc=0x1C, ovno=0))
+
+# Bare -lh5- and a possible-but-unknown -the- with an otherwise valid window.
+(td / "lha_bare.exe").write_bytes(build_mz(
+    b"-lh5-" + b"\x00" * 32, crlc=0, paras=2, ip=0, cs=0, lfarlc=0x1C, ovno=0))
+(td / "lha_the.exe").write_bytes(build_mz(
+    lha_window(b"-the-", 0, 22) + b"\x90" * 8,
+    crlc=0, paras=2, ip=0, cs=0, lfarlc=0x1C, ovno=0))
+# SWG method is not LHarc even with a level-0 size check.
+(td / "lha_swg.exe").write_bytes(build_mz(
+    lha_window(b"-sw0-", 0, 22) + b"\x90" * 8,
+    crlc=0, paras=2, ip=0, cs=0, lfarlc=0x1C, ovno=0))
 
 # Tiny real MZ (ret). Not a packer.
 tiny = build_mz(b"\xc3", crlc=0, paras=2, ip=0, cs=0, lfarlc=0x1C, ovno=0)
@@ -525,7 +579,7 @@ json_mz_22() {
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["tool"] == "dumpexe", d.get("tool")
-assert d["version"] == "2.8", d.get("version")
+assert d["version"] == "2.9", d.get("version")
 mz = d["mz"]
 assert mz["extra_bytes"] == 10, mz.get("extra_bytes")
 assert mz["min_alloc"] == 14, mz.get("min_alloc")
@@ -563,7 +617,7 @@ json_com_entry() {
   python3 - "$TD/com.json" "$TD/com_psp_flag.json" << 'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert d["version"] == "2.8"
+assert d["version"] == "2.9"
 assert d["format"] == "com"
 assert d["com"]["file_size"] == 1
 assert d["com"]["entry_ip"] == "0100"
@@ -597,7 +651,7 @@ check json_com_psp json_com_psp
 check version_capstone bash -c "
   set -euo pipefail
   '$BIN' -v >'$TD/ver.txt'
-  grep -q 'dumpexe 2.8' '$TD/ver.txt'
+  grep -q 'dumpexe 2.9' '$TD/ver.txt'
   grep -Eq 'Capstone[[:space:]]+[0-9]+\\.[0-9]+' '$TD/ver.txt'
 "
 
@@ -891,31 +945,78 @@ check exepack_synthetic_fails bash -c "
   [[ ! -e '$TD/exepack_UNPACKED.asm' ]]
 "
 
-check diet4_fails bash -c "
+check diet4_not_packer bash -c "
   set -euo pipefail
   set +e
   '$BIN' -d '$TD/diet4.exe' >'$TD/diet4.out' 2>'$TD/diet4.err'
   rc=\$?
   set -e
   [[ \$rc -eq 0 ]]
-  grep -q 'Packer:      DIET' '$TD/diet4.out'
-  grep -q 'unpack failed (DIET)' '$TD/diet4.err'
+  if grep -q 'Packer:      DIET' '$TD/diet4.out'; then
+    echo 'DIET at 0x1C reported Packer DIET' >&2
+    exit 1
+  fi
+  if grep -q 'unpack failed' '$TD/diet4.err'; then
+    echo 'DIET at 0x1C tried to unpack' >&2
+    exit 1
+  fi
   [[ ! -e '$TD/diet4_UNPACKED.EXE' ]]
   [[ ! -e '$TD/diet4_UNPACKED.COM' ]]
   [[ ! -e '$TD/diet4_UNPACKED.asm' ]]
 "
 
-check lharc_banner_fails bash -c "
+check diet_exe_structural bash -c "
+  set -euo pipefail
+  '$BIN' -d --no-repack '$TD/diet_exe.exe' >'$TD/diet_exe.out' 2>'$TD/diet_exe.err'
+  grep -q 'DIET' '$TD/diet_exe.out'
+"
+
+check diet_com_and_data bash -c "
+  set -euo pipefail
+  '$BIN' '$TD/diet_com.com' >'$TD/diet_com.out'
+  '$BIN' '$TD/diet_data.bin' >'$TD/diet_data.out'
+  '$BIN' '$TD/diet_be_only.com' >'$TD/diet_be.out'
+  grep -q 'Packer:      DIET' '$TD/diet_com.out'
+  grep -q 'Packer:      DIET' '$TD/diet_data.out'
+  if grep -q 'Packer:      DIET' '$TD/diet_be.out'; then
+    echo 'bare BF/BE prefix reported DIET' >&2
+    exit 1
+  fi
+"
+
+check lharc_banner_not_packer bash -c "
   set -euo pipefail
   set +e
   '$BIN' -d '$TD/lharc_banner.exe' >'$TD/lharc.out' 2>'$TD/lharc.err'
   rc=\$?
   set -e
   [[ \$rc -eq 0 ]]
-  grep -q 'Packer:      LHarc' '$TD/lharc.out'
-  grep -q 'unpack failed (LHarc)' '$TD/lharc.err'
+  if grep -q 'Packer:      LHarc' '$TD/lharc.out'; then
+    echo 'LHA sentence reported Packer LHarc' >&2
+    exit 1
+  fi
+  if grep -q 'unpack failed' '$TD/lharc.err'; then
+    echo 'LHA sentence tried to unpack' >&2
+    exit 1
+  fi
   [[ ! -e '$TD/lharc_banner_UNPACKED.EXE' ]]
   [[ ! -e '$TD/lharc_banner_UNPACKED.COM' ]]
+"
+
+check lha_header_structural bash -c "
+  set -euo pipefail
+  '$BIN' '$TD/lha_l0.exe' >'$TD/lha_l0.out'
+  '$BIN' '$TD/lha_l1.exe' >'$TD/lha_l1.out'
+  '$BIN' '$TD/lha_bare.exe' >'$TD/lha_bare.out'
+  '$BIN' '$TD/lha_the.exe' >'$TD/lha_the.out'
+  '$BIN' '$TD/lha_swg.exe' >'$TD/lha_swg.out'
+  grep -q 'LHarc' '$TD/lha_l0.out'
+  grep -q 'LHarc' '$TD/lha_l1.out'
+  if grep -q 'LHarc' '$TD/lha_bare.out' || grep -q 'LHarc' '$TD/lha_the.out' \
+      || grep -q 'LHarc' '$TD/lha_swg.out'; then
+    echo 'bare -lh5-, -the-, or -sw0- reported LHarc' >&2
+    exit 1
+  fi
 "
 
 check json_no_unpack bash -c "
@@ -1070,6 +1171,7 @@ skip_or_check unpack_keep_existing "$SAMPLES/exepack-1.exe" bash -c "
 BTECH="/mnt/samples/BattleTech - The Crescent Hawks' Revenge (1990) (v1.00) (Infocom, Inc.) (360K) (Disk 1) [!]/INSTALL.EXE"
 FIXIN="/mnt/samples/Chamber of the Sci-Mutant Priestess (1990) (Data East USA, Inc.) (360K) (Disk 1) [cp] [!]/FIXIN.EXE"
 GOLD="/mnt/samples/Gold of the Aztecs, The (1991) (v1.0) (U.S. Gold, Inc.) (1.44M) (Disk 1) [!]/INSTALL.EXE"
+ANOTHER="/mnt/samples/Another World (1992) (Europe) (U.S. Gold Ltd.) (720K) (Disk A) [!]/ANOTHER.EXE"
 LEMM="/mnt/samples/Lemmings (1991-05-11) (Psygnosis Limited) (360K) (Disk 1) [cp] [!]/CGALEMMI.EXE"
 WWF="/mnt/samples/WWF Wrestlemania (1991) (Ocean Software Ltd.) (360K) (Disk 1) [!]/WWF.EXE"
 
@@ -1135,6 +1237,20 @@ if b not in (b'MZ', b'ZM'):
     sys.exit(1)
 print('gold mz ok')
 PY
+"
+
+skip_or_check another_world_not_diet "$ANOTHER" bash -c "
+  set -euo pipefail
+  cp '$ANOTHER' '$TD/another.exe'
+  '$BIN' -d --no-repack '$TD/another.exe' >'$TD/another.out' 2>'$TD/another.err'
+  if grep -q 'Packer:      DIET' '$TD/another.out'; then
+    echo 'Another World reported DIET' >&2
+    exit 1
+  fi
+  if grep -q 'unpack failed' '$TD/another.err'; then
+    echo 'Another World unpack failed' >&2
+    exit 1
+  fi
 "
 
 if [[ -f "$BTECH" ]]; then
