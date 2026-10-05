@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for dumpexe 2.7 report/header bugs.
+# Regression tests for dumpexe 2.8 report/header bugs.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="${DUMPEXE_BIN:-$ROOT/dumpexe}"
@@ -232,6 +232,12 @@ lz_stub = bytes([0x06, 0x0E, 0x1F, 0x8B]) + b"\x90" * 8
 # Same stub, but e_crlc != 0, so the header gate fails.
 (td / "lz91_relocs.exe").write_bytes(build_mz(
     lz_stub, crlc=1, paras=2, ip=0, cs=0, lfarlc=0x1C, ovno=0, at_1c=b"LZ91"))
+# N3: PUSH AX then 06 0E 1F 8B, plus an LHA banner in the compressed-looking body.
+push_stub = bytes([0x50, 0x06, 0x0E, 0x1F, 0x8B]) + b" with LHA Version 2.05" + b"\x90" * 4
+(td / "lz91_push.exe").write_bytes(build_mz(
+    push_stub, crlc=0, paras=2, ip=0, cs=0, lfarlc=0x1C, ovno=0, at_1c=b"LZ91"))
+(td / "lz09_push.exe").write_bytes(build_mz(
+    push_stub, crlc=0, paras=2, ip=0, cs=0, lfarlc=0x1C, ovno=0, at_1c=b"LZ09"))
 
 # EXEPACK: IP 16, RB at EP-2, epilog inside [EP+200, EP+300). No English sentence.
 ex_image = bytearray(16 + 220 + 7)
@@ -519,7 +525,7 @@ json_mz_22() {
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["tool"] == "dumpexe", d.get("tool")
-assert d["version"] == "2.7", d.get("version")
+assert d["version"] == "2.8", d.get("version")
 mz = d["mz"]
 assert mz["extra_bytes"] == 10, mz.get("extra_bytes")
 assert mz["min_alloc"] == 14, mz.get("min_alloc")
@@ -557,7 +563,7 @@ json_com_entry() {
   python3 - "$TD/com.json" "$TD/com_psp_flag.json" << 'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert d["version"] == "2.7"
+assert d["version"] == "2.8"
 assert d["format"] == "com"
 assert d["com"]["file_size"] == 1
 assert d["com"]["entry_ip"] == "0100"
@@ -591,7 +597,7 @@ check json_com_psp json_com_psp
 check version_capstone bash -c "
   set -euo pipefail
   '$BIN' -v >'$TD/ver.txt'
-  grep -q 'dumpexe 2.7' '$TD/ver.txt'
+  grep -q 'dumpexe 2.8' '$TD/ver.txt'
   grep -Eq 'Capstone[[:space:]]+[0-9]+\\.[0-9]+' '$TD/ver.txt'
 "
 
@@ -627,6 +633,41 @@ check lzexe_gate_reject bash -c "
     exit 1
   fi
 "
+
+check lzexe_push_ax bash -c "
+  set -euo pipefail
+  '$BIN' '$TD/lz91_push.exe' >'$TD/lz91_push.out'
+  '$BIN' '$TD/lz09_push.exe' >'$TD/lz09_push.out'
+  grep -qx 'Packer:      LZEXE 0.91' '$TD/lz91_push.out'
+  grep -qx 'Packer:      LZEXE 0.90' '$TD/lz09_push.out'
+  if grep -q 'LHarc' '$TD/lz91_push.out' || grep -q 'LHarc' '$TD/lz09_push.out'; then
+    echo 'LZ91/LZ09 file reported LHarc' >&2
+    exit 1
+  fi
+"
+
+check json_high_byte python3 - "$BIN" "$TD" << 'PY'
+import json, os, subprocess, sys
+bin_path, td = sys.argv[1:]
+# A real 0xFF byte in the name, not the UTF-8 encoding of U+00FF.
+raw_name = os.path.join(os.fsencode(td), b"q\xff.com")
+with open(raw_name, "wb") as fh:
+    fh.write(b"\xc3")
+proc = subprocess.run([os.fsencode(bin_path), b"--json", raw_name], capture_output=True)
+if proc.returncode != 0:
+    sys.stderr.buffer.write(proc.stderr)
+    sys.exit(1)
+text = proc.stdout.decode("utf-8")
+if "\\u00ff" not in text:
+    print("JSON did not escape 0xFF as \\\\u00ff")
+    print(text[:500])
+    sys.exit(1)
+data = json.loads(text)
+if "\u00ff" not in data["file"]:
+    print("filename did not round-trip", repr(data.get("file")))
+    sys.exit(1)
+print("json utf-8 ok")
+PY
 
 check exepack_structural bash -c "
   set -euo pipefail
@@ -707,6 +748,12 @@ emit("huge.com",
      "ba2001b416cd21c7062e01ffffb9ffffba2001b427cd21b44ccd2190"
      "90909090004855474520202020444154000000000000000000000000"
      "0000000000000000000000000000000000000000")
+# CX=1000, one rep movsb. --max-insns=10 must stop long before 1000 steps.
+emit("rep.com", "b9e803f3a4c3")
+# Create "A" and loop AH=40h CX=FFFFh. Guest storage must stay capped.
+emit("grow.com",
+     "ba200131c9b43ccd2189c3b440b9ffffba0000cd21ebf4"
+     "9090909090909090904100")
 PY
 
 check sim_guest_victim bash -c "
@@ -767,6 +814,47 @@ check sim_guest_huge bash -c "
   [[ ! -e \"\$dir/huge.dat\" ]]
   grep -F 'FCB read' '$TD/huge.out' >/dev/null
   grep -F 'DOS terminate' '$TD/huge.out' >/dev/null
+"
+
+check sim_rep_budget bash -c "
+  set -euo pipefail
+  '$BIN' --simulate --sim-quiet --max-insns=10 '$TD/rep.com' >'$TD/rep.out' 2>'$TD/rep.err'
+  grep -F 'max-insns reached' '$TD/rep.out' >/dev/null
+  grep -E 'Instructions executed:[[:space:]]+10\$' '$TD/rep.out' >/dev/null
+  python3 - '$TD/rep.out' << 'PY'
+import re, sys
+text = open(sys.argv[1], encoding='utf-8', errors='replace').read()
+m = re.search(r'CX=([0-9A-Fa-f]{4})', text)
+if not m:
+    print('no CX')
+    sys.exit(1)
+cx = int(m.group(1), 16)
+# 1000 iterations would leave CX=0. Stopping inside the REP leaves most of it.
+if cx == 0 or cx < 0x300:
+    print('rep ran too far, CX', hex(cx))
+    sys.exit(1)
+print('rep budget ok', hex(cx))
+PY
+"
+
+check sim_guest_total_cap bash -c "
+  set -euo pipefail
+  dir='$TD/simgrow'
+  mkdir -p \"\$dir\"
+  cp '$TD/grow.com' \"\$dir/grow.com\"
+  # 512 MiB virtual cap. Unbounded AH=40h growth would bad_alloc or be killed.
+  set +e
+  bash -c 'ulimit -v 524288; timeout 30 \"\$1\" --simulate --sim-quiet --loop-limit=0 --max-insns=4000 \"\$2\" >\"\$3\" 2>\"\$4\"' \
+    bash '$BIN' \"\$dir/grow.com\" '$TD/grow.out' '$TD/grow.err'
+  rc=\$?
+  set -e
+  [[ \$rc -eq 0 ]]
+  if grep -q 'bad_alloc' '$TD/grow.out' '$TD/grow.err'; then
+    echo 'guest write threw bad_alloc' >&2
+    exit 1
+  fi
+  grep -F 'AX=5' '$TD/grow.out' >/dev/null
+  [[ ! -e \"\$dir/A\" ]]
 "
 
 SAMPLES="/tmp/project/fix-20261004/packer-samples"
@@ -840,7 +928,20 @@ check json_no_unpack bash -c "
   [[ ! -e '$TD/exepack_UNPACKED.EXE' ]]
 "
 
-check probe_exepack2_no_unpack bash -c "
+# Missing packer-samples are a skip, not a suite failure. Byte compares still run
+# when the files are present.
+skip_or_check() {
+  local name=$1
+  local file=$2
+  shift 2
+  if [[ ! -f "$file" ]]; then
+    echo "SKIP $name (no $file)"
+    return 0
+  fi
+  check "$name" "$@"
+}
+
+skip_or_check probe_exepack2_no_unpack "$SAMPLES/exepack-2.exe" bash -c "
   set -euo pipefail
   [[ -f '$SAMPLES/exepack-2.exe' ]]
   cp '$SAMPLES/exepack-2.exe' '$TD/exepack-2.exe'
@@ -869,7 +970,7 @@ oracle_deark() {
 }
 export -f oracle_deark
 
-check probe_exepack1_deark bash -c "
+skip_or_check probe_exepack1_deark "$SAMPLES/exepack-1.exe" bash -c "
   set -euo pipefail
   [[ -f '$SAMPLES/exepack-1.exe' ]]
   cp '$SAMPLES/exepack-1.exe' '$TD/exepack-1.exe'
@@ -883,7 +984,7 @@ check probe_exepack1_deark bash -c "
   cmp -s '$TD/exepack-1.oracle' '$TD/exepack-1_UNPACKED.EXE'
 "
 
-check probe_lz91_unlzexe bash -c "
+skip_or_check probe_lz91_unlzexe "$SAMPLES/lz91.exe" bash -c "
   set -euo pipefail
   [[ -f '$SAMPLES/lz91.exe' ]]
   cp '$SAMPLES/lz91.exe' '$TD/lz91-probe.exe'
@@ -899,7 +1000,7 @@ check probe_lz91_unlzexe bash -c "
   cmp -s '$TD/lz91-host.ex' '$TD/lz91-probe_UNPACKED.EXE'
 "
 
-check probe_lz09_deark bash -c "
+skip_or_check probe_lz09_deark "$SAMPLES/lz09.exe" bash -c "
   set -euo pipefail
   [[ -f '$SAMPLES/lz09.exe' ]]
   cp '$SAMPLES/lz09.exe' '$TD/lz09-probe.exe'
@@ -919,7 +1020,7 @@ check probe_lz09_deark bash -c "
   cmp -s '$TD/lz09.oracle' '$TD/lz09-probe_UNPACKED.EXE'
 "
 
-check probe_pklite_deark bash -c "
+skip_or_check probe_pklite_deark "$SAMPLES/pklite.exe" bash -c "
   set -euo pipefail
   [[ -f '$SAMPLES/pklite.exe' ]]
   cp '$SAMPLES/pklite.exe' '$TD/pklite-probe.exe'
@@ -934,7 +1035,7 @@ check probe_pklite_deark bash -c "
   cmp -s '$TD/pklite.oracle' '$TD/pklite-probe_UNPACKED.EXE'
 "
 
-check unpack_no_asm_separator bash -c "
+skip_or_check unpack_no_asm_separator "$SAMPLES/exepack-1.exe" bash -c "
   set -euo pipefail
   rm -f '$TD/exepack-1_UNPACKED.EXE' '$TD/exepack-1_UNPACKED.asm' '$TD/exepack-1.asm'
   [[ -f '$TD/exepack-1.exe' ]]
@@ -945,7 +1046,7 @@ check unpack_no_asm_separator bash -c "
   grep -q '^=== UNPACKED ===$' '$TD/exepack1_noasm.out'
 "
 
-check unpack_o_names_packed_only bash -c "
+skip_or_check unpack_o_names_packed_only "$SAMPLES/exepack-1.exe" bash -c "
   set -euo pipefail
   rm -f '$TD/exepack-1_UNPACKED.EXE' '$TD/exepack-1_UNPACKED.asm' '$TD/packed_only.asm'
   '$BIN' -d -o '$TD/packed_only.asm' '$TD/exepack-1.exe' >'$TD/exepack1_o.out'
@@ -955,7 +1056,7 @@ check unpack_o_names_packed_only bash -c "
   [[ -s '$TD/exepack-1_UNPACKED.asm' ]]
 "
 
-check unpack_keep_existing bash -c "
+skip_or_check unpack_keep_existing "$SAMPLES/exepack-1.exe" bash -c "
   set -euo pipefail
   python3 -c 'open(\"$TD/exepack-1_UNPACKED.EXE\",\"wb\").write(b\"KEEP\")'
   printf 'ASMKEEP\n' > '$TD/exepack-1_UNPACKED.asm'
@@ -965,6 +1066,200 @@ check unpack_keep_existing bash -c "
   grep -q \"refuse to overwrite '$TD/exepack-1_UNPACKED.asm'\" '$TD/exepack1_keep.err'
   [[ \"\$(cat '$TD/exepack-1_UNPACKED.asm')\" == ASMKEEP ]]
 "
+
+BTECH="/mnt/samples/BattleTech - The Crescent Hawks' Revenge (1990) (v1.00) (Infocom, Inc.) (360K) (Disk 1) [!]/INSTALL.EXE"
+FIXIN="/mnt/samples/Chamber of the Sci-Mutant Priestess (1990) (Data East USA, Inc.) (360K) (Disk 1) [cp] [!]/FIXIN.EXE"
+GOLD="/mnt/samples/Gold of the Aztecs, The (1991) (v1.0) (U.S. Gold, Inc.) (1.44M) (Disk 1) [!]/INSTALL.EXE"
+LEMM="/mnt/samples/Lemmings (1991-05-11) (Psygnosis Limited) (360K) (Disk 1) [cp] [!]/CGALEMMI.EXE"
+WWF="/mnt/samples/WWF Wrestlemania (1991) (Ocean Software Ltd.) (360K) (Disk 1) [!]/WWF.EXE"
+
+if [[ -f "$BTECH" ]]; then
+  cp "$BTECH" "$TD/btech.exe"
+  check lzexe_btech_min_le_max bash -c "
+    set -euo pipefail
+    oracle_deark lzexe '$TD/btech.exe' '$TD/btech.oracle'
+    '$BIN' -d --no-repack '$TD/btech.exe' >'$TD/btech.out' 2>'$TD/btech.err'
+    python3 - '$TD/btech.oracle' '$TD/btech_UNPACKED.EXE' << 'PY'
+import struct, sys
+oracle = open(sys.argv[1], 'rb').read()
+ours = open(sys.argv[2], 'rb').read()
+omn, omx = struct.unpack_from('<HH', oracle, 10)
+mn, mx = struct.unpack_from('<HH', ours, 10)
+print('deark', hex(omn), hex(omx), 'len', len(oracle))
+print('ours ', hex(mn), hex(mx), 'len', len(ours))
+if mn > mx:
+    sys.exit('unpacked minalloc > maxalloc')
+# Deark 1.7.3 already had min<=max for this file, so the header words
+# must stay what deark wrote. A different image length is not the wrap.
+if omn <= omx and (mn, mx) != (omn, omx):
+    sys.exit('min/max diverged from deark')
+if omn <= omx and len(oracle) == len(ours) and oracle != ours:
+    sys.exit('min<=max image differs from deark')
+print('btech min<=max ok')
+PY
+  "
+else
+  echo "SKIP lzexe_btech_min_le_max (no $BTECH)"
+fi
+
+skip_or_check lzexe_fixin_minalloc "$FIXIN" bash -c "
+  set -euo pipefail
+  cp '$FIXIN' '$TD/fixin.exe'
+  '$BIN' -d --no-repack '$TD/fixin.exe' >'$TD/fixin.out' 2>'$TD/fixin.err'
+  [[ -s '$TD/fixin_UNPACKED.EXE' ]]
+  python3 - '$TD/fixin_UNPACKED.EXE' << 'PY'
+import struct, sys
+b = open(sys.argv[1], 'rb').read()
+mn, mx = struct.unpack_from('<HH', b, 10)
+print('fixin minalloc', hex(mn), 'maxalloc', hex(mx))
+if mn > mx:
+    sys.exit(1)
+PY
+"
+
+skip_or_check lzexe_gold_push_ax "$GOLD" bash -c "
+  set -euo pipefail
+  cp '$GOLD' '$TD/gold.exe'
+  '$BIN' -d --no-repack '$TD/gold.exe' >'$TD/gold.out' 2>'$TD/gold.err'
+  grep -q 'Packer:      LZEXE 0.91' '$TD/gold.out'
+  if grep -q 'Packer:      LHarc' '$TD/gold.out'; then
+    echo 'Gold reported LHarc' >&2
+    exit 1
+  fi
+  [[ -s '$TD/gold_UNPACKED.EXE' ]]
+  python3 - '$TD/gold_UNPACKED.EXE' << 'PY'
+import sys
+b = open(sys.argv[1], 'rb').read(2)
+if b not in (b'MZ', b'ZM'):
+    print('unpacked is not MZ', b)
+    sys.exit(1)
+print('gold mz ok')
+PY
+"
+
+if [[ -f "$BTECH" ]]; then
+  mkdir -p "$TD/oo" "$TD/na" "$TD/ro" "$TD/keep" "$TD/sy"
+  cp "$BTECH" "$TD/oo/in.exe"
+  cp "$BTECH" "$TD/na/in.exe"
+  cp "$BTECH" "$TD/ro/in.exe"
+  cp "$BTECH" "$TD/keep/in.exe"
+  cp "$BTECH" "$TD/sy/in.exe"
+else
+  echo "SKIP unpack_stdout_only (no BattleTech INSTALL.EXE)"
+  echo "SKIP unpack_no_asm_still_writes_image (no BattleTech INSTALL.EXE)"
+  echo "SKIP unpack_write_error_not_failed (no BattleTech INSTALL.EXE)"
+  echo "SKIP unpack_keep_exe_skips_asm (no BattleTech INSTALL.EXE)"
+  echo "SKIP unpack_dangling_symlink (no BattleTech INSTALL.EXE)"
+fi
+if [[ -f "$TD/oo/in.exe" ]]; then
+check unpack_stdout_only bash -c "
+  set -euo pipefail
+  '$BIN' -d -o - --no-repack '$TD/oo/in.exe' >'$TD/oo.out' 2>'$TD/oo.err'
+  [[ ! -e '$TD/oo/in.asm' ]]
+  [[ ! -e '$TD/oo/in_UNPACKED.EXE' ]]
+  [[ ! -e '$TD/oo/in_UNPACKED.COM' ]]
+  [[ ! -e '$TD/oo/in_UNPACKED.asm' ]]
+  grep -q '^=== UNPACKED ===$' '$TD/oo.out'
+  # Packed listing comes first.
+  python3 - '$TD/oo.out' << 'PY'
+import sys
+text = open(sys.argv[1], encoding='utf-8', errors='replace').read()
+a = text.find('=== Multi-pass assembly listing ===')
+b = text.find('=== UNPACKED ===')
+c = text.find('=== Multi-pass assembly listing ===', b if b >= 0 else 0)
+if a < 0 or b < 0 or not (a < b):
+    print('stdout order wrong', a, b)
+    sys.exit(1)
+if c < 0:
+    print('unpacked listing missing')
+    sys.exit(1)
+print('stdout only ok')
+PY
+"
+
+check unpack_no_asm_still_writes_image bash -c "
+  set -euo pipefail
+  '$BIN' -d --no-asm-file --no-repack '$TD/na/in.exe' >'$TD/na.out' 2>'$TD/na.err'
+  [[ -s '$TD/na/in_UNPACKED.EXE' ]]
+  [[ ! -e '$TD/na/in_UNPACKED.asm' ]]
+  [[ ! -e '$TD/na/in.asm' ]]
+  grep -q '^=== UNPACKED ===$' '$TD/na.out'
+"
+
+check unpack_write_error_not_failed bash -c "
+  set -euo pipefail
+  chmod a-w '$TD/ro'
+  set +e
+  '$BIN' -d --no-repack '$TD/ro/in.exe' >'$TD/ro.out' 2>'$TD/ro.err'
+  rc=\$?
+  set -e
+  chmod u+w '$TD/ro'
+  [[ \$rc -eq 0 ]]
+  grep -F \"cannot write '$TD/ro/in_UNPACKED.EXE'\" '$TD/ro.err' >/dev/null
+  if grep -q 'unpack failed' '$TD/ro.err'; then
+    echo 'write error reported as unpack failed' >&2
+    cat '$TD/ro.err' >&2
+    exit 1
+  fi
+  grep -q '^=== UNPACKED ===$' '$TD/ro.out'
+  [[ ! -e '$TD/ro/in_UNPACKED.EXE' ]]
+"
+
+check unpack_keep_exe_skips_asm bash -c "
+  set -euo pipefail
+  printf 'KEEP' > '$TD/keep/in_UNPACKED.EXE'
+  '$BIN' -d --no-repack '$TD/keep/in.exe' >'$TD/keep.out' 2>'$TD/keep.err'
+  [[ \"\$(cat '$TD/keep/in_UNPACKED.EXE')\" == KEEP ]]
+  [[ ! -e '$TD/keep/in_UNPACKED.asm' ]]
+  grep -q \"refuse to overwrite '$TD/keep/in_UNPACKED.EXE'\" '$TD/keep.err'
+  grep -q 'kept' '$TD/keep.err'
+  if grep -q 'func_' '$TD/keep/in_UNPACKED.asm' 2>/dev/null; then
+    echo 'new asm was written for the kept exe' >&2
+    exit 1
+  fi
+"
+
+check unpack_dangling_symlink bash -c "
+  set -euo pipefail
+  ln -s '$TD/sy/missing-unpacked' '$TD/sy/in_UNPACKED.EXE'
+  '$BIN' -d --no-repack '$TD/sy/in.exe' >'$TD/sy.out' 2>'$TD/sy.err'
+  [[ ! -e '$TD/sy/missing-unpacked' ]]
+  [[ -L '$TD/sy/in_UNPACKED.EXE' ]]
+  [[ ! -e '$TD/sy/in_UNPACKED.asm' ]]
+  grep -q \"refuse to overwrite '$TD/sy/in_UNPACKED.EXE'\" '$TD/sy.err'
+"
+fi
+
+PKLITE_SRC=""
+if [[ -f "$WWF" ]]; then
+  PKLITE_SRC="$WWF"
+elif [[ -f "$LEMM" ]]; then
+  PKLITE_SRC="$LEMM"
+fi
+if [[ -n "$PKLITE_SRC" ]]; then
+  check pklite_asan_no_leak bash -c "
+    set -euo pipefail
+    make -C '$ROOT' asan
+    mkdir -p '$TD/pk'
+    cp '$PKLITE_SRC' '$TD/pk/in.exe'
+    set +e
+    ASAN_OPTIONS=detect_leaks=1 \\
+      '$ROOT/dumpexe-asan' -d --no-repack --no-asm-file '$TD/pk/in.exe' \\
+      >'$TD/pk.out' 2>'$TD/pk.err'
+    rc=\$?
+    set -e
+    if grep -q 'LeakSanitizer' '$TD/pk.err'; then
+      echo 'PKLITE leaked' >&2
+      cat '$TD/pk.err' >&2
+      exit 1
+    fi
+    [[ \$rc -eq 0 ]]
+    grep -q 'PKLITE' '$TD/pk.out'
+    [[ -s '$TD/pk/in_UNPACKED.EXE' ]]
+  "
+else
+  echo "SKIP pklite_asan_no_leak (no WWF or Lemmings sample)"
+fi
 
 echo "---"
 echo "passed=$pass failed=$fail"

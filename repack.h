@@ -11,7 +11,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <cstdint>
+#include <cstring>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <format>
@@ -20,6 +23,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <unistd.h>
 #include <vector>
 
 #include "options.h"
@@ -287,19 +291,76 @@ static inline bool repack_extract_meta(std::string_view text,
 //=============================================================================
 
 /**
- * @brief True when @p path already names something on disk.
+ * @brief True when @p path already names something, including a dangling symlink.
  *
+ * Uses `symlink_status`, so a link whose target is missing still counts.
  * Default `<stem>.asm` and `<stem>.repack.exe` outputs are not opened when
  * this is true. A path named with `-o` or `--repack-output` may still replace
- * an existing file.
+ * an existing regular file.
  *
  * @param path Candidate output path.
- * @return true if the path exists (file, directory, or followed symlink).
+ * @return true if the path exists (file, directory, or symlink).
  */
 static inline bool output_file_exists(const std::string& path)
 {
     std::error_code ec;
-    return std::filesystem::exists(path, ec);
+    const std::filesystem::file_status st = std::filesystem::symlink_status(path, ec);
+    if (ec)
+    {
+        return false;
+    }
+    return st.type() != std::filesystem::file_type::not_found;
+}
+
+/**
+ * @brief Create @p path and write @p data without following a symlink.
+ *
+ * `open(O_CREAT|O_EXCL|O_NOFOLLOW)` refuses a dangling symlink instead of
+ * creating the link target. A partial file is removed.
+ *
+ * @param path Destination. Must not already exist.
+ * @param data Bytes to write. May be null when @p n is 0.
+ * @param n    Length of @p data.
+ * @param err  Set to a short reason on failure.
+ * @return true when the new file holds all @p n bytes.
+ */
+static inline bool output_create_nofollow(const std::string& path,
+                                          const char* data,
+                                          size_t n,
+                                          std::string& err)
+{
+    const int fd = ::open(path.c_str(),
+                          O_CREAT | O_EXCL | O_NOFOLLOW | O_WRONLY | O_CLOEXEC,
+                          0644);
+    if (fd < 0)
+    {
+        err = "cannot write '" + path + "'";
+        return false;
+    }
+    size_t off = 0;
+    while (off < n)
+    {
+        const ssize_t w = ::write(fd, data + off, n - off);
+        if (w < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            ::close(fd);
+            ::unlink(path.c_str());
+            err = "cannot write '" + path + "'";
+            return false;
+        }
+        off += static_cast<size_t>(w);
+    }
+    if (::close(fd) != 0)
+    {
+        ::unlink(path.c_str());
+        err = "cannot write '" + path + "'";
+        return false;
+    }
+    return true;
 }
 
 static inline std::string repack_default_path(const std::string& input_path)
@@ -335,8 +396,14 @@ static inline std::vector<uint8_t> repack_build_exe(const std::vector<uint8_t>& 
 
 static inline bool repack_write_file(const std::string& path,
                                      const std::vector<uint8_t>& data,
-                                     std::string& err)
+                                     std::string& err,
+                                     bool exclusive = false)
 {
+    if (exclusive)
+    {
+        const char* bytes = data.empty() ? nullptr : reinterpret_cast<const char*>(data.data());
+        return output_create_nofollow(path, bytes, data.size(), err);
+    }
     std::ofstream f(path, std::ios::binary);
     if (!f)
     {
@@ -433,7 +500,7 @@ static inline bool repack_auto(const Options& opts,
 
     auto exe = repack_build_exe(prefix, image, suffix);
 
-    if (!repack_write_file(path, exe, err))
+    if (!repack_write_file(path, exe, err, opts.repackOutputPath.empty()))
     {
         std::cerr << "repack: " << err << "\n";
         return false;

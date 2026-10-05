@@ -377,6 +377,25 @@ static void do_write_dcmpr(deark *c, lctx *d)
 			final_maxmem -= (d->host_minmem-final_minmem);
 			final_maxmem &= 0xffff;
 		}
+		// Diverges from Deark 1.7.3: that 16-bit minmem -= … underflows
+		// (Chamber FIXIN.EXE, e_minalloc FFE2 > e_maxalloc). Do the
+		// subtraction in a wider type and clamp at 0 so min <= max.
+		// Files whose Deark output already has min <= max are unchanged.
+		if(final_minmem > final_maxmem) {
+			i64 spent = (i64)d->ephdr.field5
+				+ (i64)(((UI)d->ephdr.field6 + 15) / 16) + 9;
+			i64 minmem = (i64)d->host_minmem - spent;
+			if(minmem < 0) minmem = 0;
+			if(minmem > 65535) minmem = 65535;
+			final_minmem = (UI)minmem;
+			if(d->host_maxmem != 0xffff) {
+				i64 maxmem = (i64)d->host_maxmem - spent;
+				if(maxmem < 0) maxmem = 0;
+				if(maxmem < minmem) maxmem = minmem;
+				if(maxmem > 65535) maxmem = 65535;
+				final_maxmem = (UI)maxmem;
+			}
+		}
 	}
 	dbuf_writeu16le(outf, (i64)final_minmem); // 10  # of paragraphs required
 	dbuf_writeu16le(outf, (i64)final_maxmem); // 12  # of paragraphs requested

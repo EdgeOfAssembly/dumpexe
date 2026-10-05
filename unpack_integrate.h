@@ -70,42 +70,43 @@ static inline std::string dx_stem_path(const std::string& input_path, const char
 }
 
 /**
+ * @brief Result of trying to create an unpacked image.
+ */
+enum class DxWriteResult
+{
+    Wrote,  ///< New file created. A symlink was not followed.
+    Kept,   ///< Path already existed, including a dangling symlink.
+    Failed  ///< Unpack bytes were ready but the file could not be created.
+};
+
+/**
  * @brief Write a new unpacked image. An existing file is left unchanged.
+ *
+ * Uses `open(O_CREAT|O_EXCL|O_NOFOLLOW)`. A dangling symlink is kept and its
+ * target is not created.
  *
  * @param path Destination. Not replaced when it already exists.
  * @param data Complete image.
  * @param n Length of @p data.
- * @return false when the file could not be created. A partial file is removed.
- *         true when the file was written or an existing file was kept.
+ * @return Wrote, Kept, or Failed. Failed does not leave a partial file.
  */
-static inline bool dx_write_unpacked_file(const std::string& path,
-                                          const uint8_t* data,
-                                          size_t n)
+static inline DxWriteResult dx_write_unpacked_file(const std::string& path,
+                                                   const uint8_t* data,
+                                                   size_t n)
 {
     if (output_file_exists(path))
     {
-        std::cerr << "listing: refuse to overwrite '" << path << "'\n";
-        return true;
+        std::cerr << "listing: refuse to overwrite '" << path << "' (kept)\n";
+        return DxWriteResult::Kept;
     }
 
-    std::ofstream out(path, std::ios::binary);
-    if (!out)
+    std::string err;
+    const char* bytes = (data == nullptr || n == 0) ? "" : reinterpret_cast<const char*>(data);
+    if (!output_create_nofollow(path, bytes, n, err))
     {
-        return false;
+        return DxWriteResult::Failed;
     }
-    if (n > 0)
-    {
-        out.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(n));
-    }
-    out.flush();
-    if (!out)
-    {
-        out.close();
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
-        return false;
-    }
-    return true;
+    return DxWriteResult::Wrote;
 }
 
 /**
@@ -189,17 +190,45 @@ static inline void dx_after_packed_listing(const Options& opts,
                      (unpacked.data[0] == 'Z' && unpacked.data[1] == 'M'));
     const std::string bin_path = dx_stem_path(opts.filename,
                                               mz ? "_UNPACKED.EXE" : "_UNPACKED.COM");
-    const bool wrote = dx_write_unpacked_file(bin_path, unpacked.data, unpacked.size);
-    if (!wrote)
+    std::vector<uint8_t> image(unpacked.data, unpacked.data + unpacked.size);
+    dx_unpack_free(&unpacked);
+
+    // -o - is stdout only: no .asm and no _UNPACKED image. Both listings
+    // still go to stdout (the packed one already did), then one separator.
+    const bool stdout_only = (opts.outputPath == "-");
+    auto list_unpacked = [&](bool write_asm)
     {
-        std::cerr << "dumpexe: unpack failed (" << packer << ")\n";
-        dx_unpack_free(&unpacked);
+        Options u = opts;
+        u.writeAsmFile = write_asm;
+        dx_list_unpacked(u, bin_path, image);
+    };
+    if (stdout_only)
+    {
+        list_unpacked(false);
         return;
     }
 
-    std::vector<uint8_t> image(unpacked.data, unpacked.data + unpacked.size);
-    dx_unpack_free(&unpacked);
-    dx_list_unpacked(opts, bin_path, image);
+    const DxWriteResult wrote = dx_write_unpacked_file(bin_path, image.data(), image.size());
+    if (wrote == DxWriteResult::Failed)
+    {
+        // The unpack buffer is complete. A create error is not an unpack failure.
+        std::cerr << "dumpexe: cannot write '" << bin_path << "'\n";
+        list_unpacked(false);
+        return;
+    }
+    if (wrote == DxWriteResult::Kept)
+    {
+        // Do not pair the kept image with a disassembly of the fresh bytes.
+        const std::string asm_path = dx_stem_path(opts.filename, "_UNPACKED.asm");
+        if (output_file_exists(asm_path))
+        {
+            std::cerr << "listing: refuse to overwrite '" << asm_path << "' (kept)\n";
+        }
+        list_unpacked(false);
+        return;
+    }
+
+    list_unpacked(opts.writeAsmFile);
 }
 
 #endif

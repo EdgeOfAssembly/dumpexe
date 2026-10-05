@@ -16,8 +16,9 @@
  * @brief Escape a string for inclusion in a JSON double-quoted value.
  *
  * Quotes, backslashes, and the JSON control escapes are rewritten. Any other
- * byte below 0x20 becomes a `\u00XX` escape. The result is the raw contents
- * of a JSON string, without the surrounding quotes.
+ * byte below 0x20, and every byte at or above 0x80, becomes a `\u00XX`
+ * escape so the document is UTF-8. The result is the raw contents of a JSON
+ * string, without the surrounding quotes.
  *
  * @param[in] s Text to escape. May contain a quote, a backslash, or a newline.
  * @return Escaped text safe to place between JSON string quotes.
@@ -38,7 +39,7 @@ static inline std::string json_escape(std::string_view s)
         case '\r': o += "\\r"; break;
         case '\t': o += "\\t"; break;
         default:
-            if (c < 0x20)
+            if (c < 0x20 || c >= 0x80)
             {
                 o += std::format("\\u{:04x}", c);
             }
