@@ -127,7 +127,10 @@ static inline void dx_list_unpacked(const Options& opts,
     uopts.writeRepack = false;
     uopts.jsonOut = false;
 
-    std::cout << "=== UNPACKED ===\n";
+    if (opts.showDisasm || opts.showAll)
+    {
+        std::cout << "=== UNPACKED ===\n";
+    }
 
     if (image.size() >= sizeof(MZHeader))
     {
@@ -150,7 +153,7 @@ static inline void dx_list_unpacked(const Options& opts,
     std::vector<uint8_t> com_image;
     com_listing_image(image, false, com_image);
     listing_run(com_image, 0, com_image.size(), COM_ENTRY_IP, uopts.loadBase, uopts,
-                bin_path);
+                bin_path, nullptr, nullptr, true, false);
 }
 
 /**
@@ -167,7 +170,7 @@ static inline void dx_after_packed_listing(const Options& opts,
                                            const std::vector<uint8_t>& fileData,
                                            const std::string& packer)
 {
-    if (opts.jsonOut || !(opts.showDisasm || opts.showAll))
+    if (opts.jsonOut || !(opts.showDisasm || opts.showAll || opts.uasm))
     {
         return;
     }
@@ -204,7 +207,12 @@ static inline void dx_after_packed_listing(const Options& opts,
     };
     if (stdout_only)
     {
-        list_unpacked(false);
+        // -o - writes no _UNPACKED files. The address listing still goes to
+        // stdout when -d/-a asked for one. --uasm -o - is UASM source only.
+        if (!opts.uasm && (opts.showDisasm || opts.showAll))
+        {
+            list_unpacked(false);
+        }
         return;
     }
 

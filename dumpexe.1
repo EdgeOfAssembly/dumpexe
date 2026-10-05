@@ -184,6 +184,81 @@ Both listings still go to stdout.
 Do not write an
 .B .asm
 file (default when disassembling is to write one).
+With
+.B \-\-uasm
+and no
+.BR \-o ,
+this is an error.
+.TP
+.B \-\-uasm
+Write UASM source for
+.BR uasm (1)
+(v2.57) to
+.I <stem>.asm
+or to the path named by
+.BR \-o .
+This switch is enable-only and does not require
+.BR \-d .
+The UASM file has no address column and no hex-byte column: one instruction
+per line (mnemonic and operands only), or
+.B db
+of the exact bytes.
+Ordinary
+.B \-d
+/
+.B \-a
+stdout keeps the address listing
+.RI ( "0100  B8004C  mov ..." )
+when the UASM text is written to a file.
+.B \-d
+or
+.B \-a
+together with this switch and a real
+.B \-o
+path prints that address listing and writes UASM to the file.
+.B \-o \-
+writes UASM to stdout and no file. With
+.B \-\-uasm
+that stdout is the UASM source only: no address listing, including when
+.B \-d
+or
+.B \-a
+is also set.
+.B .186
+/
+.B .286
+/
+.B .386
+are emitted after
+.B .model
+so a stood-behind 16-bit instruction is not assembled as USE32.
+.B \-\-json
+keeps JSON on stdout and still writes the UASM file.
+MZ and COM only.
+NE, .SYS, and a 32-bit extender payload are rejected.
+Auto-repack is skipped and the file does not contain a REPACK-V1 block.
+COM uses
+.B .model tiny
+and
+.B org 100h
+so
+.B uasm -bin
+matches the COM bytes.
+An EXE load image uses
+.B org 0
+so the
+.B uasm -mz
+payload
+.RI ( "e_cparhdr * 16" )
+is the full load image.
+An image longer than 65536 bytes is split into byte-aligned
+.B sN segment
+/
+.B org 0
+/
+.B sN ends
+chunks of at most 65536 bytes with no padding and no
+.BR .stack .
 .PP
 An existing default
 .I <stem>.asm

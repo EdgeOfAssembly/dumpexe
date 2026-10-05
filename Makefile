@@ -146,6 +146,7 @@ test: dumpexe
 	@bash tests/test_cli_contracts.sh
 	@bash tests/test_report_bugs.sh
 	@bash tests/test_listing_bugs.sh
+	@bash tests/test_uasm.sh
 
 tests: test
 

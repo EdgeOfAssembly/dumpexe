@@ -95,6 +95,21 @@ struct Options {
     /// After TP/JWASM export, also write <stem>.repack.exe (default ON)
     bool writeRepack = true;
     std::string repackOutputPath; ///< optional override path for repack EXE
+    /// --uasm: write UASM source (enable-only; no disable switch).
+    /// The file has no address column and no hex-byte column. -d stdout is unchanged.
+    bool uasm = false;
+
+    /**
+     * @brief True when --uasm -o - should be the only stdout.
+     *
+     * -d, -a, and the other human reports are omitted. No address listing and
+     * no file. --json still owns stdout; the UASM file is separate unless -o -
+     * is also set, in which case JSON remains the stdout product.
+     */
+    bool uasm_stdout_only() const
+    {
+        return uasm && outputPath == "-" && !jsonOut;
+    }
 
     // --- Simulation controls ---
     /// Max instructions to execute (0 = default: 1_000_000, or 64 if --trace
@@ -370,6 +385,9 @@ struct Options {
             } else if (arg == "--json") {
                 // Opt-in machine-readable report (default OFF → enable-only switch)
                 jsonOut = true;
+            } else if (arg == "--uasm") {
+                // Enable-only. There is no disable twin (cli-design sane defaults).
+                uasm = true;
             } else if (arg == "--no-asm-file") {
                 // Default ON when disassembling: only provide disable switch
                 writeAsmFile = false;
@@ -646,6 +664,14 @@ static inline void show_usage(const char* progname) {
         "  --no-map            Do not auto-load <stem>.sym / <stem>.map (default: auto on)\n"
         "  --model=M           Memory model for JWASM export: tiny|small|medium|compact|large|huge\n"
         "                      (default: small if unknown; .COM / COM-in-EXE always tiny)\n"
+        "  --uasm              Write UASM source (uasm -bin for COM, uasm -mz for EXE) to\n"
+        "                      <stem>.asm. Enable-only; does not require -d. The UASM file has\n"
+        "                      no address column and no hex-byte column. -d/-a with a file keeps\n"
+        "                      the address listing on stdout. -o PATH names the UASM file. -o -\n"
+        "                      is UASM on stdout only and no file, including with -d or -a.\n"
+        "                      MZ and COM only. Skips auto-repack (no\n"
+        "                      REPACK-V1). Images longer than 65536 bytes are split into\n"
+        "                      segments of at most 65536 bytes with no padding.\n"
         "  --json              Machine-readable JSON report on stdout (default: off).\n"
         "                      Does not unpack\n"
         "  --cfg-dot=FILE      Write Graphviz DOT of CFG to FILE (default: off)\n"
