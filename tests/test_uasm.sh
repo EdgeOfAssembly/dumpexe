@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dumpexe --uasm: UASM source assembles back to the load image (v2.10).
+# dumpexe --uasm: UASM source assembles back to the load image (v2.11).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -83,6 +83,8 @@ big[65536] = 0x90
 td.joinpath("big.exe").write_bytes(mz(bytes(big)))
 td.joinpath("big.img").write_bytes(bytes(big))
 td.joinpath("small.img").write_bytes(bytes.fromhex("B8004CCD2190"))
+# or ax, 000Ah / 0100h / FF80h / FF7Fh, then ret. Signed-byte forms must stay db.
+td.joinpath("aximm.com").write_bytes(bytes.fromhex("0D0A000D00010D80FF0D7FFFC3"))
 PY
 
 # 1. COM round-trip. No address column. org 100h and a mov line.
@@ -161,12 +163,23 @@ set -e
 check uasm_needs_file test "$need_rc" -eq 1
 check uasm_needs_msg grep -q 'dumpexe: --uasm needs an .asm file' "$tmp/need.err"
 
+# 9. Signed-byte AX imm16 stays db; wider immediates stay the mnemonic.
+"$BIN" --uasm -o "$tmp/aximm.asm" "$tmp/aximm.com" >"$tmp/aximm.out" 2>"$tmp/aximm.err"
+check aximm_db_000a grep -q 'db 00Dh, 00Ah, 000h' "$tmp/aximm.asm"
+check aximm_db_ff80 grep -q 'db 00Dh, 080h, 0FFh' "$tmp/aximm.asm"
+check aximm_keep_100 grep -E -q '^[[:space:]]*or ax, 100h[[:space:]]*$' "$tmp/aximm.asm"
+check aximm_keep_ff7f grep -E -q '^[[:space:]]*or ax, 0FF7Fh[[:space:]]*$' "$tmp/aximm.asm"
+check aximm_reject_0a bash -c "! grep -E -q '^[[:space:]]*or ax, 0Ah[[:space:]]*$' '$tmp/aximm.asm'"
+check aximm_reject_ff80 bash -c "! grep -E -q '^[[:space:]]*or ax, 0FF80h[[:space:]]*$' '$tmp/aximm.asm'"
+/usr/bin/uasm -bin -nologo -Fo "$tmp/aximm.bin" "$tmp/aximm.asm" >"$tmp/aximm_uasm.out" 2>"$tmp/aximm_uasm.err"
+check aximm_cmp cmp_note aximm "$tmp/aximm.bin" "$tmp/aximm.com"
+
 # 6. Help and version.
 "$BIN" --help >"$tmp/help.txt"
 check help_uasm grep -q -- '--uasm' "$tmp/help.txt"
 check help_no_disable bash -c "! grep -q -- '--no-uasm' '$tmp/help.txt'"
 "$BIN" -v >"$tmp/ver.txt"
-check version_210 grep -q '2.10' "$tmp/ver.txt"
+check version_211 grep -q '2.11' "$tmp/ver.txt"
 
 echo "uasm tests: $pass passed, $fail failed"
 if [[ "$fail" -ne 0 ]]; then
@@ -182,5 +195,9 @@ if [[ "$fail" -ne 0 ]]; then
   head -n 30 "$tmp/big.asm" >&2 || true
   echo "---- big uasm err ----" >&2
   cat "$tmp/big_uasm.err" >&2 || true
+  echo "---- aximm.asm ----" >&2
+  cat "$tmp/aximm.asm" >&2 || true
+  echo "---- aximm uasm err ----" >&2
+  cat "$tmp/aximm_uasm.err" >&2 || true
   exit 1
 fi

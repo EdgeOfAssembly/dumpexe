@@ -20,7 +20,7 @@ Living roadmap for the DOS RE toolkit and ICON preservation work.
 - [x] Overlay/map/dat tags (`icon0.ovl`, `l?.map`, …)
 - [x] Load/I/O call graph from path+FCB seeds (`cfg_print_load_graph`)
 - [x] MAP/ADV/DAT working notes (`games/icon-quest-for-the-ring/FORMAT-NOTES.md`)
-- [x] UASM-friendly listing export (2.10, `--uasm`). No address column. COM round-trips with `uasm -bin`. EXE load images round-trip with `uasm -mz`, including a segment split past 64KB. `.model` is emitted before `.186` / `.286` / `.386`.
+- [x] UASM-friendly listing export (2.11, `--uasm`). No address column. COM round-trips with `uasm -bin`. EXE load images round-trip with `uasm -mz`, including a segment split past 64KB. `.model` is emitted before `.186` / `.286` / `.386`. 2.11 leaves a signed-byte AX imm16 as db.
 - [ ] Validate MAP 64×H decode vs DOSBox screenshot
 - [ ] On FCB AH=27 hit, dump DS:5C name (sim or DOSBox) for real `LA.MAP` strings
 - [ ] Propagate DX/AH through more than fall/call preds (memory stores to FCB@5C)

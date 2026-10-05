@@ -1057,6 +1057,9 @@ static inline int listing_uasm_cpu_level(const CfgInsn& in)
  *
  * Anything else is emitted as db. Relative branches and memory operands are
  * not stood behind: UASM may pick a different short/near form or size.
+ * AX imm16 (opcodes 05/0D/15/1D/25/2D/35/3D) is not stood behind when the
+ * immediate fits in a signed byte (`imm <= 0x7F` or `imm >= 0xFF80`).
+ * UASM shortens a signed-byte AX immediate to `83 /r ib`.
  *
  * @param in   Instruction whose bytes already match the image.
  * @param mnem listing_masm_mnem result.
@@ -1183,6 +1186,11 @@ static inline bool listing_uasm_stand_behind(const CfgInsn& in,
         static const char* alu[] = {"add", "or", "adc", "sbb", "and", "sub", "xor", "cmp"};
         const unsigned imm = static_cast<unsigned>(b[1]) |
                              (static_cast<unsigned>(b[2]) << 8);
+        // UASM shortens a signed-byte AX immediate to `83 /r ib`.
+        if (imm <= 0x7F || imm >= 0xFF80)
+        {
+            return false;
+        }
         return eq(std::string(alu[b[0] >> 3]) + " ax, " + listing_uasm_imm(imm));
     }
     return false;
