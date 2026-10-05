@@ -321,17 +321,32 @@ static inline std::string listing_emit_text(const CfgGraph& g,
     const size_t list_cap = std::max(max_blocks, size_t{2000});
 
     size_t shown = 0;
+    size_t omitted = 0;
     for (const CfgBlock* bp : order)
     {
-        if (shown >= list_cap)
+        bool has_entry = bp->is_entry || bp->start_ip == entry_ip;
+        if (!has_entry)
         {
-            out << std::format(
-                "\n; ... {} more blocks omitted (raise --cfg-max=N for listing cap)\n",
-                order.size() - shown);
-            break;
+            for (const CfgInsn& in : bp->insns)
+            {
+                if (in.ip == entry_ip)
+                {
+                    has_entry = true;
+                    break;
+                }
+            }
+        }
+        // Address order must not drop the block that holds the program entry.
+        if (!has_entry && shown >= list_cap)
+        {
+            ++omitted;
+            continue;
+        }
+        if (shown < list_cap)
+        {
+            ++shown;
         }
         const CfgBlock& b = *bp;
-        ++shown;
 
         // Label at proc start
         if (proc_starts.count(b.start_ip) || sym.count(b.start_ip))
@@ -390,9 +405,28 @@ static inline std::string listing_emit_text(const CfgGraph& g,
                 c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
             std::string rops = listing_rewrite_ops(mlow, ops, b, sym, true);
+            std::string far_note;
+            if (cfg_is_far_xfer(mlow))
+            {
+                for (const CfgEdge& e : b.outs)
+                {
+                    if (!e.has_target)
+                    {
+                        continue;
+                    }
+                    if (e.kind != CfgEdgeKind::Call && e.kind != CfgEdgeKind::Jump &&
+                        e.kind != CfgEdgeKind::Table)
+                    {
+                        continue;
+                    }
+                    far_note = std::format("  ; → func_{:04X}", e.to_ip);
+                    break;
+                }
+            }
 
             out << std::format("    {:04X}  {:<16}  {:<8} {}", in.ip, hex, mnem,
                                rops);
+            out << far_note;
 
             if (int_notes.count(in.ip))
             {
@@ -425,6 +459,14 @@ static inline std::string listing_emit_text(const CfgGraph& g,
         if (ends_ret && (proc_starts.count(b.start_ip) || b.is_call_target ||
                          b.is_entry || b.is_table_entry))
             out << "\n";
+    }
+
+    if (omitted > 0)
+    {
+        out << std::format(
+            "\n; ... {} more blocks omitted (raise --cfg-max=N for listing cap)\n",
+            omitted);
+        std::cerr << "listing: truncated " << omitted << " blocks\n";
     }
 
     out << std::format("\n; end listing: {} instructions, {} procedure labels\n",
@@ -1065,14 +1107,32 @@ static inline void listing_deliver(const Options& opts,
             std::cerr << "listing: refuse to overwrite '" << path << "'\n";
             return;
         }
-        std::ofstream f(path);
-        if (!f)
+        if (opts.outputPath.empty())
         {
-            std::cerr << "Error: cannot write listing to '" << path << "'\n";
-            return;
+            // Default <stem>.asm: do not follow a dangling symlink.
+            std::string werr;
+            if (!output_create_nofollow(path, text.data(), text.size(), werr))
+            {
+                std::cerr << "Error: cannot write listing to '" << path << "'\n";
+                return;
+            }
         }
-        f << text;
-        f.flush();
+        else
+        {
+            std::ofstream f(path);
+            if (!f)
+            {
+                std::cerr << "Error: cannot write listing to '" << path << "'\n";
+                return;
+            }
+            f << text;
+            f.flush();
+            if (!f)
+            {
+                std::cerr << "Error: cannot write listing to '" << path << "'\n";
+                return;
+            }
+        }
         if (kind == ListingExportKind::Jwasm)
             std::cerr << std::format(
                 "listing: wrote JWASM-assemblable {} ({} procs, {} insns)\n"

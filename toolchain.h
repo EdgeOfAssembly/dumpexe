@@ -391,9 +391,9 @@ static inline std::string toolchain_pklite_name(uint16_t info)
  * not sufficient.
  *
  * LZEXE matches LZ91 or LZ09 at file 0x1C, with e_crlc 0, e_lfarlc 0x1C,
- * e_ovno 0, and the bytes 06 0E 1F 8B at the entry. LZ91 is "LZEXE 0.91"
- * and LZ09 is "LZEXE 0.90". LZ90 and the 0.91e leading-50 stub are not
- * matched.
+ * e_ovno 0, and the bytes 06 0E 1F 8B at the entry or one byte later when
+ * that byte is 50 (push ax). LZ91 is "LZEXE 0.91" and LZ09 is "LZEXE 0.90".
+ * LZ90 is not matched. An LZ91 or LZ09 marker suppresses a later LHarc banner.
  *
  * Microsoft EXEPACK matches e_crlc 0, e_ip 16 or 18 (not 20), e_sp 0x80,
  * the bytes 52 42 at entry-2, and the epilog CD 21 B8 FF 4C CD 21 starting
@@ -437,29 +437,41 @@ static inline void toolchain_scan_fingerprints(const std::vector<uint8_t>& fileD
     static constexpr uint8_t kLzStub[] = {0x06, 0x0E, 0x1F, 0x8B};
     static constexpr char kLzStubWild[] = "xxxx";
     static_assert(sizeof(kLzStubWild) == sizeof(kLzStub) + 1);
+    bool lz_marker = false;
+    bool lz91 = false;
+    bool lz09 = false;
+    if (fileData.size() >= 0x20)
+    {
+        const uint8_t* marker = fileData.data() + 0x1C;
+        lz91 = std::memcmp(marker, "LZ91", 4) == 0;
+        lz09 = std::memcmp(marker, "LZ09", 4) == 0;
+        lz_marker = lz91 || lz09;
+    }
+    const bool lz_stub_at_entry =
+        mz.valid &&
+        toolchain_match_bytes(fileData, mz.entry, kLzStub, kLzStubWild, sizeof(kLzStub));
+    const bool lz_stub_after_push =
+        mz.valid &&
+        mz.entry >= 0 &&
+        static_cast<uint64_t>(mz.entry) < fileData.size() &&
+        fileData[static_cast<size_t>(mz.entry)] == 0x50 &&
+        toolchain_match_bytes(fileData, mz.entry + 1, kLzStub, kLzStubWild, sizeof(kLzStub));
     if (mz.valid &&
         mz.e_crlc == 0 &&
         mz.e_lfarlc == 0x001C &&
         mz.e_ovno == 0 &&
-        fileData.size() >= 0x20 &&
-        toolchain_match_bytes(fileData, mz.entry, kLzStub, kLzStubWild,
-                              sizeof(kLzStub)))
+        lz_marker &&
+        (lz_stub_at_entry || lz_stub_after_push))
     {
-        const uint8_t* marker = fileData.data() + 0x1C;
-        const bool lz91 = std::memcmp(marker, "LZ91", 4) == 0;
-        const bool lz09 = std::memcmp(marker, "LZ09", 4) == 0;
-        if (lz91 || lz09)
+        const char* name = lz91 ? "LZEXE 0.91" : "LZEXE 0.90";
+        rep.lzexe = true;
+        if (rep.packer.empty())
         {
-            const char* name = lz91 ? "LZEXE 0.91" : "LZEXE 0.90";
-            rep.lzexe = true;
-            if (rep.packer.empty())
-            {
-                rep.packer = name;
-            }
-            rep.evidence.push_back(std::format(
-                "{} marker at file 0x1C, entry at file 0x{:X}",
-                name, static_cast<uint64_t>(mz.entry)));
+            rep.packer = name;
         }
+        rep.evidence.push_back(std::format(
+            "{} marker at file 0x1C, entry at file 0x{:X}",
+            name, static_cast<uint64_t>(mz.entry)));
     }
 
     if (fileData.size() >= 0x1C + 4)
@@ -496,14 +508,16 @@ static inline void toolchain_scan_fingerprints(const std::vector<uint8_t>& fileD
             static_cast<uint64_t>(mz.entry),
             static_cast<uint64_t>(mz.entry - 2)));
     }
-    if (toolchain_find_ascii(fileData, "LHarc", off))
+    // LZ91/LZ09 at file 0x1C wins over a later "LHA " banner inside the
+    // compressed bytes (Gold of the Aztecs INSTALL.EXE).
+    if (!lz_marker && toolchain_find_ascii(fileData, "LHarc", off))
     {
         rep.lharc = true;
         if (rep.packer.empty())
             rep.packer = "LHarc";
         rep.evidence.push_back(std::format("LHarc banner at file 0x{:X}", off));
     }
-    else if (toolchain_find_ascii(fileData, "LHA ", off))
+    else if (!lz_marker && toolchain_find_ascii(fileData, "LHA ", off))
     {
         rep.lharc = true;
         if (rep.packer.empty())

@@ -109,6 +109,9 @@ struct SimMemory {
 /// One simulated read or write transfers at most this many bytes.
 inline constexpr size_t kSimIoCap = 65536;
 
+/// All guest files in one run, summed. A write that would pass this fails.
+inline constexpr size_t kSimGuestTotalCap = 16u * 1024u * 1024u;
+
 struct SimFile {
     std::string path;       ///< Map key: accepted path, ASCII letters uppercased.
     uint32_t cursor = 0;    ///< Next byte offset for sequential FCB I/O.
@@ -441,9 +444,26 @@ static inline size_t sim_guest_read_mem(SimState& st, const std::vector<uint8_t>
     return n;
 }
 
-/// Copy at most @p want bytes from DOS memory into the guest file.
-/// Grows the file by at most kSimIoCap bytes. A cursor past EOF writes nothing
-/// (no guest-controlled hole allocation).
+/// Bytes currently stored in every guest file of this run.
+static inline size_t sim_guest_total_bytes(const SimState& st)
+{
+    size_t n = 0;
+    for (const auto& kv : st.guest_files)
+    {
+        n += kv.second.size();
+    }
+    return n;
+}
+
+/**
+ * @brief Copy at most @p want bytes from DOS memory into the guest file.
+ *
+ * Grows the file by at most kSimIoCap bytes. A cursor past EOF writes nothing
+ * (no guest-controlled hole allocation). Growth that would make the sum of
+ * all guest files exceed kSimGuestTotalCap writes nothing.
+ *
+ * @return Bytes written, or `size_t(-1)` when the total cap would be passed.
+ */
 static inline size_t sim_guest_write_mem(SimState& st, std::vector<uint8_t>& data,
                                          uint32_t cursor, uint16_t seg, uint16_t off,
                                          size_t want) {
@@ -460,6 +480,13 @@ static inline size_t sim_guest_write_mem(SimState& st, std::vector<uint8_t>& dat
         if (growth > kSimIoCap) {
             want = (data.size() - cur) + kSimIoCap;
             max_end = cur + want;
+            growth = max_end - data.size();
+        }
+        const size_t total = sim_guest_total_bytes(st);
+        const size_t room = (total >= kSimGuestTotalCap) ? 0 : (kSimGuestTotalCap - total);
+        if (growth > room)
+        {
+            return static_cast<size_t>(-1);
         }
         data.resize(max_end, 0);
     }
@@ -686,6 +713,16 @@ static inline void sim_int21(SimState& st, const Options& opts) {
         size_t n = is_write
             ? sim_guest_write_mem(st, git->second, cursor, st.dta_seg, st.dta_off, want)
             : sim_guest_read_mem(st, git->second, cursor, st.dta_seg, st.dta_off, want);
+        if (n == static_cast<size_t>(-1))
+        {
+            AL = 1;
+            if (block)
+            {
+                CX = 0;
+            }
+            log_int(std::format("FCB write '{}' → FAIL (guest file cap)", it->second.path));
+            return;
+        }
         if (static_cast<uint64_t>(cursor) + n <= 0xFFFFFFFFu)
             it->second.cursor = static_cast<uint32_t>(static_cast<uint64_t>(cursor) + n);
         bool partial = capped || static_cast<uint64_t>(n) < requested;
@@ -791,6 +828,14 @@ static inline void sim_int21(SimState& st, const Options& opts) {
         size_t n = is_write
             ? sim_guest_write_mem(st, git->second, cursor, DS, DX, want)
             : sim_guest_read_mem(st, git->second, cursor, DS, DX, want);
+        if (n == static_cast<size_t>(-1))
+        {
+            CF = 1;
+            AX = 5;
+            log_int(std::format("handle write '{}' → FAIL AX=5 (guest file cap)",
+                                it->second.path));
+            return;
+        }
         if (static_cast<uint64_t>(cursor) + n <= 0xFFFFFFFFu)
             it->second.cursor = static_cast<uint32_t>(static_cast<uint64_t>(cursor) + n);
         AX = static_cast<uint16_t>(n > 0xFFFF ? 0xFFFF : n);
@@ -1535,12 +1580,37 @@ static inline bool sim_exec_insn(SimState& st, Options& opts) {
         const bool scan_cmp = (mnem == "scasb" || mnem == "scasw" ||
                                mnem == "cmpsb" || mnem == "cmpsw");
         if (rep) {
-            uint32_t guard = 0;
-            while (CX != 0 && guard++ < 0x100000) {
+            // Each iteration counts toward --max-insns. The outer loop adds
+            // one more, so reps-1 are charged here. CX==0 still counts as one
+            // instruction and performs no memory operation.
+            uint64_t reps = 0;
+            bool budget_stop = false;
+            while (CX != 0)
+            {
+                if (st.insn_count + reps >= opts.maxInsns)
+                {
+                    budget_stop = true;
+                    break;
+                }
                 once();
                 CX = static_cast<uint16_t>(CX - 1);
-                if (scan_cmp && rep_prefix && !ZF) break;
-                if (scan_cmp && repne_prefix && ZF) break;
+                ++reps;
+                if (scan_cmp && rep_prefix && !ZF)
+                {
+                    break;
+                }
+                if (scan_cmp && repne_prefix && ZF)
+                {
+                    break;
+                }
+            }
+            if (reps > 1)
+            {
+                st.insn_count += reps - 1;
+            }
+            if (budget_stop && CX != 0)
+            {
+                return true;
             }
         } else {
             once();

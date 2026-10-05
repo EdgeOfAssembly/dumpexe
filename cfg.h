@@ -4,7 +4,8 @@
 //
 // Recursive-descent / leader-based CFG: basic blocks + edges (fall-through,
 // jmp, jcc true/false, call, ret). Optional scan for near-jump tables
-// (Pascal MT+ style E9 stubs). Same-segment near control flow only.
+// (Pascal MT+ style E9 stubs). Near control flow, plus a direct far
+// transfer whose segment immediate equals this segment's CS.
 //
 // This builds a *graph*, not a path tree: joins reuse the same block node.
 
@@ -131,7 +132,7 @@ struct CfgGraph {
  * @brief True for a direct far call or jump.
  *
  * Capstone prints `lcall 0x60, 0x2368` / `ljmp 0x60:0x1234` with operand 0 as
- * the segment immediate. That value is not a near IP in this segment.
+ * the segment immediate and operand 1 as the offset. Operand 0 is not an IP.
  *
  * @param m Lowercase mnemonic.
  * @return true for `lcall`, `ljmp`, `callf`, or `jmpf`.
@@ -139,6 +140,38 @@ struct CfgGraph {
 static inline bool cfg_is_far_xfer(std::string_view m)
 {
     return m == "lcall" || m == "ljmp" || m == "callf" || m == "jmpf";
+}
+
+/**
+ * @brief Offset of a direct far transfer that stays in this segment.
+ *
+ * Operand 0 is the segment. Operand 1 is the offset. A different segment is
+ * external: the caller must not enqueue either immediate.
+ *
+ * @param x86    Capstone operand detail for one instruction.
+ * @param cs_seg CS of the segment being listed.
+ * @param off_out Receives operand 1 when the segment matches.
+ * @return true when both operands are immediates and operand 0 equals @p cs_seg.
+ */
+static inline bool cfg_far_same_seg_off(const cs_x86& x86,
+                                        uint16_t cs_seg,
+                                        uint16_t& off_out)
+{
+    if (x86.op_count < 2)
+    {
+        return false;
+    }
+    if (x86.operands[0].type != X86_OP_IMM || x86.operands[1].type != X86_OP_IMM)
+    {
+        return false;
+    }
+    const uint64_t seg = static_cast<uint64_t>(x86.operands[0].imm);
+    if (seg != static_cast<uint64_t>(cs_seg))
+    {
+        return false;
+    }
+    off_out = static_cast<uint16_t>(x86.operands[1].imm);
+    return true;
 }
 
 static inline bool cfg_is_jcc(std::string_view m) {
@@ -386,9 +419,20 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             };
 
             if (cfg_is_uncond_jmp(mnem)) {
-                // Far ljmp/jmpf: do not enqueue the segment, and do not fall through.
-                if (!cfg_is_far_xfer(mnem))
+                // Far ljmp/jmpf: operand 0 is the segment, not an IP.
+                // Same-segment direct jumps enqueue operand 1. No fall-through.
+                if (cfg_is_far_xfer(mnem))
+                {
+                    uint16_t far_off = 0;
+                    if (cfg_far_same_seg_off(x86, cs_seg, far_off))
+                    {
+                        enqueue(far_off);
+                    }
+                }
+                else
+                {
                     imm_ip(0);
+                }
                 break;
             }
             if (cfg_is_jcc(mnem) || mnem == "jcxz" || mnem == "loop" ||
@@ -424,9 +468,19 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                 if (!looks_data)
                     enqueue(next);
                 // Far lcall/callf still falls through above. Operand 0 is the
-                // segment, not a near target in this image.
-                if (follow_calls && !cfg_is_far_xfer(mnem))
+                // segment. Operand 1 is enqueued only when it equals this CS.
+                if (follow_calls && cfg_is_far_xfer(mnem))
+                {
+                    uint16_t far_off = 0;
+                    if (cfg_far_same_seg_off(x86, cs_seg, far_off))
+                    {
+                        enqueue(far_off);
+                    }
+                }
+                else if (follow_calls)
+                {
                     imm_ip(0);
+                }
                 break;
             }
             if (cfg_is_ret(mnem) || mnem == "int" || mnem == "into" || mnem == "hlt") {
@@ -685,11 +739,35 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                 return true;
             };
 
+            // Direct far transfer. Operand 0 is never the target IP.
+            auto edge_far_same = [&](CfgEdgeKind kind) -> bool {
+                uint16_t off = 0;
+                if (!cfg_far_same_seg_off(x86, cs_seg, off))
+                {
+                    return false;
+                }
+                CfgEdge e;
+                e.kind = kind;
+                e.to_ip = off;
+                e.has_target = cfg_ip_in_image(off, image.size());
+                if (!e.has_target)
+                {
+                    g.unresolved.insert(off);
+                }
+                blk.outs.push_back(e);
+                if (e.has_target && e.to_ip <= ip)
+                {
+                    g.n_loops_back++;
+                }
+                return true;
+            };
+
             if (cfg_is_uncond_jmp(mnem)) {
-                // Far jump: no near edge to the segment, and no fall-through.
-                if (cfg_is_far_xfer(mnem) ||
-                    !edge_imm(table_slots.count(L) ? CfgEdgeKind::Table
-                                                   : CfgEdgeKind::Jump)) {
+                // Far jump: no edge from the segment immediate, and no fall-through.
+                const CfgEdgeKind jk = table_slots.count(L) ? CfgEdgeKind::Table
+                                                            : CfgEdgeKind::Jump;
+                const bool edged = cfg_is_far_xfer(mnem) ? edge_far_same(jk) : edge_imm(jk);
+                if (!edged) {
                     CfgEdge e;
                     e.kind = CfgEdgeKind::Jump;
                     e.has_target = false;
@@ -707,9 +785,11 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                 blk.outs.push_back(f);
                 stop = true;
             } else if (cfg_is_call(mnem)) {
-                // Far call keeps the fall-through edge below, but operand 0
-                // (the segment) is not a near call target.
-                if (cfg_is_far_xfer(mnem) || !edge_imm(CfgEdgeKind::Call)) {
+                // Far call keeps the fall-through edge below. Operand 1 is a
+                // call target only when operand 0 equals this segment's CS.
+                const bool edged = cfg_is_far_xfer(mnem) ? edge_far_same(CfgEdgeKind::Call)
+                                                         : edge_imm(CfgEdgeKind::Call);
+                if (!edged) {
                     CfgEdge e;
                     e.kind = CfgEdgeKind::Call;
                     e.has_target = false;

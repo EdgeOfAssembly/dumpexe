@@ -312,6 +312,102 @@ if not re.search(r"(?m)^func_0111:", text):
 print("far lcall ok")
 PY
 
+# Same-segment far call: 9A 00 10 00 00 is lcall 0:0x1000. With --base=0 the
+# segment matches CS, so IP 0x1000 (mov ax, 0x1234) is a real target.
+python3 - "$TD" << 'PY'
+from pathlib import Path
+import sys
+td = Path(sys.argv[1])
+blob = bytearray(0xF04)
+blob[0:5] = bytes.fromhex("9A00100000")
+blob[0xF00:0xF04] = bytes.fromhex("B83412C3")
+(td / "FARSAME.COM").write_bytes(blob)
+PY
+"$BIN" -d -o - --no-repack --no-asm-file --no-psp --base=0 "$TD/FARSAME.COM" \
+  >"$TD/farsame.txt" 2>"$TD/farsame.err"
+check far_same_seg_target python3 - "$TD/farsame.txt" << 'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+if "func_1000" not in text:
+    print("missing func_1000")
+    print(text)
+    sys.exit(1)
+if not re.search(r"mov\s+ax,\s*0x1234", text, re.I):
+    print("missing mov ax, 0x1234")
+    print(text)
+    sys.exit(1)
+if not re.search(r";\s*→\s*func_1000", text):
+    print("far call was not named ; → func_1000")
+    print(text)
+    sys.exit(1)
+if "func_0000" in text and re.search(r"lcall\s+func_0000", text):
+    print("segment was used as a near target")
+    sys.exit(1)
+print("same-seg far call ok")
+PY
+
+# More reachable blocks than the listing cap. The entry sits at the high end
+# and must still be emitted, with a stderr truncation line.
+python3 - "$TD" << 'PY'
+import struct, sys
+from pathlib import Path
+td = Path(sys.argv[1])
+n = 2100
+body = bytearray(b"\xEB\x00" * n)
+entry = n * 2
+# jmp is 3 bytes at entry+3; the displacement is relative to entry+6.
+rel = (0 - (entry + 6)) & 0xFFFF
+body += bytes([0xB8, 0xEF, 0xBE, 0xE9, rel & 0xFF, (rel >> 8) & 0xFF])
+total = 32 + len(body)
+final_len = total % 512
+num_blocks = (total + 511) // 512
+if final_len == 0:
+    final_len = 0
+hdr = bytearray(32)
+struct.pack_into("<14H", hdr, 0, 0x5A4D, final_len, num_blocks, 0, 2,
+                 0, 0xFFFF, 0, 0x200, 0, entry, 0, 0x1C, 0)
+(td / "TRUNC.EXE").write_bytes(bytes(hdr) + bytes(body))
+PY
+"$BIN" -d --no-asm-file --no-repack "$TD/TRUNC.EXE" >"$TD/trunc.txt" 2>"$TD/trunc.err"
+check listing_keeps_entry python3 - "$TD/trunc.txt" "$TD/trunc.err" << 'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+err = open(sys.argv[2], encoding="utf-8", errors="replace").read()
+if not re.search(r"mov\s+ax,\s*0xbeef", text, re.I):
+    print("entry mov ax, 0xbeef was truncated away")
+    sys.exit(1)
+m = re.search(r"listing: truncated (\d+) blocks", err)
+if not m or int(m.group(1)) <= 0:
+    print("missing stderr truncation line")
+    print(err)
+    sys.exit(1)
+print("entry kept, truncated", m.group(1))
+PY
+
+mkdir -p "$TD/sy"
+printf '\xc3' > "$TD/sy/t.com"
+ln -s "$TD/sy/missing-asm" "$TD/sy/t.asm"
+"$BIN" -d --no-repack "$TD/sy/t.com" >"$TD/sy/out.txt" 2>"$TD/sy/err.txt"
+check dangling_asm_symlink python3 - "$TD/sy" << 'PY'
+import os, sys
+from pathlib import Path
+sy = Path(sys.argv[1])
+missing = sy / "missing-asm"
+link = sy / "t.asm"
+if missing.exists():
+    print("dangling symlink target was created", missing)
+    sys.exit(1)
+if not link.is_symlink():
+    print("t.asm is no longer a symlink")
+    sys.exit(1)
+err = (sy / "err.txt").read_text(encoding="utf-8", errors="replace")
+if "refuse to overwrite" not in err or "t.asm" not in err:
+    print("missing refuse line")
+    print(err)
+    sys.exit(1)
+print("dangling asm symlink ok")
+PY
+
 # Default <stem>.asm is kept. -o PATH may replace that same file.
 mkdir -p "$TD/ow"
 printf 'KEEP\n' > "$TD/ow/t.asm"

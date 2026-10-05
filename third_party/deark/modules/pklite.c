@@ -1363,6 +1363,10 @@ after_dcmpr:
 	}
 
 done:
+	// Success used to return without freeing the LZ77 window (LeakSanitizer
+	// on every PKLITE file). Destroy it on every path, including errors.
+	de_lz77buffer_destroy(c, ringbuf);
+	ringbuf = NULL;
 	if(dctx) {
 		fmtutil_huffman_destroy_decoder(c, dctx->lengths_tree);
 		fmtutil_huffman_destroy_decoder(c, dctx->offsets_tree);
