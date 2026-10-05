@@ -260,6 +260,23 @@ An image longer than 65536 bytes is split into byte-aligned
 chunks of at most 65536 bytes with no padding and no
 .BR .stack .
 .PP
+.BR bin2exe (1),
+built with dumpexe, turns the flat image back into an EXE.
+.B uasm \-bin
+rejects
+.B end
+followed by a label that is not in the first segment.
+Assemble that listing with a bare
+.B end
+and copy the original header:
+.B bin2exe \-\-header ORIGINAL.EXE IMAGE.bin \-o RESTORED.EXE .
+The default
+.B bin2exe
+mode, with no
+.BR \-\-header ,
+wraps a COM-sized image so DOS enters it at PSP:0100.
+dumpexe does not run bin2exe.
+.PP
 An existing default
 .I <stem>.asm
 or
@@ -696,6 +713,7 @@ Simulation is best-effort, not cycle-accurate emulation
 Requires GCC 14+ and libcapstone-dev to build
 
 .SH SEE ALSO
+.BR bin2exe (1),
 .BR objdump (1),
 .BR hexdump (1),
 .BR file (1),

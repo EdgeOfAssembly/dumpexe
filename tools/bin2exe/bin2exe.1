@@ -1,0 +1,118 @@
+.TH BIN2EXE 1 "2026-10-06" "bin2exe 0.1" "User Commands"
+.SH NAME
+bin2exe \- wrap a flat DOS image in an MZ header
+.SH SYNOPSIS
+.B bin2exe
+[\fIOPTIONS\fR]
+.IR file ...
+.SH DESCRIPTION
+.B bin2exe
+builds a DOS MZ executable from a flat image such as the COM file
+.B uasm -bin
+writes.
+With no
+.BR \-\-header ,
+it writes a 32-byte header that runs the image as a COM program:
+CS and SS are
+.BR FFF0h ,
+IP is
+.BR 0100h ,
+and SP is
+.BR FFFEh .
+DOS adds those segments to the load segment, which wraps them to the PSP,
+so the first image byte is PSP:0100 and the stack is the COM stack.
+An image larger than 65280 bytes is refused in this mode.
+.PP
+.B \-\-header
+copies the MZ header of an existing EXE in front of the flat image and
+does not change that header.
+Use it after
+.B dumpexe \-\-uasm
+and
+.B uasm \-bin
+when the original relocations and SS:SP have to match.
+Options and file names may be given in any order.
+A directory argument expands to non-hidden
+.I *.bin
+and
+.I *.com
+files in that directory only.
+.SH OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Show the usage text and exit.
+.TP
+.BR \-v ", " \-\-version
+Show the version and exit.
+.TP
+.BI \-o " path" "\fR, \fB\-\-output " path
+Write one output file, write every output into a directory, or write the
+single EXE to standard output when
+.I path
+is
+.BR \- .
+The default output is
+.I <stem>.exe
+beside each input.
+Several inputs and one existing file name produce
+.I <stem>_<input>.exe
+and a warning.
+A path that does not exist, given for several inputs, is created as a directory.
+.TP
+.BI \-\-header " exe"
+Copy the MZ header from
+.I exe
+(the first
+.I e_cparhdr
+paragraphs, including the relocation table) in front of each flat image.
+Page counts, relocations, SS:SP, minalloc, and the checksum are not
+rewritten.
+This mode is off unless the option is given.
+.SH NOTES
+.B uasm \-bin
+rejects
+.B end
+followed by a label that is not in the first segment
+(Error A2203).
+A flat image has no entry point; the copied header carries CS:IP.
+Assemble with a bare
+.B end
+before
+.BR \-\-header .
+.PP
+The default wrap asks DOS for the largest free block
+(maxalloc FFFFh) so the COM stack at PSP:FFFE is inside the allocation.
+Header copy does not append a trailing overlay; a length mismatch is a
+warning, and the file is still written.
+The header read from
+.B \-\-header
+is limited to 65536 bytes.
+A flat image is limited to 32 MiB, and the default wrap is also limited
+to 65280 bytes.
+.SH EXIT STATUS
+.TP
+.B 0
+Success, help, or version.
+.TP
+.B 1
+The image could not be read or written, or it is not a usable EXE input.
+.TP
+.B 2
+The command line is wrong.
+.SH EXAMPLES
+Wrap a COM image:
+.RS
+.B uasm \-bin \-nologo \-Fo HELLO.COM HELLO.asm
+.B bin2exe HELLO.COM
+.RE
+.PP
+Restore an original header after a UASM round trip:
+.RS
+.B dumpexe \-\-uasm \-o GAME.asm GAME.EXE
+.B uasm \-bin \-nologo \-Fo GAME.bin GAME.asm
+.B bin2exe \-\-header GAME.EXE GAME.bin \-o GAME.restored.exe
+.RE
+.SH SEE ALSO
+.BR dumpexe (1)
+.SH AUTHORS
+bin2exe contributors.

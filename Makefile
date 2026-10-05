@@ -37,7 +37,7 @@ CAPSTONE_LIBS   := $(shell pkg-config --libs capstone 2>/dev/null)
 
 .PHONY: all clean install asan
 
-all: dumpexe
+all: dumpexe bin2exe
 
 HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h listing.h cfg.h analysis.h sim.h sim_path.h sys.h sys_analysis.h com.h com_analysis.h ne.h ne_shift.h ne_analysis.h dos_extender.h strings.h pascal_mt.h turbo_pascal.h toolchain.h symbols.h repack.h json_escape.h json_report.h unpack.h unpack_integrate.h
 
@@ -130,23 +130,51 @@ asan: dumpexe-asan
 int_db.h: gen_int_db.py $(wildcard interrupts/INTERRUP.*)
 	python3 gen_int_db.py
 
+# bin2exe is the sibling that turns a uasm -bin image back into an EXE.
+# It does not link Capstone and dumpexe does not exec it.
+_PKG_CONFIG_PATH_IN := $(PKG_CONFIG_PATH)
+PKG_CONFIG_PATH := $(HOME)/.local/share/pkgconfig:$(HOME)/.local/lib64/pkgconfig:$(HOME)/.local/lib/pkgconfig$(if $(_PKG_CONFIG_PATH_IN),:$(_PKG_CONFIG_PATH_IN),)
+export PKG_CONFIG_PATH
+CATCH_CFLAGS := $(shell pkg-config --cflags catch2-with-main 2>/dev/null)
+CATCH_LIBS   := $(shell pkg-config --libs catch2-with-main 2>/dev/null)
+BIN2EXE_INC := -Itools/bin2exe/include
+BIN2EXE_TEST_CXXFLAGS := -std=c++23 -Wall -Wextra -O1 -g -fsanitize=address,undefined $(BIN2EXE_INC)
+
+bin2exe: tools/bin2exe/src/main.cpp tools/bin2exe/src/header.cpp tools/bin2exe/src/mz_pages.c \
+		tools/bin2exe/include/bin2exe/header.hpp tools/bin2exe/include/bin2exe/mz_pages.h \
+		tools/bin2exe/include/bin2exe/version.hpp
+	$(CXX) $(CXXFLAGS) $(BIN2EXE_INC) -o bin2exe \
+		tools/bin2exe/src/main.cpp tools/bin2exe/src/header.cpp tools/bin2exe/src/mz_pages.c
+
+tools/bin2exe/test_header: tools/bin2exe/tests/test_header.cpp tools/bin2exe/src/header.cpp \
+		tools/bin2exe/src/mz_pages.c tools/bin2exe/include/bin2exe/header.hpp \
+		tools/bin2exe/include/bin2exe/mz_pages.h
+	$(CXX) $(BIN2EXE_TEST_CXXFLAGS) $(CATCH_CFLAGS) -o $@ \
+		tools/bin2exe/tests/test_header.cpp tools/bin2exe/src/header.cpp tools/bin2exe/src/mz_pages.c \
+		$(CATCH_LIBS) -Wl,-rpath,$(HOME)/.local/lib64
+
 PREFIX ?= /usr/local
-install: dumpexe
+install: dumpexe bin2exe
 	install -d $(DESTDIR)$(PREFIX)/bin
 	install -d $(DESTDIR)$(PREFIX)/share/man/man1
 	install -m 755 dumpexe $(DESTDIR)$(PREFIX)/bin/
+	install -m 755 bin2exe $(DESTDIR)$(PREFIX)/bin/
 	install -m 644 dumpexe.1 $(DESTDIR)$(PREFIX)/share/man/man1/
+	install -m 644 tools/bin2exe/bin2exe.1 $(DESTDIR)$(PREFIX)/share/man/man1/
 
 clean:
-	rm -f dumpexe dumpexe-asan *.o int_db.h unpack_host.o unpack_host-asan.o \
+	rm -f dumpexe dumpexe-asan bin2exe tools/bin2exe/test_header *.o int_db.h \
+		unpack_host.o unpack_host-asan.o \
 		deark_bundle.o deark_bundle-asan.o $(DEARK_OBJS) $(DEARK_ASAN_OBJS)
 
 .PHONY: test tests verify
-test: dumpexe
+test: dumpexe bin2exe tools/bin2exe/test_header
 	@bash tests/test_cli_contracts.sh
 	@bash tests/test_report_bugs.sh
 	@bash tests/test_listing_bugs.sh
 	@bash tests/test_uasm.sh
+	@./tools/bin2exe/test_header
+	@bash tools/bin2exe/tests/test_cli.sh
 
 tests: test
 
@@ -155,3 +183,6 @@ verify: test
 	  --bounds-check --pointer-check --unwind 2 --unwinding-assertions
 	$(HOME)/.local/bin/cbmc sim_path.c formal/harness_sim_path.c \
 	  --bounds-check --pointer-check --unwind 8 --unwinding-assertions
+	$(HOME)/.local/bin/cbmc tools/bin2exe/src/mz_pages.c tools/bin2exe/formal/harness_pages.c \
+	  -Itools/bin2exe/include \
+	  --bounds-check --pointer-check --unwind 2 --unwinding-assertions
