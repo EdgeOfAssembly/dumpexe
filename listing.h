@@ -982,8 +982,678 @@ enum class ListingExportKind
 {
     Human,
     Jwasm,
-    TurboPascal
+    TurboPascal,
+    Uasm
 };
+
+//=============================================================================
+// UASM export (--uasm): assemblable source, no address or hex column
+//=============================================================================
+
+/// Max bytes in one UASM segment. A 16-bit segment cannot be larger.
+inline constexpr size_t kUasmSegBytes = 65536;
+
+/**
+ * @brief MASM immediate in the same 0NNh shape listing_masm_ops emits.
+ *
+ * @param value Unsigned immediate (8- or 16-bit).
+ * @return Uppercase hex with a leading 0 when the first digit is A–F, plus h.
+ */
+static inline std::string listing_uasm_imm(unsigned value)
+{
+    std::string hex = std::format("{:X}", value);
+    if (!hex.empty() && hex[0] >= 'A' && hex[0] <= 'F')
+    {
+        hex.insert(hex.begin(), '0');
+    }
+    hex.push_back('h');
+    return hex;
+}
+
+/**
+ * @brief CPU generation a decoded instruction needs, if it is not plain 8086.
+ *
+ * @param in CFG instruction (raw bytes).
+ * @return 0 = 8086, 1 = 186, 2 = 286, 3 = 386.
+ */
+static inline int listing_uasm_cpu_level(const CfgInsn& in)
+{
+    size_t i = 0;
+    while (i < in.size)
+    {
+        const uint8_t p = in.bytes[i];
+        if (p == 0x26 || p == 0x2E || p == 0x36 || p == 0x3E || p == 0xF0 ||
+            p == 0xF2 || p == 0xF3)
+        {
+            ++i;
+            continue;
+        }
+        break;
+    }
+    if (i >= in.size)
+    {
+        return 0;
+    }
+    const uint8_t op = in.bytes[i];
+    if (op == 0x66 || op == 0x67 || op == 0x0F)
+    {
+        return 3;
+    }
+    if (op == 0x63)
+    {
+        return 2;
+    }
+    if (op == 0x60 || op == 0x61 || op == 0x62 || op == 0x68 || op == 0x69 ||
+        op == 0x6A || op == 0x6B || (op >= 0x6C && op <= 0x6F) || op == 0xC0 ||
+        op == 0xC1 || op == 0xC8 || op == 0xC9)
+    {
+        return 1;
+    }
+    return 0;
+}
+
+/**
+ * @brief True when UASM will encode @p mnem/@p ops back to @p in.bytes.
+ *
+ * Anything else is emitted as db. Relative branches and memory operands are
+ * not stood behind: UASM may pick a different short/near form or size.
+ *
+ * @param in   Instruction whose bytes already match the image.
+ * @param mnem listing_masm_mnem result.
+ * @param ops  listing_masm_ops result (may be empty).
+ */
+static inline bool listing_uasm_stand_behind(const CfgInsn& in,
+                                            std::string_view mnem,
+                                            std::string_view ops)
+{
+    std::string got;
+    got.assign(mnem);
+    if (!ops.empty())
+    {
+        got.push_back(' ');
+        got.append(ops);
+    }
+    for (char& c : got)
+    {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+
+    auto eq = [&](const std::string& exp) -> bool
+    {
+        std::string e = exp;
+        for (char& c : e)
+        {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        return got == e;
+    };
+
+    if (in.size == 0)
+    {
+        return false;
+    }
+    const uint8_t* b = in.bytes;
+    static const char* r16[] = {"ax", "cx", "dx", "bx", "sp", "bp", "si", "di"};
+
+    if (in.size == 1)
+    {
+        switch (b[0])
+        {
+        case 0x90: return eq("nop");
+        case 0xC3: return eq("ret");
+        case 0xCB: return eq("retf");
+        case 0xF4: return eq("hlt");
+        case 0xF5: return eq("cmc");
+        case 0xF8: return eq("clc");
+        case 0xF9: return eq("stc");
+        case 0xFA: return eq("cli");
+        case 0xFB: return eq("sti");
+        case 0xFC: return eq("cld");
+        case 0xFD: return eq("std");
+        case 0x98: return eq("cbw");
+        case 0x99: return eq("cwd");
+        case 0x9E: return eq("sahf");
+        case 0x9F: return eq("lahf");
+        case 0x9C: return eq("pushf");
+        case 0x9D: return eq("popf");
+        case 0x27: return eq("daa");
+        case 0x2F: return eq("das");
+        case 0x37: return eq("aaa");
+        case 0x3F: return eq("aas");
+        case 0xCE: return eq("into");
+        case 0xCF: return eq("iret");
+        case 0xD7: return eq("xlat") || eq("xlatb");
+        default: break;
+        }
+        if (b[0] >= 0x40 && b[0] <= 0x47)
+        {
+            return eq(std::string("inc ") + r16[b[0] - 0x40]);
+        }
+        if (b[0] >= 0x48 && b[0] <= 0x4F)
+        {
+            return eq(std::string("dec ") + r16[b[0] - 0x48]);
+        }
+        if (b[0] >= 0x50 && b[0] <= 0x57)
+        {
+            return eq(std::string("push ") + r16[b[0] - 0x50]);
+        }
+        if (b[0] >= 0x58 && b[0] <= 0x5F)
+        {
+            return eq(std::string("pop ") + r16[b[0] - 0x58]);
+        }
+        if (b[0] >= 0x91 && b[0] <= 0x97)
+        {
+            return eq(std::string("xchg ax, ") + r16[b[0] - 0x90]);
+        }
+        return false;
+    }
+
+    if (in.size == 2 && b[0] == 0xCD)
+    {
+        return eq("int " + listing_uasm_imm(b[1]));
+    }
+    if (in.size == 2 && b[0] >= 0xB0 && b[0] <= 0xB7)
+    {
+        static const char* r8[] = {"al", "cl", "dl", "bl", "ah", "ch", "dh", "bh"};
+        return eq(std::string("mov ") + r8[b[0] - 0xB0] + ", " +
+                  listing_uasm_imm(b[1]));
+    }
+    if (in.size == 3 && b[0] >= 0xB8 && b[0] <= 0xBF)
+    {
+        const unsigned imm = static_cast<unsigned>(b[1]) |
+                             (static_cast<unsigned>(b[2]) << 8);
+        return eq(std::string("mov ") + r16[b[0] - 0xB8] + ", " + listing_uasm_imm(imm));
+    }
+    if (in.size == 3 && (b[0] == 0xC2 || b[0] == 0xCA))
+    {
+        const unsigned imm = static_cast<unsigned>(b[1]) |
+                             (static_cast<unsigned>(b[2]) << 8);
+        const char* m = (b[0] == 0xC2) ? "ret " : "retf ";
+        return eq(std::string(m) + listing_uasm_imm(imm));
+    }
+    if (in.size == 2 && (b[0] == 0x04 || b[0] == 0x0C || b[0] == 0x14 || b[0] == 0x1C ||
+                         b[0] == 0x24 || b[0] == 0x2C || b[0] == 0x34 || b[0] == 0x3C))
+    {
+        static const char* alu[] = {"add", "or", "adc", "sbb", "and", "sub", "xor", "cmp"};
+        return eq(std::string(alu[b[0] >> 3]) + " al, " + listing_uasm_imm(b[1]));
+    }
+    if (in.size == 3 && (b[0] == 0x05 || b[0] == 0x0D || b[0] == 0x15 || b[0] == 0x1D ||
+                         b[0] == 0x25 || b[0] == 0x2D || b[0] == 0x35 || b[0] == 0x3D))
+    {
+        static const char* alu[] = {"add", "or", "adc", "sbb", "and", "sub", "xor", "cmp"};
+        const unsigned imm = static_cast<unsigned>(b[1]) |
+                             (static_cast<unsigned>(b[2]) << 8);
+        return eq(std::string(alu[b[0] >> 3]) + " ax, " + listing_uasm_imm(imm));
+    }
+    return false;
+}
+
+/**
+ * @brief Emit UASM source that assembles back to the load image.
+ *
+ * No address column and no hex-byte column. Real instructions go through
+ * listing_masm_mnem / listing_masm_ops. Bytes the CFG did not decode, and any
+ * instruction this exporter will not stand behind, are `db` of those exact
+ * bytes (0NNh). An image longer than 65536 bytes is successive `sN segment`
+ * / `org 0` / `sN ends` chunks (byte alignment, so uasm -mz does not pad).
+ * An instruction is never split across a segment. No .stack and no REPACK-V1.
+ *
+ * Pure COM (not an EXE load image) uses `.model tiny` and `org 100h` and emits
+ * only the program bytes, so `uasm -bin` matches the COM file. A COM memory
+ * image that already contains a PSP is emitted from org 0 through that PSP,
+ * then org 100h. EXE load images, including COM-in-EXE, use org 0 so the
+ * `uasm -mz` payload is the full load image.
+ *
+ * `.8086` may precede `.model`. `.186`, `.286`, and `.386` follow `.model`.
+ * UASM treats `.386` before `.MODEL` as USE32, which widens a stood-behind
+ * `mov ax, imm16` with a 66h prefix. After `.model` the segment stays USE16
+ * and `.386` still enables 386 mnemonics.
+ *
+ * @param g            CFG for the image (may be empty; gaps are still emitted).
+ * @param image        CS-relative bytes. COM-without-PSP includes the 256-byte hole.
+ * @param entry_ip     Entry IP inside @p image (0100h for a pure COM).
+ * @param opts         Model override for a normal EXE. COM forces tiny.
+ * @param source_name  Comment only. Not repeated as an address column.
+ * @param tc           Toolchain report; COM-in-EXE selects `.model tiny`.
+ * @param uasm_com     True for a pure .COM (not an MZ load image).
+ * @param uasm_com_psp True when @p image begins with a real embedded PSP.
+ * @param n_procs      Set to the procedure-label count.
+ * @param n_insns      Set to how many instructions were stood behind.
+ * @param external     Optional symbol map (same names as the human listing).
+ * @return UASM source. The last line is `end <entry label>`.
+ */
+static inline std::string listing_emit_uasm(const CfgGraph& g,
+                                            const std::vector<uint8_t>& image,
+                                            uint16_t entry_ip,
+                                            const Options& opts,
+                                            const std::string& source_name,
+                                            const ToolchainReport* tc,
+                                            bool uasm_com,
+                                            bool uasm_com_psp,
+                                            size_t& n_procs,
+                                            size_t& n_insns,
+                                            const SymbolMap* external)
+{
+    std::map<uint16_t, std::string> sym;
+    std::set<uint16_t> proc_starts;
+    listing_collect_symbols(g, entry_ip, sym, proc_starts, external);
+    listing_add_loc_labels(g, sym);
+    n_procs = proc_starts.size();
+    n_insns = 0;
+
+    std::map<uint16_t, CfgInsn> at;
+    std::map<uint16_t, const CfgBlock*> blk_at;
+    for (const auto& kv : g.blocks)
+    {
+        const CfgBlock& b = kv.second;
+        for (const auto& in : b.insns)
+        {
+            if (!at.count(in.ip))
+            {
+                at[in.ip] = in;
+                blk_at[in.ip] = &b;
+            }
+        }
+    }
+
+    int cpu = 0;
+    for (const auto& kv : at)
+    {
+        const CfgInsn& in = kv.second;
+        if (static_cast<size_t>(in.ip) + in.size > image.size())
+        {
+            continue;
+        }
+        bool match = true;
+        for (uint8_t k = 0; k < in.size; ++k)
+        {
+            if (image[static_cast<size_t>(in.ip) + k] != in.bytes[k])
+            {
+                match = false;
+                break;
+            }
+        }
+        if (match)
+        {
+            cpu = std::max(cpu, listing_uasm_cpu_level(in));
+        }
+    }
+
+    const std::string entry_name =
+        sym.count(entry_ip) ? sym[entry_ip] : listing_symbol_name(entry_ip);
+
+    struct Slice
+    {
+        size_t off = 0;
+        size_t len = 0;
+        bool insn = false;
+        std::string text;
+        std::vector<std::string> labels;
+    };
+
+    const size_t emit_lo = (uasm_com && !uasm_com_psp)
+                               ? static_cast<size_t>(0x100)
+                               : static_cast<size_t>(0);
+    std::vector<Slice> slices;
+    size_t off = emit_lo > image.size() ? image.size() : emit_lo;
+
+    auto labels_at = [&](size_t at_off) -> std::vector<std::string>
+    {
+        std::vector<std::string> labs;
+        if (at_off > 0xFFFFu)
+        {
+            return labs;
+        }
+        const uint16_t ip = static_cast<uint16_t>(at_off);
+        if (sym.count(ip))
+        {
+            labs.push_back(sym[ip]);
+        }
+        else if (proc_starts.count(ip) || ip == entry_ip)
+        {
+            labs.push_back(listing_symbol_name(ip));
+        }
+        return labs;
+    };
+
+    auto stood = [&](size_t at_off, std::string& text_out) -> size_t
+    {
+        text_out.clear();
+        if (at_off > 0xFFFFu)
+        {
+            return 0;
+        }
+        const uint16_t ip = static_cast<uint16_t>(at_off);
+        const auto it = at.find(ip);
+        if (it == at.end() || it->second.size == 0)
+        {
+            return 0;
+        }
+        const CfgInsn& in = it->second;
+        if (at_off + in.size > image.size())
+        {
+            return 0;
+        }
+        for (uint8_t k = 0; k < in.size; ++k)
+        {
+            if (image[at_off + k] != in.bytes[k])
+            {
+                return 0;
+            }
+        }
+        std::string mnem = in.text;
+        std::string ops;
+        const size_t sp = in.text.find(' ');
+        if (sp != std::string::npos)
+        {
+            mnem = in.text.substr(0, sp);
+            ops = in.text.substr(sp + 1);
+        }
+        const std::string mlow = listing_masm_mnem(mnem);
+        std::string rops = ops;
+        const CfgBlock* bp = blk_at.count(ip) ? blk_at[ip] : nullptr;
+        if (bp)
+        {
+            rops = listing_rewrite_ops(mlow, ops, *bp, sym);
+        }
+        rops = listing_masm_ops(rops);
+        if (!listing_uasm_stand_behind(in, mlow, rops))
+        {
+            return 0;
+        }
+        text_out = rops.empty() ? mlow : (mlow + " " + rops);
+        return in.size;
+    };
+
+    while (off < image.size())
+    {
+        std::string insn_text;
+        const size_t n = stood(off, insn_text);
+        Slice sl;
+        sl.off = off;
+        sl.labels = labels_at(off);
+        if (n > 0)
+        {
+            sl.len = n;
+            sl.insn = true;
+            sl.text = std::move(insn_text);
+            ++n_insns;
+            off += n;
+        }
+        else
+        {
+            size_t run = off + 1;
+            while (run < image.size())
+            {
+                if (!labels_at(run).empty())
+                {
+                    break;
+                }
+                std::string ignore;
+                if (stood(run, ignore) > 0)
+                {
+                    break;
+                }
+                ++run;
+            }
+            sl.len = run - off;
+            sl.insn = false;
+            off = run;
+        }
+        slices.push_back(std::move(sl));
+    }
+
+    struct Seg
+    {
+        std::vector<Slice> slices;
+        size_t nbytes = 0;
+    };
+    std::vector<Seg> segs;
+    Seg cur;
+    auto flush_seg = [&]()
+    {
+        if (cur.nbytes == 0)
+        {
+            return;
+        }
+        segs.push_back(std::move(cur));
+        cur = Seg{};
+    };
+    for (const Slice& sl : slices)
+    {
+        size_t left = sl.len;
+        size_t done = 0;
+        bool labs = true;
+        while (left > 0)
+        {
+            if (cur.nbytes >= kUasmSegBytes)
+            {
+                flush_seg();
+            }
+            const size_t room = kUasmSegBytes - cur.nbytes;
+            if (sl.insn && sl.len > room)
+            {
+                flush_seg();
+                continue;
+            }
+            const size_t take = sl.insn ? sl.len : std::min(left, room);
+            Slice part;
+            part.off = sl.off + done;
+            part.len = take;
+            part.insn = sl.insn;
+            if (sl.insn)
+            {
+                part.text = sl.text;
+            }
+            if (labs)
+            {
+                part.labels = sl.labels;
+                labs = false;
+            }
+            cur.nbytes += take;
+            cur.slices.push_back(std::move(part));
+            done += take;
+            left -= take;
+            if (cur.nbytes >= kUasmSegBytes)
+            {
+                flush_seg();
+            }
+        }
+    }
+    flush_seg();
+    if (segs.empty())
+    {
+        segs.push_back(Seg{});
+    }
+
+    const bool tiny = uasm_com || (tc && tc->com_in_exe);
+    std::string model;
+    if (tiny)
+    {
+        model = "tiny";
+    }
+    else if (opts.memModelUserSet)
+    {
+        model = opts.memModel;
+    }
+    else
+    {
+        model = "small";
+    }
+
+    const char* cpu_dir = ".8086";
+    if (cpu >= 3)
+    {
+        cpu_dir = ".386";
+    }
+    else if (cpu >= 2)
+    {
+        cpu_dir = ".286";
+    }
+    else if (cpu >= 1)
+    {
+        cpu_dir = ".186";
+    }
+
+    const bool multi = segs.size() > 1;
+    // Custom segment names assemble with -mz but not with -bin. COM stays .code.
+    const bool use_segments = multi && !uasm_com;
+
+    std::ostringstream out;
+    // .386 before .model is USE32 in UASM and widens imm16 mov. .8086 is safe
+    // above .model; .186/.286/.386 stay below it so the segment remains USE16.
+    if (cpu == 0)
+    {
+        out << cpu_dir << "\n";
+    }
+    out << "; dumpexe UASM export\n";
+    out << std::format("; source: {}\n", source_name);
+    out << std::format(".model {}\n", model);
+    if (cpu != 0)
+    {
+        out << cpu_dir << "\n";
+    }
+
+    auto emit_db = [&](size_t db_off, size_t db_len)
+    {
+        size_t i = 0;
+        while (i < db_len)
+        {
+            size_t run = 1;
+            while (i + run < db_len && image[db_off + i + run] == image[db_off + i])
+            {
+                ++run;
+            }
+            if (run >= 8)
+            {
+                out << "    db " << run << " dup ("
+                    << std::format("0{:02X}h", image[db_off + i]) << ")\n";
+                i += run;
+                continue;
+            }
+            out << "    db ";
+            size_t produced = 0;
+            while (i < db_len && produced < 12)
+            {
+                size_t r = 1;
+                while (i + r < db_len && image[db_off + i + r] == image[db_off + i])
+                {
+                    ++r;
+                }
+                if (r >= 8)
+                {
+                    break;
+                }
+                if (produced)
+                {
+                    out << ", ";
+                }
+                out << std::format("0{:02X}h", image[db_off + i]);
+                ++i;
+                ++produced;
+            }
+            out << "\n";
+        }
+    };
+
+    bool saw_entry = false;
+    auto emit_slice = [&](const Slice& sl)
+    {
+        for (const std::string& lab : sl.labels)
+        {
+            out << lab << ":\n";
+            if (lab == entry_name)
+            {
+                saw_entry = true;
+            }
+        }
+        if (sl.len == 0)
+        {
+            return;
+        }
+        if (sl.insn)
+        {
+            out << "    " << sl.text << "\n";
+            return;
+        }
+        emit_db(sl.off, sl.len);
+    };
+
+    auto emit_seg_body = [&](const Seg& seg, bool first_code)
+    {
+        if (!uasm_com)
+        {
+            if (first_code || use_segments)
+            {
+                out << "org 0\n";
+            }
+            for (const Slice& sl : seg.slices)
+            {
+                emit_slice(sl);
+            }
+            return;
+        }
+        if (uasm_com_psp)
+        {
+            if (first_code)
+            {
+                out << "org 0\n";
+            }
+            bool org100 = false;
+            for (const Slice& sl : seg.slices)
+            {
+                if (!org100 && sl.off >= 0x100)
+                {
+                    out << "org 100h\n";
+                    org100 = true;
+                }
+                emit_slice(sl);
+            }
+            if (first_code && !org100)
+            {
+                out << "org 100h\n";
+            }
+            return;
+        }
+        if (first_code)
+        {
+            out << "org 100h\n";
+        }
+        for (const Slice& sl : seg.slices)
+        {
+            emit_slice(sl);
+        }
+    };
+
+    if (!use_segments)
+    {
+        bool first = true;
+        for (const Seg& seg : segs)
+        {
+            out << ".code\n";
+            emit_seg_body(seg, first);
+            first = false;
+        }
+    }
+    else
+    {
+        size_t n = 0;
+        for (const Seg& seg : segs)
+        {
+            out << "s" << n << " segment byte public 'CODE'\n";
+            emit_seg_body(seg, n == 0);
+            out << "s" << n << " ends\n";
+            ++n;
+        }
+    }
+
+    if (!saw_entry)
+    {
+        out << entry_name << ":\n";
+    }
+    out << "end " << entry_name << "\n";
+    return out.str();
+}
 
 /**
  * @brief Build multi-pass listing text for a CS-relative image.
@@ -1001,12 +1671,17 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
                                     size_t& n_insns,
                                     ListingExportKind& kind_out,
                                     const ToolchainReport* tc = nullptr,
-                                    const TurboPascalReport* tp = nullptr)
+                                    const TurboPascalReport* tp = nullptr,
+                                    bool uasm_com = false,
+                                    bool uasm_com_psp = false,
+                                    std::string* human_stdout = nullptr)
 {
     out_text.clear();
     n_procs = 0;
     n_insns = 0;
     kind_out = ListingExportKind::Human;
+    if (human_stdout)
+        human_stdout->clear();
     if (image_file_off >= fileData.size())
         return false;
     size_t len = std::min(image_len, fileData.size() - image_file_off);
@@ -1017,7 +1692,7 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
     cfg_opts.showCfg = false;
     CfgGraph g = cfg_build_annotated(fileData, image_file_off, len, entry_ip, cs_seg,
                                      cfg_opts);
-    if (g.blocks.empty())
+    if (g.blocks.empty() && !opts.uasm)
     {
         out_text = "; dumpexe listing: no basic blocks recovered\n";
         return true;
@@ -1029,6 +1704,36 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
     std::vector<uint8_t> image(
         fileData.begin() + static_cast<std::ptrdiff_t>(image_file_off),
         fileData.begin() + static_cast<std::ptrdiff_t>(image_file_off + len));
+
+    // --uasm owns the .asm file. Do not embed REPACK-V1. -d still gets the
+    // address listing on stdout (human_stdout), capped like the human emitter.
+    if (opts.uasm)
+    {
+        kind_out = ListingExportKind::Uasm;
+        out_text = listing_emit_uasm(g, image, entry_ip, opts, source_name, tc,
+                                     uasm_com, uasm_com_psp, n_procs, n_insns, ext);
+        if (human_stdout && opts.showDisasm && !opts.jsonOut)
+        {
+            if (g.blocks.empty())
+            {
+                *human_stdout = "; dumpexe listing: no basic blocks recovered\n";
+            }
+            else
+            {
+                size_t hp = 0;
+                size_t hi = 0;
+                *human_stdout = listing_emit_text(g, entry_ip, opts, source_name, hp, hi,
+                                                  ext);
+            }
+        }
+        return true;
+    }
+
+    if (g.blocks.empty())
+    {
+        out_text = "; dumpexe listing: no basic blocks recovered\n";
+        return true;
+    }
 
     const bool want_tp = tp && tp->detected;
     const bool want_jwasm =
@@ -1062,27 +1767,51 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
 }
 
 /// Write listing to stdout and/or default/override .asm file.
+/// @param human_stdout Address listing for -d/--uasm. Empty when --uasm is off
+///        or -d was not requested. Ignored unless @p kind is Uasm.
 static inline void listing_deliver(const Options& opts,
                                    const std::string& input_path,
                                    const std::string& text,
                                    size_t n_procs,
                                    size_t n_insns,
-                                   ListingExportKind kind)
+                                   ListingExportKind kind,
+                                   const std::string& human_stdout = {})
 {
     if (text.empty())
         return;
 
     if (!opts.jsonOut)
     {
-        if (kind == ListingExportKind::Jwasm)
-            std::cout << "\n=== JWASM-assemblable export ===\n";
-        else if (kind == ListingExportKind::TurboPascal)
-            std::cout << "\n=== Turbo Pascal–oriented export (TASM bytes) ===\n";
+        const bool uasm_file = opts.uasm && kind == ListingExportKind::Uasm;
+        if (uasm_file && opts.outputPath == "-")
+        {
+            // --uasm -o - : UASM source only. -d/-a do not add an address listing.
+            std::cout << text;
+            if (text.back() != '\n')
+                std::cout << '\n';
+        }
+        else if (uasm_file)
+        {
+            if (!human_stdout.empty())
+            {
+                std::cout << "\n=== Multi-pass assembly listing ===\n";
+                std::cout << human_stdout;
+                if (human_stdout.back() != '\n')
+                    std::cout << '\n';
+            }
+        }
         else
-            std::cout << "\n=== Multi-pass assembly listing ===\n";
-        std::cout << text;
-        if (!text.empty() && text.back() != '\n')
-            std::cout << "\n";
+        {
+            if (kind == ListingExportKind::Jwasm)
+                std::cout << "\n=== JWASM-assemblable export ===\n";
+            else if (kind == ListingExportKind::TurboPascal)
+                std::cout << "\n=== Turbo Pascal–oriented export (TASM bytes) ===\n";
+            else
+                std::cout << "\n=== Multi-pass assembly listing ===\n";
+            std::cout << text;
+            if (!text.empty() && text.back() != '\n')
+                std::cout << "\n";
+        }
     }
 
     const bool want_file =
@@ -1144,6 +1873,10 @@ static inline void listing_deliver(const Options& opts,
                 "         TASM bytes: tasm /ml {}\n"
                 "         original build: TPC 5.5 + TASM {{$L}} units\n",
                 path, n_procs, n_insns, path);
+        else if (kind == ListingExportKind::Uasm)
+            std::cerr << std::format(
+                "listing: wrote UASM {} ({} procs, {} insns)\n",
+                path, n_procs, n_insns);
         else
             std::cerr << std::format("listing: wrote {} ({} procs, {} insns)\n", path,
                                      n_procs, n_insns);
@@ -1151,7 +1884,12 @@ static inline void listing_deliver(const Options& opts,
 }
 
 /**
- * @brief Run multi-pass listing / JWASM / Turbo Pascal export (+ auto repack).
+ * @brief Run multi-pass listing / JWASM / Turbo Pascal / UASM export.
+ *
+ * @param uasm_com     Pure .COM (org 100h program bytes). Not an MZ load image.
+ * @param uasm_com_psp The COM image starts with an embedded PSP.
+ *
+ * --uasm skips auto-repack. The .asm file is UASM source, not a REPACK-V1 listing.
  */
 static inline void listing_run(const std::vector<uint8_t>& fileData,
                                size_t image_file_off,
@@ -1161,22 +1899,30 @@ static inline void listing_run(const std::vector<uint8_t>& fileData,
                                const Options& opts,
                                const std::string& input_path,
                                const ToolchainReport* tc = nullptr,
-                               const TurboPascalReport* tp = nullptr)
+                               const TurboPascalReport* tp = nullptr,
+                               bool uasm_com = false,
+                               bool uasm_com_psp = false)
 {
     std::string text;
+    std::string human;
     size_t n_procs = 0, n_insns = 0;
     ListingExportKind kind = ListingExportKind::Human;
+    std::string* human_ptr =
+        (opts.uasm && opts.showDisasm && !opts.jsonOut) ? &human : nullptr;
     if (!listing_generate(fileData, image_file_off, image_len, entry_ip, cs_seg, opts,
-                          input_path, text, n_procs, n_insns, kind, tc, tp))
+                          input_path, text, n_procs, n_insns, kind, tc, tp, uasm_com,
+                          uasm_com_psp, human_ptr))
     {
-        if (!opts.jsonOut)
+        if (!opts.jsonOut && !opts.uasm_stdout_only())
             std::cout << "\nListing: image offset outside file or empty.\n";
         return;
     }
-    listing_deliver(opts, input_path, text, n_procs, n_insns, kind);
+    listing_deliver(opts, input_path, text, n_procs, n_insns, kind, human);
 
-    // Default ON: after TP/JWASM export, write runnable <stem>.repack.exe
-    if (kind == ListingExportKind::TurboPascal || kind == ListingExportKind::Jwasm)
+    // Default ON: after TP/JWASM export, write runnable <stem>.repack.exe.
+    // --uasm is a round-trip assembly, not a repack carrier.
+    if (!opts.uasm &&
+        (kind == ListingExportKind::TurboPascal || kind == ListingExportKind::Jwasm))
     {
         std::string written;
         if (!repack_auto(opts, input_path, fileData, image_file_off, image_len, text,

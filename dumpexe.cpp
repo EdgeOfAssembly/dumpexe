@@ -11,7 +11,7 @@ static inline void print_version()
     int cap_major = 0;
     int cap_minor = 0;
     (void)cs_version(&cap_major, &cap_minor);
-    std::cout << "dumpexe 2.9 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
+    std::cout << "dumpexe 2.10 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
                  "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n"
                  "License: GPLv2 | Commercial (contact author)\n";
     std::cout << std::format(
@@ -87,6 +87,12 @@ int main(int argc, char* argv[]) {
     if (opts.showHelp)    { show_usage(argv[0]); return 0; }
     if (opts.showVersion) { print_version();     return 0; }
 
+    if (opts.uasm && !opts.writeAsmFile && opts.outputPath.empty())
+    {
+        std::cerr << "dumpexe: --uasm needs an .asm file\n";
+        return 1;
+    }
+
     if (opts.filename.empty()) {
         std::cerr << "Error: No file specified\n\n";
         show_usage(argv[0]);
@@ -126,6 +132,15 @@ int main(int argc, char* argv[]) {
             uint32_t e_lfanew = 0;
             if (ne_probe(fileData, e_lfanew))
             {
+                if (opts.uasm)
+                {
+                    NEParsed ne_tmp;
+                    if (ne_parse(fileData, ne_tmp))
+                    {
+                        std::cerr << "dumpexe: --uasm is implemented for MZ and COM\n";
+                        return 1;
+                    }
+                }
                 std::string ne_error;
                 if (analyze_ne(opts, fileData, fileSize, ne_error))
                     return 0;
@@ -140,7 +155,7 @@ int main(int argc, char* argv[]) {
         if (!validate_header(header, fileSize)) return 1;
 
         ExeSizes sizes = calculate_sizes(header, fileSize);
-        const bool human = !opts.jsonOut;
+        const bool human = !opts.jsonOut && !opts.uasm_stdout_only();
 
         if (human)
             print_header_info(opts, header, sizes);
@@ -157,6 +172,11 @@ int main(int argc, char* argv[]) {
                 opts.x86Bits = 32;
             else if (opts.x86Bits == 0)
                 opts.x86Bits = 16;
+            if (opts.uasm && dext_rep.detected && dext_rep.x86_bits == 32)
+            {
+                std::cerr << "dumpexe: --uasm is implemented for MZ and COM\n";
+                return 1;
+            }
         }
         else if (opts.x86Bits == 0)
         {
@@ -237,12 +257,16 @@ int main(int argc, char* argv[]) {
                 print_strings_report(strs);
         }
 
-        if ((opts.showDisasm || opts.showAll) && !opts.jsonOut) {
+        const bool want_human_listing =
+            (opts.showDisasm || opts.showAll) && !opts.jsonOut;
+        if (opts.uasm || want_human_listing) {
             if (opts.x86Bits == 32 && dext_rep.detected &&
                 dext_rep.payload_len > 0)
             {
-                // 32-bit extender payload: linear Capstone CS_MODE_32
-                dos_extender_disasm_payload(fileData, dext_rep, opts);
+                // 32-bit extender payload: linear Capstone CS_MODE_32.
+                // --uasm already rejected this above.
+                if (want_human_listing)
+                    dos_extender_disasm_payload(fileData, dext_rep, opts);
             }
             else
             {
@@ -255,7 +279,8 @@ int main(int argc, char* argv[]) {
                             opts.toolchainDetect ? &tc_rep : nullptr,
                             opts.toolchainDetect ? &tp_rep : nullptr);
             }
-            dx_after_packed_listing(opts, fileData, tc_rep.packer);
+            if (want_human_listing || (opts.uasm && !opts.jsonOut))
+                dx_after_packed_listing(opts, fileData, tc_rep.packer);
         }
 
         // CFG: human --cfg, Graphviz --cfg-dot, or always under --json (scripting)
@@ -267,14 +292,14 @@ int main(int argc, char* argv[]) {
             uint16_t cs_seg = 0;
             mz_cfg_window(header, sizes, cfg_file_off, cfg_len, cs_seg, opts);
             Options cfg_opts = opts;
-            if (opts.jsonOut && !opts.showCfg)
-                cfg_opts.showCfg = false; // DOT/JSON only — no human CFG dump
+            if ((opts.jsonOut && !opts.showCfg) || opts.uasm_stdout_only())
+                cfg_opts.showCfg = false; // DOT/JSON or --uasm -o - — no human CFG dump
             cfg_g = cfg_analyze_image(fileData, cfg_file_off, cfg_len,
                                       mz_entry_image_ip(header), cs_seg, cfg_opts);
             cfg_ran = true;
         }
 
-        if (opts.simulate)
+        if (opts.simulate && !opts.uasm_stdout_only())
         {
             if (opts.x86Bits == 32 ||
                 (dext_rep.detected && dext_rep.x86_bits == 32))
@@ -315,6 +340,11 @@ int main(int argc, char* argv[]) {
         }
 
     } else if (sig32 == 0xFFFFFFFF) {
+        if (opts.uasm)
+        {
+            std::cerr << "dumpexe: --uasm is implemented for MZ and COM\n";
+            return 1;
+        }
         ToolchainReport tc_rep{};
         if (opts.toolchainDetect)
             tc_rep = toolchain_fingerprints_only(fileData);
@@ -350,6 +380,12 @@ int main(int argc, char* argv[]) {
         if (opts.toolchainDetect)
             tc_rep = toolchain_fingerprints_only(fileData);
 
+        if (opts.uasm && opts.jsonOut) {
+            std::vector<uint8_t> image;
+            com_listing_image(fileData, has_psp, image);
+            listing_run(image, 0, image.size(), COM_ENTRY_IP, opts.loadBase, opts,
+                        opts.filename, nullptr, nullptr, true, has_psp);
+        }
         if (opts.jsonOut) {
             JsonReport rep;
             rep.file = opts.filename;
@@ -368,7 +404,7 @@ int main(int argc, char* argv[]) {
             rep.print(std::cout);
         } else {
             analyze_com(opts, fileData, fileSize);
-            if (opts.toolchainDetect)
+            if (opts.toolchainDetect && !opts.uasm_stdout_only())
                 toolchain_print_report(tc_rep);
             dx_after_packed_listing(opts, fileData, tc_rep.packer);
         }

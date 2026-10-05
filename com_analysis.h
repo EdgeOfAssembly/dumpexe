@@ -219,16 +219,18 @@ static inline void analyze_com(const Options& opts,
     // 0x000 otherwise (file content goes to memory starting at 0x100).
     size_t entry_offset = has_psp ? COM_PSP_SIZE : 0;
 
-    print_com_info(opts, fileSize, has_psp, entry_offset);
+    const bool uasm_quiet = opts.uasm_stdout_only();
+    if (!uasm_quiet)
+        print_com_info(opts, fileSize, has_psp, entry_offset);
 
     // Hex dump from entry point to EOF (same behaviour as EXE path).
-    if (opts.showHexdump || opts.showAll) {
+    if (!uasm_quiet && (opts.showHexdump || opts.showAll)) {
         if (entry_offset < data.size()) {
             size_t dump_size = data.size() - entry_offset;
             print_hex_dump(data, entry_offset, dump_size,
                            "=== Hex+ASCII Dump (from entry point to EOF) ===");
         }
-    } else if (!opts.showReloc && !opts.showDisasm) {
+    } else if (!uasm_quiet && !opts.showReloc && !opts.showDisasm) {
         // Default: show a 64-byte preview when no section flag is given.
         if (entry_offset < data.size()) {
             size_t preview = std::min((size_t)64, data.size() - entry_offset);
@@ -239,14 +241,14 @@ static inline void analyze_com(const Options& opts,
 
     // Disassembly from entry point. No-PSP images are org 0100h (see
     // com_listing_image); the filename is the listing "; source:" line.
-    if (opts.showDisasm || opts.showAll) {
+    if (opts.showDisasm || opts.showAll || opts.uasm) {
         std::vector<uint8_t> image;
         com_listing_image(data, has_psp, image);
         listing_run(image, 0, image.size(), COM_ENTRY_IP, opts.loadBase, opts,
-                    opts.filename);
+                    opts.filename, nullptr, nullptr, true, has_psp);
     }
 
-    if (opts.showCfg) {
+    if (opts.showCfg && !uasm_quiet) {
         // COM: file image maps to CS:0100 (or CS:0000 if PSP embedded).
         // Build CFG in a virtual image where IP 0100 is entry for no-PSP files.
         if (has_psp) {
