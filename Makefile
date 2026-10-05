@@ -39,7 +39,41 @@ CAPSTONE_LIBS   := $(shell pkg-config --libs capstone 2>/dev/null)
 
 all: dumpexe
 
-HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h listing.h cfg.h analysis.h sim.h sim_path.h sys.h sys_analysis.h com.h com_analysis.h ne.h ne_shift.h ne_analysis.h dos_extender.h strings.h pascal_mt.h turbo_pascal.h toolchain.h symbols.h repack.h json_escape.h json_report.h
+HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h listing.h cfg.h analysis.h sim.h sim_path.h sys.h sys_analysis.h com.h com_analysis.h ne.h ne_shift.h ne_analysis.h dos_extender.h strings.h pascal_mt.h turbo_pascal.h toolchain.h symbols.h repack.h json_escape.h json_report.h unpack.h unpack_integrate.h
+
+# Deark modules (MIT, Jason Summers). Host glue is unpack_host.c.
+# -I so <#include <deark-private.h>> in the modules resolves.
+# Function sections let the relocatable bundle drop Deark code the unpack
+# call graph never reaches. The final dumpexe link does not use --gc-sections.
+DEARK_CFLAGS := -std=gnu99 -Wall -Wextra -Wno-unused-parameter -Wno-unused-function \
+	-Wno-sign-compare -Wno-unused-but-set-variable -Wno-unused-variable \
+	-Wno-format-truncation -O2 -ffunction-sections -fdata-sections \
+	-Ithird_party/deark/src
+DEARK_ASAN_CFLAGS := -std=gnu99 -Wall -Wextra -Wno-unused-parameter -Wno-unused-function \
+	-Wno-sign-compare -Wno-unused-but-set-variable -Wno-unused-variable \
+	-Wno-format-truncation -O1 -g -fsanitize=address,undefined \
+	-ffunction-sections -fdata-sections -Ithird_party/deark/src
+
+DEARK_SRCS := \
+	third_party/deark/src/deark-util.c \
+	third_party/deark/src/deark-data.c \
+	third_party/deark/src/deark-dbuf.c \
+	third_party/deark/src/deark-ucstring.c \
+	third_party/deark/src/fmtutil.c \
+	third_party/deark/src/fmtutil-cmpr.c \
+	third_party/deark/src/fmtutil-exe.c \
+	third_party/deark/src/fmtutil-huffman.c \
+	third_party/deark/src/fmtutil-lzh.c \
+	third_party/deark/src/fmtutil-lzw.c \
+	third_party/deark/src/fmtutil-lzah.c \
+	third_party/deark/modules/exepack.c \
+	third_party/deark/modules/lzexe.c \
+	third_party/deark/modules/pklite.c \
+	third_party/deark/modules/diet.c \
+	third_party/deark/modules/lha.c
+
+DEARK_OBJS := $(DEARK_SRCS:.c=.o)
+DEARK_ASAN_OBJS := $(DEARK_SRCS:.c=-asan.o)
 
 ne_shift.o: ne_shift.c ne_shift.h
 	$(CC) $(CFLAGS_NE) -O2 -c ne_shift.c -o ne_shift.o
@@ -53,13 +87,41 @@ sim_path.o: sim_path.c sim_path.h
 sim_path-asan.o: sim_path.c sim_path.h
 	$(CC) $(CFLAGS_NE) -O1 -g -fsanitize=address,undefined -c sim_path.c -o sim_path-asan.o
 
-dumpexe: dumpexe.cpp ne_shift.o sim_path.o $(HEADERS)
-	$(CXX) $(CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe dumpexe.cpp ne_shift.o sim_path.o $(CAPSTONE_LIBS)
+third_party/deark/src/%.o: third_party/deark/src/%.c
+	$(CC) $(DEARK_CFLAGS) -c $< -o $@
+
+third_party/deark/modules/%.o: third_party/deark/modules/%.c
+	$(CC) $(DEARK_CFLAGS) -c $< -o $@
+
+third_party/deark/src/%-asan.o: third_party/deark/src/%.c
+	$(CC) $(DEARK_ASAN_CFLAGS) -c $< -o $@
+
+third_party/deark/modules/%-asan.o: third_party/deark/modules/%.c
+	$(CC) $(DEARK_ASAN_CFLAGS) -c $< -o $@
+
+unpack_host.o: unpack_host.c unpack.h third_party/deark/src/dx_capture.h
+	$(CC) $(DEARK_CFLAGS) -c unpack_host.c -o unpack_host.o
+
+unpack_host-asan.o: unpack_host.c unpack.h third_party/deark/src/dx_capture.h
+	$(CC) $(DEARK_ASAN_CFLAGS) -c unpack_host.c -o unpack_host-asan.o
+
+# Relocatable bundle. --gc-sections applies only inside this link, rooted at
+# dx_unpack, so unused Deark format helpers are not part of dumpexe.
+deark_bundle.o: unpack_host.o $(DEARK_OBJS)
+	$(CC) -nostdlib -no-pie -Wl,-r -Wl,--gc-sections -Wl,-u,dx_unpack -Wl,-u,dx_unpack_free \
+		-o deark_bundle.o unpack_host.o $(DEARK_OBJS)
+
+deark_bundle-asan.o: unpack_host-asan.o $(DEARK_ASAN_OBJS)
+	$(CC) -nostdlib -no-pie -Wl,-r -Wl,--gc-sections -Wl,-u,dx_unpack -Wl,-u,dx_unpack_free \
+		-o deark_bundle-asan.o unpack_host-asan.o $(DEARK_ASAN_OBJS)
+
+dumpexe: dumpexe.cpp ne_shift.o sim_path.o deark_bundle.o $(HEADERS)
+	$(CXX) $(CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe dumpexe.cpp ne_shift.o sim_path.o deark_bundle.o $(CAPSTONE_LIBS)
 	@echo "Built dumpexe with Capstone disassembly support"
 
 # ASan/UBSan cannot link -static. Capstone comes from pkg-config, shared.
-dumpexe-asan: dumpexe.cpp ne_shift-asan.o sim_path-asan.o $(HEADERS)
-	$(CXX) $(ASAN_CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe-asan dumpexe.cpp ne_shift-asan.o sim_path-asan.o $(CAPSTONE_LIBS)
+dumpexe-asan: dumpexe.cpp ne_shift-asan.o sim_path-asan.o deark_bundle-asan.o $(HEADERS)
+	$(CXX) $(ASAN_CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe-asan dumpexe.cpp ne_shift-asan.o sim_path-asan.o deark_bundle-asan.o $(CAPSTONE_LIBS)
 	@echo "Built dumpexe-asan (address,undefined)"
 
 asan: dumpexe-asan
@@ -76,7 +138,8 @@ install: dumpexe
 	install -m 644 dumpexe.1 $(DESTDIR)$(PREFIX)/share/man/man1/
 
 clean:
-	rm -f dumpexe dumpexe-asan *.o int_db.h
+	rm -f dumpexe dumpexe-asan *.o int_db.h unpack_host.o unpack_host-asan.o \
+		deark_bundle.o deark_bundle-asan.o $(DEARK_OBJS) $(DEARK_ASAN_OBJS)
 
 .PHONY: test tests verify
 test: dumpexe
