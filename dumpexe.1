@@ -135,6 +135,15 @@ the listing mode.
 Also writes
 .I <stem>.asm
 next to the input by default.
+Microsoft EXEPACK, LZEXE 0.91, LZEXE 0.90, PKLITE, DIET, and LHarc also write
+.I <stem>_UNPACKED.EXE
+(or
+.I .COM
+when the image is not MZ) and
+.I <stem>_UNPACKED.asm
+of the unpacked program.
+.B \-o
+names only the packed listing.
 .TP
 .BR \-o ", " \-\-output " PATH"
 Override the listing output path (default:

@@ -11,7 +11,7 @@ static inline void print_version()
     int cap_major = 0;
     int cap_minor = 0;
     (void)cs_version(&cap_major, &cap_minor);
-    std::cout << "dumpexe 2.6 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
+    std::cout << "dumpexe 2.7 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
                  "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n"
                  "License: GPLv2 | Commercial (contact author)\n";
     std::cout << std::format(
@@ -78,6 +78,8 @@ static inline void mz_cfg_window(const MZHeader& header,
     cfg_file_off = img_off;
     cfg_len = img_len;
 }
+
+#include "unpack_integrate.h"
 
 int main(int argc, char* argv[]) {
     Options opts;
@@ -253,6 +255,7 @@ int main(int argc, char* argv[]) {
                             opts.toolchainDetect ? &tc_rep : nullptr,
                             opts.toolchainDetect ? &tp_rep : nullptr);
             }
+            dx_after_packed_listing(opts, fileData, tc_rep.packer);
         }
 
         // CFG: human --cfg, Graphviz --cfg-dot, or always under --json (scripting)
@@ -329,6 +332,7 @@ int main(int argc, char* argv[]) {
             analyze_sys(opts, fileData, fileSize);
             if (opts.toolchainDetect)
                 toolchain_print_report(tc_rep);
+            dx_after_packed_listing(opts, fileData, tc_rep.packer);
         }
 
     } else {
@@ -366,6 +370,7 @@ int main(int argc, char* argv[]) {
             analyze_com(opts, fileData, fileSize);
             if (opts.toolchainDetect)
                 toolchain_print_report(tc_rep);
+            dx_after_packed_listing(opts, fileData, tc_rep.packer);
         }
     }
 

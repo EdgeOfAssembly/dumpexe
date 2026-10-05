@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for dumpexe 2.6 report/header bugs.
+# Regression tests for dumpexe 2.7 report/header bugs.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="${DUMPEXE_BIN:-$ROOT/dumpexe}"
@@ -20,6 +20,7 @@ check() {
 }
 
 TD="$(mktemp -d /tmp/dumpexe-bugs-XXXXXX)"
+export TD
 cleanup() {
   rm -rf "$TD"
   rm -f "$ROOT/games/cutemouse/bin/ctmouse.repack.exe" \
@@ -254,6 +255,19 @@ bc_hdr = struct.pack("<14H", 0x5A4D, (32 + len(bc)) % 512, 1, 0, 2, 0, 0xFFFF,
 
 # COM containing the Turbo C RTL banner.
 (td / "turboc.com").write_bytes(b"\xc3Turbo-C - Copyright")
+
+# DIET marker only: four bytes at 0x1C, no Deark DIET stub.
+(td / "diet4.exe").write_bytes(build_mz(
+    b"\x90" * 16, crlc=0, paras=2, ip=0, cs=0, lfarlc=0x1C, ovno=0, at_1c=b"DIET"))
+
+# LHarc banner without an -lh?- / -lz?- header.
+(td / "lharc_banner.exe").write_bytes(build_mz(
+    b"LHarc's SFX" + b"\x90" * 16, crlc=0, paras=2, ip=0, cs=0,
+    lfarlc=0x1C, ovno=0))
+
+# Tiny real MZ (ret). Not a packer.
+tiny = build_mz(b"\xc3", crlc=0, paras=2, ip=0, cs=0, lfarlc=0x1C, ovno=0)
+(td / "tiny_mz.exe").write_bytes(tiny)
 print("fixtures ok", td)
 PY
 
@@ -505,7 +519,7 @@ json_mz_22() {
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["tool"] == "dumpexe", d.get("tool")
-assert d["version"] == "2.6", d.get("version")
+assert d["version"] == "2.7", d.get("version")
 mz = d["mz"]
 assert mz["extra_bytes"] == 10, mz.get("extra_bytes")
 assert mz["min_alloc"] == 14, mz.get("min_alloc")
@@ -543,7 +557,7 @@ json_com_entry() {
   python3 - "$TD/com.json" "$TD/com_psp_flag.json" << 'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert d["version"] == "2.6"
+assert d["version"] == "2.7"
 assert d["format"] == "com"
 assert d["com"]["file_size"] == 1
 assert d["com"]["entry_ip"] == "0100"
@@ -577,7 +591,7 @@ check json_com_psp json_com_psp
 check version_capstone bash -c "
   set -euo pipefail
   '$BIN' -v >'$TD/ver.txt'
-  grep -q 'dumpexe 2.6' '$TD/ver.txt'
+  grep -q 'dumpexe 2.7' '$TD/ver.txt'
   grep -Eq 'Capstone[[:space:]]+[0-9]+\\.[0-9]+' '$TD/ver.txt'
 "
 
@@ -753,6 +767,203 @@ check sim_guest_huge bash -c "
   [[ ! -e \"\$dir/huge.dat\" ]]
   grep -F 'FCB read' '$TD/huge.out' >/dev/null
   grep -F 'DOS terminate' '$TD/huge.out' >/dev/null
+"
+
+SAMPLES="/tmp/project/fix-20261004/packer-samples"
+
+check help_unpacked bash -c "
+  set -euo pipefail
+  '$BIN' -h >'$TD/help.txt'
+  grep -q '_UNPACKED' '$TD/help.txt'
+  if grep -E -q -- '--unpack|--no-unpack' '$TD/help.txt'; then
+    echo 'help advertises an unpack switch' >&2
+    exit 1
+  fi
+"
+
+check tiny_mz_no_unpacked bash -c "
+  set -euo pipefail
+  '$BIN' -d '$TD/tiny_mz.exe' >'$TD/tiny_mz.out'
+  [[ -s '$TD/tiny_mz.asm' ]]
+  [[ ! -e '$TD/tiny_mz_UNPACKED.EXE' ]]
+  [[ ! -e '$TD/tiny_mz_UNPACKED.COM' ]]
+  [[ ! -e '$TD/tiny_mz_UNPACKED.asm' ]]
+"
+
+check exepack_synthetic_fails bash -c "
+  set -euo pipefail
+  set +e
+  '$BIN' -d '$TD/exepack.exe' >'$TD/exepack_d.out' 2>'$TD/exepack_d.err'
+  rc=\$?
+  set -e
+  [[ \$rc -eq 0 ]]
+  grep -q 'unpack failed (Microsoft EXEPACK)' '$TD/exepack_d.err'
+  [[ ! -e '$TD/exepack_UNPACKED.EXE' ]]
+  [[ ! -e '$TD/exepack_UNPACKED.COM' ]]
+  [[ ! -e '$TD/exepack_UNPACKED.asm' ]]
+"
+
+check diet4_fails bash -c "
+  set -euo pipefail
+  set +e
+  '$BIN' -d '$TD/diet4.exe' >'$TD/diet4.out' 2>'$TD/diet4.err'
+  rc=\$?
+  set -e
+  [[ \$rc -eq 0 ]]
+  grep -q 'Packer:      DIET' '$TD/diet4.out'
+  grep -q 'unpack failed (DIET)' '$TD/diet4.err'
+  [[ ! -e '$TD/diet4_UNPACKED.EXE' ]]
+  [[ ! -e '$TD/diet4_UNPACKED.COM' ]]
+  [[ ! -e '$TD/diet4_UNPACKED.asm' ]]
+"
+
+check lharc_banner_fails bash -c "
+  set -euo pipefail
+  set +e
+  '$BIN' -d '$TD/lharc_banner.exe' >'$TD/lharc.out' 2>'$TD/lharc.err'
+  rc=\$?
+  set -e
+  [[ \$rc -eq 0 ]]
+  grep -q 'Packer:      LHarc' '$TD/lharc.out'
+  grep -q 'unpack failed (LHarc)' '$TD/lharc.err'
+  [[ ! -e '$TD/lharc_banner_UNPACKED.EXE' ]]
+  [[ ! -e '$TD/lharc_banner_UNPACKED.COM' ]]
+"
+
+check json_no_unpack bash -c "
+  set -euo pipefail
+  '$BIN' --json -d '$TD/exepack.exe' >'$TD/exepack.json' 2>'$TD/exepack_json.err'
+  if grep -q 'unpack failed' '$TD/exepack_json.err'; then
+    echo 'json mode tried to unpack' >&2
+    exit 1
+  fi
+  [[ ! -e '$TD/exepack_UNPACKED.EXE' ]]
+"
+
+check probe_exepack2_no_unpack bash -c "
+  set -euo pipefail
+  [[ -f '$SAMPLES/exepack-2.exe' ]]
+  cp '$SAMPLES/exepack-2.exe' '$TD/exepack-2.exe'
+  '$BIN' -d '$TD/exepack-2.exe' >'$TD/exepack2.out'
+  if grep -q '^Packer:' '$TD/exepack2.out'; then
+    echo 'exepack-2 reported a packer' >&2
+    exit 1
+  fi
+  [[ ! -e '$TD/exepack-2_UNPACKED.EXE' ]]
+  [[ ! -e '$TD/exepack-2_UNPACKED.COM' ]]
+  [[ ! -e '$TD/exepack-2_UNPACKED.asm' ]]
+  [[ -s '$TD/exepack-2.asm' ]]
+"
+
+# Host oracle. Writes deark's in.*.exe to $3. Exported for bash -c checks.
+oracle_deark() {
+  local mod="$1" src="$2" dst="$3"
+  local work produced
+  work=$(mktemp -d "$TD/deark-XXXXXX")
+  cp "$src" "$work/in.exe"
+  (cd "$work" && deark -m "$mod" in.exe >/dev/null)
+  produced=$(find "$work" -maxdepth 1 -type f -name '*.exe' ! -name 'in.exe' | head -n 1)
+  [[ -n "$produced" ]]
+  cp "$produced" "$dst"
+  rm -rf "$work"
+}
+export -f oracle_deark
+
+check probe_exepack1_deark bash -c "
+  set -euo pipefail
+  [[ -f '$SAMPLES/exepack-1.exe' ]]
+  cp '$SAMPLES/exepack-1.exe' '$TD/exepack-1.exe'
+  oracle_deark exepack '$TD/exepack-1.exe' '$TD/exepack-1.oracle'
+  set +e
+  '$BIN' -d '$TD/exepack-1.exe' >'$TD/exepack1.out' 2>'$TD/exepack1.err'
+  rc=\$?
+  set -e
+  [[ \$rc -eq 0 ]]
+  [[ -s '$TD/exepack-1_UNPACKED.asm' ]]
+  cmp -s '$TD/exepack-1.oracle' '$TD/exepack-1_UNPACKED.EXE'
+"
+
+check probe_lz91_unlzexe bash -c "
+  set -euo pipefail
+  [[ -f '$SAMPLES/lz91.exe' ]]
+  cp '$SAMPLES/lz91.exe' '$TD/lz91-probe.exe'
+  cp '$SAMPLES/lz91.exe' '$TD/lz91-host.exe'
+  (cd '$TD' && unlzexe lz91-host.exe >'$TD/unlzexe91.txt')
+  [[ -s '$TD/lz91-host.ex' ]]
+  set +e
+  '$BIN' -d '$TD/lz91-probe.exe' >'$TD/lz91p.out' 2>'$TD/lz91p.err'
+  rc=\$?
+  set -e
+  [[ \$rc -eq 0 ]]
+  [[ -s '$TD/lz91-probe_UNPACKED.asm' ]]
+  cmp -s '$TD/lz91-host.ex' '$TD/lz91-probe_UNPACKED.EXE'
+"
+
+check probe_lz09_deark bash -c "
+  set -euo pipefail
+  [[ -f '$SAMPLES/lz09.exe' ]]
+  cp '$SAMPLES/lz09.exe' '$TD/lz09-probe.exe'
+  cp '$SAMPLES/lz09.exe' '$TD/lz09-host.exe'
+  set +e
+  (cd '$TD' && unlzexe lz09-host.exe >'$TD/unlzexe09.txt' 2>&1)
+  set -e
+  # Host unlzexe does not write an unpacked image for this file.
+  cmp -s '$SAMPLES/lz09.exe' '$TD/lz09-host.exe'
+  oracle_deark lzexe '$TD/lz09-probe.exe' '$TD/lz09.oracle'
+  set +e
+  '$BIN' -d '$TD/lz09-probe.exe' >'$TD/lz09p.out' 2>'$TD/lz09p.err'
+  rc=\$?
+  set -e
+  [[ \$rc -eq 0 ]]
+  [[ -s '$TD/lz09-probe_UNPACKED.asm' ]]
+  cmp -s '$TD/lz09.oracle' '$TD/lz09-probe_UNPACKED.EXE'
+"
+
+check probe_pklite_deark bash -c "
+  set -euo pipefail
+  [[ -f '$SAMPLES/pklite.exe' ]]
+  cp '$SAMPLES/pklite.exe' '$TD/pklite-probe.exe'
+  oracle_deark pklite '$TD/pklite-probe.exe' '$TD/pklite.oracle'
+  set +e
+  '$BIN' -d '$TD/pklite-probe.exe' >'$TD/pklitep.out' 2>'$TD/pklitep.err'
+  rc=\$?
+  set -e
+  [[ \$rc -eq 0 ]]
+  grep -q 'Packer:      PKLITE 1.12' '$TD/pklitep.out'
+  [[ -s '$TD/pklite-probe_UNPACKED.asm' ]]
+  cmp -s '$TD/pklite.oracle' '$TD/pklite-probe_UNPACKED.EXE'
+"
+
+check unpack_no_asm_separator bash -c "
+  set -euo pipefail
+  rm -f '$TD/exepack-1_UNPACKED.EXE' '$TD/exepack-1_UNPACKED.asm' '$TD/exepack-1.asm'
+  [[ -f '$TD/exepack-1.exe' ]]
+  '$BIN' -d --no-asm-file '$TD/exepack-1.exe' >'$TD/exepack1_noasm.out' 2>'$TD/exepack1_noasm.err'
+  [[ -s '$TD/exepack-1_UNPACKED.EXE' ]]
+  [[ ! -e '$TD/exepack-1_UNPACKED.asm' ]]
+  [[ ! -e '$TD/exepack-1.asm' ]]
+  grep -q '^=== UNPACKED ===$' '$TD/exepack1_noasm.out'
+"
+
+check unpack_o_names_packed_only bash -c "
+  set -euo pipefail
+  rm -f '$TD/exepack-1_UNPACKED.EXE' '$TD/exepack-1_UNPACKED.asm' '$TD/packed_only.asm'
+  '$BIN' -d -o '$TD/packed_only.asm' '$TD/exepack-1.exe' >'$TD/exepack1_o.out'
+  [[ -s '$TD/packed_only.asm' ]]
+  [[ ! -e '$TD/exepack-1.asm' ]]
+  [[ -s '$TD/exepack-1_UNPACKED.EXE' ]]
+  [[ -s '$TD/exepack-1_UNPACKED.asm' ]]
+"
+
+check unpack_keep_existing bash -c "
+  set -euo pipefail
+  python3 -c 'open(\"$TD/exepack-1_UNPACKED.EXE\",\"wb\").write(b\"KEEP\")'
+  printf 'ASMKEEP\n' > '$TD/exepack-1_UNPACKED.asm'
+  '$BIN' -d '$TD/exepack-1.exe' >'$TD/exepack1_keep.out' 2>'$TD/exepack1_keep.err'
+  [[ \"\$(cat '$TD/exepack-1_UNPACKED.EXE')\" == KEEP ]]
+  grep -q \"refuse to overwrite '$TD/exepack-1_UNPACKED.EXE'\" '$TD/exepack1_keep.err'
+  grep -q \"refuse to overwrite '$TD/exepack-1_UNPACKED.asm'\" '$TD/exepack1_keep.err'
+  [[ \"\$(cat '$TD/exepack-1_UNPACKED.asm')\" == ASMKEEP ]]
 "
 
 echo "---"
