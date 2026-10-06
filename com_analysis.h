@@ -202,7 +202,7 @@ static inline void com_listing_image(const std::vector<uint8_t>& data,
 /// @param opts     Parsed CLI options.
 /// @param data     Full file contents as a byte vector.
 /// @param fileSize Actual file size in bytes.
-static inline void analyze_com(const Options& opts,
+static inline int analyze_com(const Options& opts,
                                 const std::vector<uint8_t>& data,
                                 int64_t fileSize) {
     // Resolve PSP presence using flags or heuristic.
@@ -244,22 +244,27 @@ static inline void analyze_com(const Options& opts,
     if (opts.showDisasm || opts.showAll || opts.uasm) {
         std::vector<uint8_t> image;
         com_listing_image(data, has_psp, image);
-        listing_run(image, 0, image.size(), COM_ENTRY_IP, opts.loadBase, opts,
-                    opts.filename, nullptr, nullptr, true, has_psp);
+        if (listing_run(image, 0, image.size(), COM_ENTRY_IP, opts.loadBase,
+                        opts.loadBase, opts, opts.filename, nullptr, nullptr, true,
+                        has_psp) != 0)
+        {
+            return 1;
+        }
     }
 
     if (opts.showCfg && !uasm_quiet) {
         // COM: file image maps to CS:0100 (or CS:0000 if PSP embedded).
         // Build CFG in a virtual image where IP 0100 is entry for no-PSP files.
         if (has_psp) {
-            cfg_analyze_image(data, 0, data.size(), COM_ENTRY_IP, opts.loadBase, opts);
+            cfg_analyze_image(data, 0, data.size(), COM_ENTRY_IP, opts.loadBase,
+                              opts.loadBase, opts);
         } else {
             // Prepend 0x100 zero bytes so IPs match DOS (code at 0100h).
             std::vector<uint8_t> virt(COM_PSP_SIZE + data.size(), 0);
             std::memcpy(virt.data() + COM_PSP_SIZE, data.data(), data.size());
             // file offsets in dump will be wrong by +100h for virt — pass file base 0
             // and note in analysis; use image that starts at 0 with code at 100h.
-            CfgGraph g = cfg_build(virt, COM_ENTRY_IP, opts.loadBase, 0,
+            CfgGraph g = cfg_build(virt, COM_ENTRY_IP, opts.loadBase, opts.loadBase, 0,
                                    opts.cfgFollowCalls, 20000);
             cfg_annotate(g, virt);
             // Fix displayed file offsets: real file off = ip - 0x100
@@ -278,6 +283,7 @@ static inline void analyze_com(const Options& opts,
     if (opts.simulate) {
         run_com_simulation(opts, data, entry_offset);
     }
+    return 0;
 }
 
 #endif // COM_ANALYSIS_H

@@ -1,12 +1,15 @@
 /**
  * @file header.cpp
- * @brief COM wrap and plain MZ header copy.
+ * @brief COM wrap and MZ header copy, including a matching original tail.
  */
 #include "bin2exe/header.hpp"
 
 #include "bin2exe/mz_pages.h"
 
+#include <cstdint>
 #include <cstring>
+#include <span>
+#include <vector>
 
 namespace bin2exe
 {
@@ -33,6 +36,64 @@ bool looks_like_mz(const std::uint8_t *bytes)
     const bool zm = bytes[0] == static_cast<std::uint8_t>('Z') &&
                     bytes[1] == static_cast<std::uint8_t>('M');
     return mz || zm;
+}
+
+/**
+ * @brief Append original[written:] when the flat image continues the file.
+ *
+ * @param[in] original      Leading bytes of the original file.
+ * @param[in] file_size     Full original length. Bytes at and past this
+ *                          offset are not part of the file.
+ * @param[in] header_bytes  Copied MZ header length.
+ * @param[in] image         Flat image already stored after the header.
+ * @param[in,out] built     Header plus image. The tail is inserted on success.
+ *
+ * @retval true  A non-empty tail was appended.
+ * @retval false The image is not a prefix of the original payload, the tail
+ *               is empty, or @p original does not hold the tail bytes.
+ */
+bool append_matching_tail(std::span<const std::uint8_t> original,
+                          std::uint64_t file_size,
+                          std::size_t header_bytes,
+                          std::span<const std::uint8_t> image,
+                          std::vector<std::uint8_t> *built)
+{
+    if (built == nullptr || header_bytes > file_size)
+    {
+        return false;
+    }
+    const std::uint64_t payload_bytes = file_size - static_cast<std::uint64_t>(header_bytes);
+    if (static_cast<std::uint64_t>(image.size()) > payload_bytes)
+    {
+        return false;
+    }
+    const std::uint64_t written =
+        static_cast<std::uint64_t>(header_bytes) + static_cast<std::uint64_t>(image.size());
+    if (written >= file_size || static_cast<std::uint64_t>(original.size()) < file_size)
+    {
+        return false;
+    }
+    if (original.size() < header_bytes + image.size())
+    {
+        return false;
+    }
+    /* Flat image must be a prefix of the original payload, not merely the same length. */
+    if (std::memcmp(original.data() + header_bytes, image.data(), image.size()) != 0)
+    {
+        return false;
+    }
+    /* Header plus image must themselves be a prefix of the original file. */
+    if (built->size() < static_cast<std::size_t>(written) ||
+        std::memcmp(original.data(), built->data(), static_cast<std::size_t>(written)) != 0)
+    {
+        return false;
+    }
+    const auto tail_off = static_cast<std::size_t>(written);
+    const auto tail_end = static_cast<std::size_t>(file_size);
+    built->insert(built->end(),
+                  original.begin() + static_cast<std::ptrdiff_t>(tail_off),
+                  original.begin() + static_cast<std::ptrdiff_t>(tail_end));
+    return true;
 }
 
 } /* namespace */
@@ -89,7 +150,8 @@ build_result wrap_com(std::span<const std::uint8_t> image)
 
 build_result copy_mz_header(std::span<const std::uint8_t> exe_prefix,
                             std::uint64_t exe_file_size,
-                            std::span<const std::uint8_t> image)
+                            std::span<const std::uint8_t> image,
+                            bool carry_tail)
 {
     build_result result{};
     if (image.empty())
@@ -127,11 +189,18 @@ build_result copy_mz_header(std::span<const std::uint8_t> exe_prefix,
     }
 
     result.original_payload_bytes = exe_file_size - header_len;
-    result.payload_length_differs = image.size() != result.original_payload_bytes;
+    result.payload_length_differs =
+        static_cast<std::uint64_t>(image.size()) != result.original_payload_bytes;
 
-    result.bytes.resize(static_cast<std::size_t>(header_len) + image.size());
-    std::memcpy(result.bytes.data(), exe_prefix.data(), header_len);
-    std::memcpy(result.bytes.data() + header_len, image.data(), image.size());
+    const std::size_t header_bytes = static_cast<std::size_t>(header_len);
+    result.bytes.resize(header_bytes + image.size());
+    std::memcpy(result.bytes.data(), exe_prefix.data(), header_bytes);
+    std::memcpy(result.bytes.data() + header_bytes, image.data(), image.size());
+    if (carry_tail)
+    {
+        result.tail_appended = append_matching_tail(exe_prefix, exe_file_size, header_bytes,
+                                                    image, &result.bytes);
+    }
     result.code = status::ok;
     return result;
 }

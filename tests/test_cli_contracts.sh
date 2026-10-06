@@ -186,7 +186,7 @@ else
   echo "SKIP simlife DOS extender tests"
 fi
 
-DOOM2="/home/wizard/dos/DOOM2.EXE"
+DOOM2="${DOOM2_EXE:-${HOME}/dos/DOOM2.EXE}"
 if [[ -f "$DOOM2" ]]; then
   check doom_dos4g bash -c "$BIN '$DOOM2' 2>&1 | grep -qE 'DOS/4G|DOS/32A|LE/LX'"
 fi

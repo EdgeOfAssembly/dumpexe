@@ -10,8 +10,11 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fcntl.h>
+#include <unistd.h>
 #include <span>
 #include <string>
 #include <string_view>
@@ -37,15 +40,27 @@ constexpr const char k_usage[] =
     "  -v, --version        Show version and exit\n"
     "  -o, --output PATH    Output file, directory, or - for stdout\n"
     "      --header PATH    Copy this EXE header in front of each image\n"
+    "      --no-tail        Do not append a matching original-file tail\n"
     "\n"
     "Default: write <stem>.exe beside each input, with a COM-style MZ\n"
-    "header (CS:IP and SS:SP wrap to the PSP). An image larger than\n"
-    "65280 bytes is refused; pass --header to copy an original EXE header\n"
-    "instead. --header does not rewrite page counts, relocations, or SS:SP.\n"
+    "header (CS:IP and SS:SP wrap to the PSP, minalloc 0). An existing\n"
+    "<stem>.exe is left unchanged; pass -o to replace a regular file.\n"
+    "An image larger than 65280 bytes is refused; pass --header to copy\n"
+    "an original EXE header instead. --header does not rewrite page\n"
+    "counts, relocations, or SS:SP. When the flat image is a prefix of\n"
+    "the original file, the bytes after that prefix are appended unless\n"
+    "--no-tail is set. A symlink output path is refused.\n"
     "\n";
 
-/** Absolute read cap for one flat image. Header mode uses the same cap. */
+/** Absolute read cap for one flat image. */
 constexpr std::uint64_t k_max_image_bytes = 32ull * 1024ull * 1024ull;
+
+/**
+ * Whole --header file, including a tail past the 64 KiB MZ header cap.
+ * The MZ header structure itself is still refused above that cap.
+ */
+constexpr std::uint64_t k_max_header_file_bytes =
+    k_max_image_bytes + static_cast<std::uint64_t>(bin2exe::k_mz_header_max);
 
 struct options
 {
@@ -53,6 +68,8 @@ struct options
     bool version = false;
     bool have_output = false;
     bool have_header = false;
+    /** Tail carry is the default. This is set only by --no-tail. */
+    bool no_tail = false;
     std::string output{};
     std::string header{};
     std::vector<fs::path> inputs{};
@@ -102,6 +119,15 @@ int parse_args(int argc, char **argv, options *out)
         if (!end_opts && (arg == "-v" || arg == "--version"))
         {
             out->version = true;
+            continue;
+        }
+        if (!end_opts && arg == "--no-tail")
+        {
+            if (out->no_tail)
+            {
+                return fail_usage("--no-tail given twice");
+            }
+            out->no_tail = true;
             continue;
         }
         if (!end_opts && (arg == "-o" || arg == "--output" || arg == "--header"))
@@ -287,6 +313,8 @@ struct job
     fs::path input{};
     fs::path output{};
     bool to_stdout = false;
+    /** True when the output path is the default <stem>.exe, not an -o path. */
+    bool default_name = false;
 };
 
 int plan_jobs(const options &opt, const std::vector<fs::path> &files, std::vector<job> *jobs)
@@ -298,6 +326,7 @@ int plan_jobs(const options &opt, const std::vector<fs::path> &files, std::vecto
             job one{};
             one.input = input;
             one.output = input.parent_path() / exe_filename(input);
+            one.default_name = true;
             jobs->push_back(std::move(one));
         }
         return 0;
@@ -321,18 +350,23 @@ int plan_jobs(const options &opt, const std::vector<fs::path> &files, std::vecto
     const bool trailing_sep = !spec_text.empty() &&
                               (spec_text.back() == '/' || spec_text.back() == '\\');
     std::error_code ec;
-    const bool exists = fs::exists(spec, ec);
-    if (ec)
+    const fs::file_status spec_status = fs::symlink_status(spec, ec);
+    if (spec_status.type() == fs::file_type::not_found)
+    {
+        ec.clear();
+    }
+    else if (ec)
     {
         std::fprintf(stderr, "bin2exe: %s: %s\n", spec.c_str(), ec.message().c_str());
         return 1;
     }
-    const bool is_dir = exists && fs::is_directory(spec, ec);
-    if (ec)
+    if (fs::is_symlink(spec_status))
     {
-        std::fprintf(stderr, "bin2exe: %s: %s\n", spec.c_str(), ec.message().c_str());
+        std::fprintf(stderr, "bin2exe: refusing to follow symlink %s\n", spec.c_str());
         return 1;
     }
+    const bool exists = spec_status.type() != fs::file_type::not_found;
+    const bool is_dir = fs::is_directory(spec_status);
 
     if (is_dir || trailing_sep || (!exists && files.size() > 1u))
     {
@@ -436,6 +470,31 @@ int reject_collisions(const std::vector<job> &jobs, const fs::path *header_path)
     return 0;
 }
 
+int reject_existing_defaults(const std::vector<job> &jobs)
+{
+    for (const job &one : jobs)
+    {
+        if (!one.default_name || one.to_stdout)
+        {
+            continue;
+        }
+        std::error_code ec;
+        const fs::file_status st = fs::symlink_status(one.output, ec);
+        if (st.type() == fs::file_type::not_found)
+        {
+            continue;
+        }
+        if (ec)
+        {
+            std::fprintf(stderr, "bin2exe: %s: %s\n", one.output.c_str(), ec.message().c_str());
+            return 1;
+        }
+        std::fprintf(stderr, "bin2exe: %s exists; pass -o\n", one.output.c_str());
+        return 1;
+    }
+    return 0;
+}
+
 int read_file(const fs::path &path, std::uint64_t max_bytes, bool whole_file,
               std::vector<std::uint8_t> *bytes, std::uint64_t *file_size)
 {
@@ -504,42 +563,103 @@ int read_file(const fs::path &path, std::uint64_t max_bytes, bool whole_file,
     return 0;
 }
 
+bool write_all(int fd, const std::vector<std::uint8_t> &bytes)
+{
+    std::size_t offset = 0;
+    while (offset < bytes.size())
+    {
+        const ssize_t wrote = ::write(fd, bytes.data() + offset, bytes.size() - offset);
+        if (wrote < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            return false;
+        }
+        if (wrote == 0)
+        {
+            errno = EIO;
+            return false;
+        }
+        offset += static_cast<std::size_t>(wrote);
+    }
+    return true;
+}
+
+/**
+ * @brief Write @p bytes to @p path via mkstemp in the output directory.
+ *
+ * The temporary file is created with mkostemp and O_NOFOLLOW, so a symlink
+ * at the temporary name is an error rather than a truncate. A symlink at
+ * @p path is refused before the temporary file is created. rename replaces
+ * a regular file only after the write and close succeed.
+ */
 int write_bytes(const fs::path &path, const std::vector<std::uint8_t> &bytes)
 {
-    const fs::path temporary = fs::path{path.string() + ".bin2exe.tmp"};
-    std::FILE *fp = std::fopen(temporary.c_str(), "wb");
-    if (fp == nullptr)
+    static_assert(O_NOFOLLOW != 0, "O_NOFOLLOW is required for the temp file");
+
+    std::error_code ec;
+    const fs::file_status dest = fs::symlink_status(path, ec);
+    if (dest.type() == fs::file_type::not_found)
     {
-        std::fprintf(stderr, "bin2exe: cannot write %s: %s\n",
-                     path.c_str(), std::strerror(errno));
+        ec.clear();
+    }
+    else if (ec)
+    {
+        std::fprintf(stderr, "bin2exe: cannot write %s: %s\n", path.c_str(), ec.message().c_str());
         return 1;
     }
-    if (!bytes.empty())
+    if (fs::is_symlink(dest))
     {
-        const std::size_t wrote = std::fwrite(bytes.data(), 1, bytes.size(), fp);
-        if (wrote != bytes.size())
-        {
-            std::fprintf(stderr, "bin2exe: cannot write %s: %s\n",
-                         path.c_str(), std::strerror(errno));
-            std::fclose(fp);
-            fp = nullptr;
-            std::remove(temporary.c_str());
-            return 1;
-        }
+        std::fprintf(stderr, "bin2exe: refusing to follow symlink %s\n", path.c_str());
+        return 1;
     }
-    if (std::fclose(fp) != 0)
+    if (dest.type() != fs::file_type::not_found && !fs::is_regular_file(dest))
     {
-        fp = nullptr;
-        std::fprintf(stderr, "bin2exe: cannot write %s: %s\n",
-                     path.c_str(), std::strerror(errno));
+        std::fprintf(stderr, "bin2exe: refusing to replace %s\n", path.c_str());
+        return 1;
+    }
+
+    fs::path dir = path.parent_path();
+    if (dir.empty())
+    {
+        dir = ".";
+    }
+    const std::string pattern = (dir / "bin2exe.XXXXXX").string();
+    std::vector<char> tmpl(pattern.begin(), pattern.end());
+    tmpl.push_back('\0');
+    const int fd = ::mkostemp(tmpl.data(), O_NOFOLLOW);
+    if (fd < 0)
+    {
+        std::fprintf(stderr, "bin2exe: cannot write %s: %s\n", path.c_str(), std::strerror(errno));
+        return 1;
+    }
+    const fs::path temporary{std::string{tmpl.data()}};
+    const fs::file_status tmp_status = fs::symlink_status(temporary, ec);
+    if (ec || !fs::is_regular_file(tmp_status))
+    {
+        std::fprintf(stderr, "bin2exe: refusing to follow symlink %s\n", path.c_str());
+        ::close(fd);
         std::remove(temporary.c_str());
         return 1;
     }
-    fp = nullptr;
+    if (!write_all(fd, bytes))
+    {
+        std::fprintf(stderr, "bin2exe: cannot write %s: %s\n", path.c_str(), std::strerror(errno));
+        ::close(fd);
+        std::remove(temporary.c_str());
+        return 1;
+    }
+    if (::close(fd) != 0)
+    {
+        std::fprintf(stderr, "bin2exe: cannot write %s: %s\n", path.c_str(), std::strerror(errno));
+        std::remove(temporary.c_str());
+        return 1;
+    }
     if (std::rename(temporary.c_str(), path.c_str()) != 0)
     {
-        std::fprintf(stderr, "bin2exe: cannot write %s: %s\n",
-                     path.c_str(), std::strerror(errno));
+        std::fprintf(stderr, "bin2exe: cannot write %s: %s\n", path.c_str(), std::strerror(errno));
         std::remove(temporary.c_str());
         return 1;
     }
@@ -585,7 +705,26 @@ const char *status_label(bin2exe::status code)
     return "failed";
 }
 
-int convert_one(const job &one, bool header_mode,
+bool header_fault(bin2exe::status code)
+{
+    switch (code)
+    {
+    case bin2exe::status::not_mz:
+    case bin2exe::status::header_too_small:
+    case bin2exe::status::header_truncated:
+    case bin2exe::status::header_too_large:
+        return true;
+    case bin2exe::status::ok:
+    case bin2exe::status::empty_image:
+    case bin2exe::status::com_too_large:
+    case bin2exe::status::page_overflow:
+        return false;
+    }
+    return false;
+}
+
+int convert_one(const job &one, bool header_mode, bool carry_tail,
+                const fs::path &header_path,
                 std::span<const std::uint8_t> header_prefix,
                 std::uint64_t header_file_size)
 {
@@ -629,7 +768,7 @@ int convert_one(const job &one, bool header_mode,
     bin2exe::build_result built{};
     if (header_mode)
     {
-        built = bin2exe::copy_mz_header(header_prefix, header_file_size, image);
+        built = bin2exe::copy_mz_header(header_prefix, header_file_size, image, carry_tail);
     }
     else
     {
@@ -637,10 +776,16 @@ int convert_one(const job &one, bool header_mode,
     }
     if (built.code != bin2exe::status::ok)
     {
-        std::fprintf(stderr, "bin2exe: %s: %s\n", one.input.c_str(), status_label(built.code));
+        const char *named = one.input.c_str();
+        if (header_mode && header_fault(built.code))
+        {
+            named = header_path.c_str();
+        }
+        std::fprintf(stderr, "bin2exe: %s: %s\n", named, status_label(built.code));
         return 1;
     }
-    if (built.payload_length_differs)
+    /* Length mismatch is quiet when the matching tail was appended. */
+    if (built.payload_length_differs && !built.tail_appended)
     {
         std::fprintf(stderr,
                      "bin2exe: warning: %s is %llu bytes; original payload is %llu bytes\n",
@@ -703,7 +848,7 @@ int run(int argc, char **argv)
     {
         header_path = opt.header;
         header_ptr = &header_path;
-        if (read_file(header_path, bin2exe::k_mz_header_max, false,
+        if (read_file(header_path, k_max_header_file_bytes, true,
                       &header_prefix, &header_file_size) != 0)
         {
             return 1;
@@ -715,10 +860,16 @@ int run(int argc, char **argv)
     {
         return collisions;
     }
+    const int existing = reject_existing_defaults(jobs);
+    if (existing != 0)
+    {
+        return existing;
+    }
 
     for (const job &one : jobs)
     {
-        const int rc = convert_one(one, opt.have_header, header_prefix, header_file_size);
+        const int rc = convert_one(one, opt.have_header, !opt.no_tail, header_path,
+                                   header_prefix, header_file_size);
         if (rc != 0)
         {
             return rc;

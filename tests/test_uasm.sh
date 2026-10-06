@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dumpexe --uasm: UASM source assembles back to the load image (v2.12).
+# dumpexe --uasm: UASM source assembles back to the load image (v2.13).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -8,7 +8,10 @@ if [[ ! -x "$BIN" ]]; then
   BIN=$(command -v dumpexe || true)
 fi
 [[ -x "$BIN" ]] || { echo "FAIL: dumpexe binary not found"; exit 1; }
-[[ -x /usr/bin/uasm ]] || { echo "FAIL: /usr/bin/uasm is required"; exit 1; }
+if [[ ! -x /usr/bin/uasm ]]; then
+  echo "SKIP uasm tests (no /usr/bin/uasm)"
+  exit 0
+fi
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/dumpexe-uasm-XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
@@ -127,7 +130,9 @@ check big_bare_end bash -c 'tail -n 1 "$1" | grep -qx end' _ "$tmp/big.asm"
 /usr/bin/uasm -bin -nologo -Fo "$tmp/big.bin" "$tmp/big.asm" >"$tmp/big_bin.out" 2>"$tmp/big_bin.err"
 check big_bin_cmp cmp_note big_bin "$tmp/big.bin" "$tmp/big.img"
 
-# 7. Stood-behind mov plus a 66h byte. .model before .386 keeps USE16.
+# 7. Stood-behind mov plus a 66h byte that is not itself stood behind.
+# The prefix stays db. It must not raise .386 (that would be data-as-code).
+# .8086 stays above .model. A real .186/.286/.386, if one appears, stays below.
 "$BIN" --uasm -o "$tmp/wide.asm" "$tmp/wide.com" >"$tmp/wide.out" 2>"$tmp/wide.err"
 check wide_mov grep -q 'mov' "$tmp/wide.asm"
 check wide_no_addr bash -c "! grep -E -q '^[[:space:]]*[0-9A-Fa-f]{4}[[:space:]]+[0-9A-Fa-f]{2}' '$tmp/wide.asm'"
@@ -135,8 +140,19 @@ check wide_model_before_386 python3 - "$tmp/wide.asm" << 'PY'
 import sys
 lines = open(sys.argv[1], encoding="utf-8").read().splitlines()
 model = next(i for i, line in enumerate(lines) if line.startswith(".model"))
-cpu = next(i for i, line in enumerate(lines) if line.startswith(".386"))
-sys.exit(0 if model < cpu else 1)
+text = "\n".join(lines)
+if ".386" in text or ".286" in text or ".186" in text:
+    print("66h db raised the CPU directive")
+    print(text)
+    sys.exit(1)
+cpu = next(i for i, line in enumerate(lines) if line.startswith(".8086"))
+if cpu > model:
+    print(".8086 followed .model")
+    sys.exit(1)
+if "066h" not in text or "090h" not in text:
+    print("operand-size prefix was not emitted as db")
+    print(text)
+    sys.exit(1)
 PY
 /usr/bin/uasm -bin -nologo -Fo "$tmp/wide.bin" "$tmp/wide.asm" >"$tmp/wide_uasm.out" 2>"$tmp/wide_uasm.err"
 check wide_cmp cmp_note wide "$tmp/wide.bin" "$tmp/wide.com"
@@ -185,7 +201,7 @@ check aximm_cmp cmp_note aximm "$tmp/aximm.bin" "$tmp/aximm.com"
 check help_uasm grep -q -- '--uasm' "$tmp/help.txt"
 check help_no_disable bash -c "! grep -q -- '--no-uasm' '$tmp/help.txt'"
 "$BIN" -v >"$tmp/ver.txt"
-check version_212 grep -q '2.12' "$tmp/ver.txt"
+check version_213 grep -q '2.13' "$tmp/ver.txt"
 
 echo "uasm tests: $pass passed, $fail failed"
 if [[ "$fail" -ne 0 ]]; then

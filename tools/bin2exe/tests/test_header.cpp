@@ -110,15 +110,17 @@ TEST_CASE("header copy keeps the original bytes", "[header]")
     const std::uint8_t image[] = {1, 2, 3, 4};
     std::vector<std::uint8_t> full = exe;
     full.insert(full.end(), image, image + 4);
-    const bin2exe::build_result built = bin2exe::copy_mz_header(full, full.size(), image);
+    const bin2exe::build_result built = bin2exe::copy_mz_header(full, full.size(), image, true);
     REQUIRE(built.code == bin2exe::status::ok);
+    REQUIRE_FALSE(built.tail_appended);
     REQUIRE_FALSE(built.payload_length_differs);
     REQUIRE(built.original_payload_bytes == 4u);
     REQUIRE(built.bytes == full);
 
     const std::uint8_t shorter[] = {9, 9};
-    const bin2exe::build_result mismatch = bin2exe::copy_mz_header(full, full.size(), shorter);
+    const bin2exe::build_result mismatch = bin2exe::copy_mz_header(full, full.size(), shorter, true);
     REQUIRE(mismatch.code == bin2exe::status::ok);
+    REQUIRE_FALSE(mismatch.tail_appended);
     REQUIRE(mismatch.payload_length_differs);
     REQUIRE(mismatch.original_payload_bytes == 4u);
     REQUIRE(mismatch.bytes.size() == 66u);
@@ -134,20 +136,20 @@ TEST_CASE("header copy rejects a bad EXE", "[header]")
 {
     const std::uint8_t image[] = {1};
     std::vector<std::uint8_t> nope(32u, 1);
-    REQUIRE(bin2exe::copy_mz_header(nope, nope.size(), image).code == bin2exe::status::not_mz);
+    REQUIRE(bin2exe::copy_mz_header(nope, nope.size(), image, true).code == bin2exe::status::not_mz);
 
     std::vector<std::uint8_t> tiny(32u, 0);
     tiny[0] = static_cast<std::uint8_t>('M');
     tiny[1] = static_cast<std::uint8_t>('Z');
     tiny[8] = 1;
-    REQUIRE(bin2exe::copy_mz_header(tiny, tiny.size(), image).code ==
+    REQUIRE(bin2exe::copy_mz_header(tiny, tiny.size(), image, true).code ==
             bin2exe::status::header_too_small);
 
     std::vector<std::uint8_t> zm(32u, 0);
     zm[0] = static_cast<std::uint8_t>('Z');
     zm[1] = static_cast<std::uint8_t>('M');
     zm[8] = 2;
-    const bin2exe::build_result zm_built = bin2exe::copy_mz_header(zm, 33u, image);
+    const bin2exe::build_result zm_built = bin2exe::copy_mz_header(zm, 33u, image, true);
     REQUIRE(zm_built.code == bin2exe::status::ok);
     REQUIRE(zm_built.bytes[0] == static_cast<std::uint8_t>('Z'));
     REQUIRE_FALSE(zm_built.payload_length_differs);
@@ -156,7 +158,7 @@ TEST_CASE("header copy rejects a bad EXE", "[header]")
     short_prefix[0] = static_cast<std::uint8_t>('M');
     short_prefix[1] = static_cast<std::uint8_t>('Z');
     short_prefix[8] = 4;
-    REQUIRE(bin2exe::copy_mz_header(short_prefix, 100u, image).code ==
+    REQUIRE(bin2exe::copy_mz_header(short_prefix, 100u, image, true).code ==
             bin2exe::status::header_truncated);
 
     std::vector<std::uint8_t> huge(32u, 0);
@@ -164,8 +166,56 @@ TEST_CASE("header copy rejects a bad EXE", "[header]")
     huge[1] = static_cast<std::uint8_t>('Z');
     huge[8] = 0x01;
     huge[9] = 0x10;
-    REQUIRE(bin2exe::copy_mz_header(huge, 70000u, image).code ==
+    REQUIRE(bin2exe::copy_mz_header(huge, 70000u, image, true).code ==
             bin2exe::status::header_too_large);
 
-    REQUIRE(bin2exe::copy_mz_header(zm, zm.size(), {}).code == bin2exe::status::empty_image);
+    REQUIRE(bin2exe::copy_mz_header(zm, zm.size(), {}, true).code == bin2exe::status::empty_image);
+}
+
+TEST_CASE("header copy appends a matching tail and skips a non-prefix", "[header]")
+{
+    std::vector<std::uint8_t> header(64u, 0);
+    header[0] = static_cast<std::uint8_t>('M');
+    header[1] = static_cast<std::uint8_t>('Z');
+    header[8] = 4;
+    const std::vector<std::uint8_t> payload = {1, 2, 3, 4};
+    const std::vector<std::uint8_t> tail = {0xAA, 0xBB, 0xCC};
+    std::vector<std::uint8_t> full = header;
+    full.insert(full.end(), payload.begin(), payload.end());
+    full.insert(full.end(), tail.begin(), tail.end());
+
+    const std::vector<std::uint8_t> prefix = {1, 2};
+    const bin2exe::build_result appended =
+        bin2exe::copy_mz_header(full, full.size(), prefix, true);
+    REQUIRE(appended.code == bin2exe::status::ok);
+    REQUIRE(appended.tail_appended);
+    REQUIRE(appended.payload_length_differs);
+    REQUIRE(appended.original_payload_bytes == 7u);
+    REQUIRE(appended.bytes == full);
+
+    const bin2exe::build_result omitted =
+        bin2exe::copy_mz_header(full, full.size(), prefix, false);
+    REQUIRE(omitted.code == bin2exe::status::ok);
+    REQUIRE_FALSE(omitted.tail_appended);
+    REQUIRE(omitted.payload_length_differs);
+    REQUIRE(omitted.bytes.size() == 66u);
+    REQUIRE(omitted.bytes[64] == 1);
+    REQUIRE(omitted.bytes[65] == 2);
+
+    const std::vector<std::uint8_t> different = {9, 9, 9, 9};
+    const bin2exe::build_result mismatch =
+        bin2exe::copy_mz_header(full, full.size(), different, true);
+    REQUIRE(mismatch.code == bin2exe::status::ok);
+    REQUIRE_FALSE(mismatch.tail_appended);
+    REQUIRE(mismatch.bytes.size() == 68u);
+    REQUIRE(mismatch.bytes[64] == 9);
+
+    std::vector<std::uint8_t> short_file = header;
+    short_file.insert(short_file.end(), payload.begin(), payload.end());
+    const bin2exe::build_result missing_tail =
+        bin2exe::copy_mz_header(short_file, short_file.size() + 10u, payload, true);
+    REQUIRE(missing_tail.code == bin2exe::status::ok);
+    REQUIRE_FALSE(missing_tail.tail_appended);
+    REQUIRE(missing_tail.payload_length_differs);
+    REQUIRE(missing_tail.bytes.size() == short_file.size());
 }

@@ -149,12 +149,13 @@ static inline bool cfg_is_far_xfer(std::string_view m)
  * external: the caller must not enqueue either immediate.
  *
  * @param x86    Capstone operand detail for one instruction.
- * @param cs_seg CS of the segment being listed.
+ * @param file_cs File CS to match. For an MZ image this is MZHeader::cs,
+ *                 not the load base. For a COM image it is the load base.
  * @param off_out Receives operand 1 when the segment matches.
- * @return true when both operands are immediates and operand 0 equals @p cs_seg.
+ * @return true when both operands are immediates and operand 0 equals @p file_cs.
  */
 static inline bool cfg_far_same_seg_off(const cs_x86& x86,
-                                        uint16_t cs_seg,
+                                        uint16_t file_cs,
                                         uint16_t& off_out)
 {
     if (x86.op_count < 2)
@@ -166,7 +167,7 @@ static inline bool cfg_far_same_seg_off(const cs_x86& x86,
         return false;
     }
     const uint64_t seg = static_cast<uint64_t>(x86.operands[0].imm);
-    if (seg != static_cast<uint64_t>(cs_seg))
+    if (seg != static_cast<uint64_t>(file_cs))
     {
         return false;
     }
@@ -313,6 +314,7 @@ static inline void cfg_find_near_jmp_tables(const std::vector<uint8_t>& image,
 static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                                  uint16_t entry_ip,
                                  uint16_t cs_seg,
+                                 uint16_t file_cs,
                                  size_t file_base,
                                  bool follow_calls,
                                  size_t max_blocks = 20000) {
@@ -424,7 +426,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                 if (cfg_is_far_xfer(mnem))
                 {
                     uint16_t far_off = 0;
-                    if (cfg_far_same_seg_off(x86, cs_seg, far_off))
+                    if (cfg_far_same_seg_off(x86, file_cs, far_off))
                     {
                         enqueue(far_off);
                     }
@@ -472,7 +474,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                 if (follow_calls && cfg_is_far_xfer(mnem))
                 {
                     uint16_t far_off = 0;
-                    if (cfg_far_same_seg_off(x86, cs_seg, far_off))
+                    if (cfg_far_same_seg_off(x86, file_cs, far_off))
                     {
                         enqueue(far_off);
                     }
@@ -742,7 +744,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             // Direct far transfer. Operand 0 is never the target IP.
             auto edge_far_same = [&](CfgEdgeKind kind) -> bool {
                 uint16_t off = 0;
-                if (!cfg_far_same_seg_off(x86, cs_seg, off))
+                if (!cfg_far_same_seg_off(x86, file_cs, off))
                 {
                     return false;
                 }
@@ -2187,6 +2189,7 @@ static inline CfgGraph cfg_build_annotated(const std::vector<uint8_t>& fileData,
                                            size_t image_len,
                                            uint16_t entry_ip,
                                            uint16_t cs_seg,
+                                           uint16_t file_cs,
                                            const Options& opts)
 {
     CfgGraph empty;
@@ -2197,7 +2200,7 @@ static inline CfgGraph cfg_build_annotated(const std::vector<uint8_t>& fileData,
         fileData.begin() + static_cast<std::ptrdiff_t>(image_file_off),
         fileData.begin() + static_cast<std::ptrdiff_t>(image_file_off + len));
 
-    CfgGraph g = cfg_build(image, entry_ip, cs_seg, image_file_off,
+    CfgGraph g = cfg_build(image, entry_ip, cs_seg, file_cs, image_file_off,
                            opts.cfgFollowCalls, 20000);
     cfg_annotate(g, image);
     return g;
@@ -2209,6 +2212,7 @@ static inline CfgGraph cfg_analyze_image(const std::vector<uint8_t>& fileData,
                                          size_t image_len,
                                          uint16_t entry_ip,
                                          uint16_t cs_seg,
+                                         uint16_t file_cs,
                                          const Options& opts)
 {
     if (image_file_off >= fileData.size())
@@ -2219,7 +2223,7 @@ static inline CfgGraph cfg_analyze_image(const std::vector<uint8_t>& fileData,
     }
 
     CfgGraph g = cfg_build_annotated(fileData, image_file_off, image_len,
-                                     entry_ip, cs_seg, opts);
+                                     entry_ip, cs_seg, file_cs, opts);
 
     if (!opts.cfgDotPath.empty())
         cfg_write_dot(g, opts.cfgDotPath, opts);

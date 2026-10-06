@@ -11,12 +11,111 @@ static inline void print_version()
     int cap_major = 0;
     int cap_minor = 0;
     (void)cs_version(&cap_major, &cap_minor);
-    std::cout << "dumpexe 2.12 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
+    std::cout << "dumpexe 2.13 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
                  "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n"
                  "License: GPLv2 | Commercial (contact author)\n";
     std::cout << std::format(
         "Built with Capstone disassembly support: yes (Capstone {}.{})\n",
         cap_major, cap_minor);
+}
+
+/**
+ * @brief One JSON object for a rejected MZ, then exit status 1.
+ *
+ * Stderr already has the human error. With @c --json, stdout is that
+ * object and nothing else. Without @c --json this only returns 1.
+ *
+ * @param opts Parsed options. @c filename is copied into the object.
+ * @return Always 1.
+ */
+static int dx_mz_json_reject(const Options& opts)
+{
+    if (opts.jsonOut)
+    {
+        JsonReport rep;
+        rep.file = opts.filename;
+        rep.format = "mz";
+        rep.error = "rejected MZ header";
+        rep.print(std::cout);
+    }
+    return 1;
+}
+
+/**
+ * @brief True when strategy and interrupt offsets fall inside the file.
+ *
+ * Both must be non-zero. Offsets are from @p base, the file offset of
+ * this device header.
+ *
+ * @param data File bytes.
+ * @param base File offset of @p header.
+ * @param header Device header at @p base.
+ * @return True when both entry points are inside @p data.
+ */
+static bool dx_sys_entries_in_file(const std::vector<uint8_t>& data,
+                                  size_t base,
+                                  const SYSHeader& header)
+{
+    if (header.strategy == 0 || header.interrupt == 0)
+    {
+        return false;
+    }
+    if (base >= data.size())
+    {
+        return false;
+    }
+    const size_t room = data.size() - base;
+    if (static_cast<size_t>(header.strategy) >= room)
+    {
+        return false;
+    }
+    if (static_cast<size_t>(header.interrupt) >= room)
+    {
+        return false;
+    }
+    return true;
+}
+
+/**
+ * @brief DOS device driver, including a chained header.
+ *
+ * The last driver in a chain stores @c next_driver as 0xFFFFFFFF. A
+ * chained header stores segment 0 and an offset to a second header
+ * whose strategy and interrupt also lie inside the file. A flat COM
+ * image does not satisfy both checks.
+ *
+ * @param data File bytes.
+ * @return True when @p data begins with a .SYS device header.
+ */
+static bool dx_is_sys_image(const std::vector<uint8_t>& data)
+{
+    if (data.size() < sizeof(SYSHeader))
+    {
+        return false;
+    }
+    SYSHeader header{};
+    std::memcpy(&header, data.data(), sizeof(header));
+    if (!dx_sys_entries_in_file(data, 0, header))
+    {
+        return false;
+    }
+    if (header.next_driver == 0xFFFFFFFFu)
+    {
+        return true;
+    }
+    const uint16_t next_off = static_cast<uint16_t>(header.next_driver & 0xFFFFu);
+    const uint16_t next_seg = static_cast<uint16_t>(header.next_driver >> 16);
+    if (next_seg != 0 || next_off == 0)
+    {
+        return false;
+    }
+    if (static_cast<size_t>(next_off) + sizeof(SYSHeader) > data.size())
+    {
+        return false;
+    }
+    SYSHeader next{};
+    std::memcpy(&next, data.data() + next_off, sizeof(next));
+    return dx_sys_entries_in_file(data, next_off, next);
 }
 
 /// Read the entire contents of a file into a byte vector.
@@ -47,17 +146,37 @@ static inline bool read_entire_file(const std::string& filename,
     return true;
 }
 
-/// Load-image IP of the MZ entry (handles com2exe CS=FFF0 IP=0100 → IP 0).
-static inline uint16_t mz_entry_image_ip(const MZHeader& header)
+/**
+ * @brief Load-image IP of the MZ entry.
+ *
+ * com2exe CS=FFF0 IP=0100 becomes IP 0. An entry past the 64 KiB window is
+ * not clamped to FFFF: that label is the wrong place, and the window stays.
+ */
+struct MzEntryLoc
 {
+    uint16_t ip = 0;
+    bool in_window = true;
+};
+
+static inline MzEntryLoc mz_entry_image_ip(const MZHeader& header)
+{
+    MzEntryLoc loc{};
     const int32_t delta =
         static_cast<int32_t>(static_cast<int16_t>(header.cs)) * 16 +
         static_cast<int32_t>(header.ip);
     if (delta <= 0)
-        return 0;
+    {
+        loc.ip = 0;
+        return loc;
+    }
     if (delta > 0xFFFF)
-        return 0xFFFF;
-    return static_cast<uint16_t>(delta);
+    {
+        loc.ip = 0;
+        loc.in_window = false;
+        return loc;
+    }
+    loc.ip = static_cast<uint16_t>(delta);
+    return loc;
 }
 
 /// Shared MZ image window for CFG (CS-relative).
@@ -113,17 +232,11 @@ int main(int argc, char* argv[]) {
                            (fileData.size() >= 2
                                 ? static_cast<uint16_t>(fileData[1]) << 8
                                 : uint16_t{0});
-    const uint32_t sig32 = (fileData.size() >= 4)
-        ? (static_cast<uint32_t>(fileData[0])        |
-           (static_cast<uint32_t>(fileData[1]) << 8)  |
-           (static_cast<uint32_t>(fileData[2]) << 16) |
-           (static_cast<uint32_t>(fileData[3]) << 24))
-        : 0u;
 
     if (sig16 == MZ_SIGNATURE) {
         if (fileData.size() < sizeof(MZHeader)) {
             std::cerr << "Error: File is too small to contain a valid MZ header\n";
-            return 1;
+            return dx_mz_json_reject(opts);
         }
 
         // Win 3.x NE: MZ stub + e_lfanew → "NE". A planted "NE" that does not
@@ -152,7 +265,8 @@ int main(int argc, char* argv[]) {
 
         MZHeader header;
         std::memcpy(&header, fileData.data(), sizeof(header));
-        if (!validate_header(header, fileSize)) return 1;
+        if (!validate_header(header, fileSize))
+            return dx_mz_json_reject(opts);
 
         ExeSizes sizes = calculate_sizes(header, fileSize);
         const bool human = !opts.jsonOut && !opts.uasm_stdout_only();
@@ -257,9 +371,16 @@ int main(int argc, char* argv[]) {
                 print_strings_report(strs);
         }
 
+        const bool want_listing_file =
+            !opts.outputPath.empty() && opts.outputPath != "-";
         const bool want_human_listing =
             (opts.showDisasm || opts.showAll) && !opts.jsonOut;
-        if (opts.uasm || want_human_listing) {
+        // --json -d -o FILE still writes the listing. JSON stays on stdout.
+        const bool want_json_listing_file =
+            opts.jsonOut && want_listing_file &&
+            (opts.showDisasm || opts.showAll || opts.uasm);
+        if (opts.uasm || want_human_listing || want_json_listing_file) {
+            int listing_rc = 0;
             if (opts.x86Bits == 32 && dext_rep.detected &&
                 dext_rep.payload_len > 0)
             {
@@ -274,13 +395,18 @@ int main(int argc, char* argv[]) {
                 size_t cfg_file_off = 0, cfg_len = 0;
                 uint16_t cs_seg = 0;
                 mz_cfg_window(header, sizes, cfg_file_off, cfg_len, cs_seg, opts);
-                listing_run(fileData, cfg_file_off, cfg_len,
-                            mz_entry_image_ip(header), cs_seg, opts, opts.filename,
-                            opts.toolchainDetect ? &tc_rep : nullptr,
-                            opts.toolchainDetect ? &tp_rep : nullptr);
+                const MzEntryLoc entry = mz_entry_image_ip(header);
+                listing_rc = listing_run(fileData, cfg_file_off, cfg_len,
+                                entry.ip, cs_seg, static_cast<uint16_t>(header.cs), opts, opts.filename,
+                                opts.toolchainDetect ? &tc_rep : nullptr,
+                                opts.toolchainDetect ? &tp_rep : nullptr,
+                                false, false, entry.in_window);
             }
+            // A refused packed listing must not hide the unpack report.
             if (want_human_listing || (opts.uasm && !opts.jsonOut))
                 dx_after_packed_listing(opts, fileData, tc_rep.packer);
+            if (listing_rc != 0)
+                return 1;
         }
 
         // CFG: human --cfg, Graphviz --cfg-dot, or always under --json (scripting)
@@ -294,8 +420,10 @@ int main(int argc, char* argv[]) {
             Options cfg_opts = opts;
             if ((opts.jsonOut && !opts.showCfg) || opts.uasm_stdout_only())
                 cfg_opts.showCfg = false; // DOT/JSON or --uasm -o - — no human CFG dump
+            const MzEntryLoc cfg_entry = mz_entry_image_ip(header);
             cfg_g = cfg_analyze_image(fileData, cfg_file_off, cfg_len,
-                                      mz_entry_image_ip(header), cs_seg, cfg_opts);
+                                      cfg_entry.in_window ? cfg_entry.ip : uint16_t{0},
+                                      cs_seg, static_cast<uint16_t>(header.cs), cfg_opts);
             cfg_ran = true;
         }
 
@@ -339,7 +467,7 @@ int main(int argc, char* argv[]) {
             rep.print(std::cout);
         }
 
-    } else if (sig32 == 0xFFFFFFFF) {
+    } else if (dx_is_sys_image(fileData)) {
         if (opts.uasm)
         {
             std::cerr << "dumpexe: --uasm is implemented for MZ and COM\n";
@@ -380,11 +508,20 @@ int main(int argc, char* argv[]) {
         if (opts.toolchainDetect)
             tc_rep = toolchain_fingerprints_only(fileData);
 
-        if (opts.uasm && opts.jsonOut) {
+        const bool com_json_listing =
+            opts.jsonOut &&
+            (opts.uasm ||
+             ((opts.showDisasm || opts.showAll) && !opts.outputPath.empty() &&
+              opts.outputPath != "-"));
+        if (com_json_listing) {
             std::vector<uint8_t> image;
             com_listing_image(fileData, has_psp, image);
-            listing_run(image, 0, image.size(), COM_ENTRY_IP, opts.loadBase, opts,
-                        opts.filename, nullptr, nullptr, true, has_psp);
+            if (listing_run(image, 0, image.size(), COM_ENTRY_IP, opts.loadBase,
+                            opts.loadBase, opts, opts.filename, nullptr, nullptr, true,
+                            has_psp) != 0)
+            {
+                return 1;
+            }
         }
         if (opts.jsonOut) {
             JsonReport rep;
@@ -403,10 +540,12 @@ int main(int argc, char* argv[]) {
             }
             rep.print(std::cout);
         } else {
-            analyze_com(opts, fileData, fileSize);
+            const int com_rc = analyze_com(opts, fileData, fileSize);
             if (opts.toolchainDetect && !opts.uasm_stdout_only())
                 toolchain_print_report(tc_rep);
             dx_after_packed_listing(opts, fileData, tc_rep.packer);
+            if (com_rc != 0)
+                return 1;
         }
     }
 

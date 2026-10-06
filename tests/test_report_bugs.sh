@@ -302,16 +302,33 @@ def lha_window(method, level, hsize, fnlen=0):
     win[21] = fnlen
     return bytes(win)
 
-# Level 0: hsize 22, fnlen 0, method -lh5-. Sits at file offset 32.
-lha_l0 = build_mz(lha_window(b"-lh5-", 0, 22) + b"\x90" * 8,
+def lha_member(method, level, hsize, comp_size=4, pad_len=4):
+    """Level 0/1 header with a real checksum and a packed size that fits."""
+    raw = bytearray(2 + hsize + pad_len)
+    raw[0] = hsize & 0xFF
+    raw[2:7] = method
+    struct.pack_into("<I", raw, 7, comp_size)
+    raw[20] = level
+    raw[1] = sum(raw[2:2 + hsize]) & 0xFF
+    return bytes(raw)
+
+# Level 0: checksummed -lh5- at the end of a short MZ image (SFX trailer).
+lha_l0 = build_mz(lha_member(b"-lh5-", 0, 22),
                   crlc=0, paras=2, ip=0, cs=0, lfarlc=0x1C, ovno=0)
 assert lha_l0[34:39] == b"-lh5-"
 assert lha_l0[32 + 20] == 0
+assert lha_l0[33] == sum(lha_l0[34:34 + 22]) & 0xFF
 (td / "lha_l0.exe").write_bytes(lha_l0)
 
-# Level 1: hsize 25, fnlen 0. 22+0+5 <= 2+25.
+# Level 1: hsize 25, fnlen 0. 22+0+5 <= 2+25. Checksummed, still in the trailer.
 (td / "lha_l1.exe").write_bytes(build_mz(
-    lha_window(b"-lh0-", 1, 25) + b"\x90" * 8,
+    lha_member(b"-lh0-", 1, 25),
+    crlc=0, paras=2, ip=0, cs=0, lfarlc=0x1C, ovno=0))
+
+# Same checksummed header buried in the middle of a long image.
+lha_mid_member = lha_member(b"-lh5-", 0, 22)
+(td / "lha_mid.exe").write_bytes(build_mz(
+    b"\x90" * 200 + lha_mid_member + b"\x90" * 200,
     crlc=0, paras=2, ip=0, cs=0, lfarlc=0x1C, ovno=0))
 
 # Bare -lh5- and a possible-but-unknown -the- with an otherwise valid window.
@@ -579,7 +596,7 @@ json_mz_22() {
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["tool"] == "dumpexe", d.get("tool")
-assert d["version"] == "2.12", d.get("version")
+assert d["version"] == "2.13", d.get("version")
 mz = d["mz"]
 assert mz["extra_bytes"] == 10, mz.get("extra_bytes")
 assert mz["min_alloc"] == 14, mz.get("min_alloc")
@@ -617,7 +634,7 @@ json_com_entry() {
   python3 - "$TD/com.json" "$TD/com_psp_flag.json" << 'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert d["version"] == "2.12"
+assert d["version"] == "2.13"
 assert d["format"] == "com"
 assert d["com"]["file_size"] == 1
 assert d["com"]["entry_ip"] == "0100"
@@ -651,7 +668,7 @@ check json_com_psp json_com_psp
 check version_capstone bash -c "
   set -euo pipefail
   '$BIN' -v >'$TD/ver.txt'
-  grep -q 'dumpexe 2.12' '$TD/ver.txt'
+  grep -q 'dumpexe 2.13' '$TD/ver.txt'
   grep -Eq 'Capstone[[:space:]]+[0-9]+\\.[0-9]+' '$TD/ver.txt'
 "
 
@@ -1010,11 +1027,12 @@ check lha_header_structural bash -c "
   '$BIN' '$TD/lha_bare.exe' >'$TD/lha_bare.out'
   '$BIN' '$TD/lha_the.exe' >'$TD/lha_the.out'
   '$BIN' '$TD/lha_swg.exe' >'$TD/lha_swg.out'
+  '$BIN' '$TD/lha_mid.exe' >'$TD/lha_mid.out'
   grep -q 'LHarc' '$TD/lha_l0.out'
   grep -q 'LHarc' '$TD/lha_l1.out'
   if grep -q 'LHarc' '$TD/lha_bare.out' || grep -q 'LHarc' '$TD/lha_the.out' \
-      || grep -q 'LHarc' '$TD/lha_swg.out'; then
-    echo 'bare -lh5-, -the-, or -sw0- reported LHarc' >&2
+      || grep -q 'LHarc' '$TD/lha_swg.out' || grep -q 'LHarc' '$TD/lha_mid.out'; then
+    echo 'bare -lh5-, -the-, -sw0-, or a mid-file header reported LHarc' >&2
     exit 1
   fi
 "
@@ -1059,6 +1077,10 @@ skip_or_check probe_exepack2_no_unpack "$SAMPLES/exepack-2.exe" bash -c "
 
 # Host oracle. Writes deark's in.*.exe to $3. Exported for bash -c checks.
 oracle_deark() {
+  if ! command -v deark >/dev/null 2>&1; then
+    echo "SKIP deark oracle (deark not on PATH)"
+    exit 0
+  fi
   local mod="$1" src="$2" dst="$3"
   local work produced
   work=$(mktemp -d "$TD/deark-XXXXXX")
@@ -1213,9 +1235,19 @@ skip_or_check lzexe_fixin_minalloc "$FIXIN" bash -c "
 import struct, sys
 b = open(sys.argv[1], 'rb').read()
 mn, mx = struct.unpack_from('<HH', b, 10)
-print('fixin minalloc', hex(mn), 'maxalloc', hex(mx))
+ss = struct.unpack_from('<h', b, 14)[0]
+sp = struct.unpack_from('<H', b, 16)[0]
+hdr = struct.unpack_from('<H', b, 8)[0] * 16
+image_len = len(b) - hdr
+stack_top = ss * 16 + sp
+print('fixin minalloc', hex(mn), 'maxalloc', hex(mx),
+      'stack', hex(stack_top), 'image', image_len)
 if mn > mx:
-    sys.exit(1)
+    sys.exit('minalloc > maxalloc')
+if stack_top > image_len:
+    paras = (stack_top - image_len + 15) // 16
+    if 0 < paras <= 65535 and mn < paras:
+        sys.exit('minalloc %d below stack paragraphs %d' % (mn, paras))
 PY
 "
 

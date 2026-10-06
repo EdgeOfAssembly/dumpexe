@@ -48,6 +48,12 @@ struct build_result
     status code = status::ok;
     /** True when the flat image length is not the original file minus the header. */
     bool payload_length_differs = false;
+    /**
+     * True when bytes after the copied header and flat image were appended
+     * from the original file. Callers warn on a length mismatch only when
+     * this flag is false.
+     */
+    bool tail_appended = false;
     /** Original file size minus the copied header. Meaningful for header copy. */
     std::uint64_t original_payload_bytes = 0;
     std::vector<std::uint8_t> bytes{};
@@ -80,21 +86,30 @@ struct build_result
  * Page counts, SS:SP, CS:IP, minalloc, and the checksum stay as they were.
  *
  * @param[in] exe_prefix    Leading bytes of the original EXE. Must include
- *                          the whole header when the call succeeds.
- * @param[in] exe_file_size Full original file length, used only to compare
- *                          the flat image with the original payload.
+ *                          the whole header when the call succeeds. Pass the
+ *                          whole file so a matching tail can be copied.
+ * @param[in] exe_file_size Full original file length. Bytes of @p exe_prefix
+ *                          at and after this length are not part of the file.
  * @param[in] image         Flat load image to append. Must be non-empty.
+ * @param[in] carry_tail    When true, append original bytes that follow a
+ *                          matching prefix. When false, stop after @p image.
  *
- * @return On success, bytes is the header followed by @p image.
- *         payload_length_differs is set when the lengths disagree; the
- *         header is still copied unchanged.
+ * @return On success, bytes is the header, then @p image, then a tail when
+ *         @p carry_tail is set, @p image is a prefix of the original payload,
+ *         and the bytes written so far are a prefix of the original file.
+ *         An empty tail is not an append. payload_length_differs is set when
+ *         the flat image length disagrees with the original payload even if
+ *         a tail was appended. The header bytes are not rewritten.
  *
- * @warning A trailing overlay in the original file is not copied. The length
- *          flag is set in that case. Relocation entries are not adjusted.
+ * @note Does not exit the process and does not open a destination file.
+ *       Relocation entries are not adjusted. A flat image that is not a
+ *       prefix of the original payload is copied as-is and the tail is left
+ *       behind.
  */
 [[nodiscard]] build_result copy_mz_header(std::span<const std::uint8_t> exe_prefix,
                                           std::uint64_t exe_file_size,
-                                          std::span<const std::uint8_t> image);
+                                          std::span<const std::uint8_t> image,
+                                          bool carry_tail);
 
 } /* namespace bin2exe */
 

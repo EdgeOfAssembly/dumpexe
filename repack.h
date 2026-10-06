@@ -363,6 +363,55 @@ static inline bool output_create_nofollow(const std::string& path,
     return true;
 }
 
+/**
+ * @brief Create or replace a regular file without following a symlink.
+ *
+ * `open(O_CREAT|O_TRUNC|O_NOFOLLOW)` truncates a regular file and fails with
+ * `ELOOP` when @p path is a symlink. The caller refuses the input path first.
+ *
+ * @param path Destination.
+ * @param data Bytes to write. May be null when @p n is 0.
+ * @param n    Length of @p data.
+ * @param err  Set to a short reason on failure.
+ * @return true when the file holds all @p n bytes.
+ */
+static inline bool output_write_nofollow(const std::string& path,
+                                        const char* data,
+                                        size_t n,
+                                        std::string& err)
+{
+    const int fd = ::open(path.c_str(),
+                          O_CREAT | O_TRUNC | O_NOFOLLOW | O_WRONLY | O_CLOEXEC,
+                          0644);
+    if (fd < 0)
+    {
+        err = "cannot write '" + path + "'";
+        return false;
+    }
+    size_t off = 0;
+    while (off < n)
+    {
+        const ssize_t w = ::write(fd, data + off, n - off);
+        if (w < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            ::close(fd);
+            err = "cannot write '" + path + "'";
+            return false;
+        }
+        off += static_cast<size_t>(w);
+    }
+    if (::close(fd) != 0)
+    {
+        err = "cannot write '" + path + "'";
+        return false;
+    }
+    return true;
+}
+
 static inline std::string repack_default_path(const std::string& input_path)
 {
     if (input_path.empty())
