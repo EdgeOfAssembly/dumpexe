@@ -30,6 +30,7 @@
 #include <iostream>
 #include <map>
 #include <set>
+#include <span>
 #include <spawn.h>
 #include <sstream>
 #include <string>
@@ -1830,6 +1831,101 @@ static inline bool listing_uasm_verify_one(const ListingUasmScratch& scratch,
 }
 
 /**
+ * @brief Paragraph frame of a relocated mov r16, imm16, when Q8 applies.
+ *
+ * Requires an EXE load image of at most 65536 bytes (one org-0 segment, not
+ * COM), opcode B8–BF at byte 0 with size 3, and a relocation on the
+ * immediate word at IP+1. The frame is imm * 16. It must be <= 0xFFFF,
+ * inside the image, and not strictly inside a decoded instruction. A frame
+ * that starts an instruction, or that lands in db, is accepted.
+ *
+ * @param image     Load image. image[0] is IP 0.
+ * @param at        Decoded instructions keyed by IP.
+ * @param reloc_at  Fixup locations from cfg_reloc_sites. The immediate is at IP+1.
+ * @param uasm_com  True for a pure COM image. Never rewritten.
+ * @param ip        Opcode IP. Already below 65536 because it is a uint16_t.
+ * @param in        Decoded instruction whose bytes must match @p image.
+ * @param frame_out Byte offset imm * 16 when the function returns true.
+ * @return true when the emitter must print the segment expression.
+ */
+static inline bool listing_uasm_reloc_frame(const std::vector<uint8_t>& image,
+                                            const std::map<uint16_t, CfgInsn>& at,
+                                            const std::set<uint32_t>& reloc_at,
+                                            bool uasm_com,
+                                            uint16_t ip,
+                                            const CfgInsn& in,
+                                            uint32_t& frame_out)
+{
+    if (uasm_com || image.size() > 65536)
+    {
+        return false;
+    }
+    if (in.size != 3)
+    {
+        return false;
+    }
+    const size_t at_ip = static_cast<size_t>(ip);
+    if (at_ip + 3 > image.size())
+    {
+        return false;
+    }
+    const uint8_t op = image[at_ip];
+    if (op < 0xB8 || op > 0xBF || in.bytes[0] != op)
+    {
+        return false;
+    }
+    for (uint8_t k = 0; k < 3; ++k)
+    {
+        if (image[at_ip + k] != in.bytes[k])
+        {
+            return false;
+        }
+    }
+    const uint32_t imm_at = static_cast<uint32_t>(at_ip) + 1u;
+    if (!reloc_at.contains(imm_at))
+    {
+        return false;
+    }
+    const uint16_t imm = static_cast<uint16_t>(
+        image[at_ip + 1] | (static_cast<unsigned>(image[at_ip + 2]) << 8));
+    const uint32_t frame = static_cast<uint32_t>(imm) * 16u;
+    // frame <= 0xFFFF and frame < 65536 are the same bound. The frame must
+    // also be a byte that exists in this single org-0 segment.
+    if (frame > 0xFFFFu || static_cast<size_t>(frame) >= image.size())
+    {
+        return false;
+    }
+    for (const auto& kv : at)
+    {
+        const uint32_t ip_i = kv.first;
+        const uint32_t sz = kv.second.size;
+        if (ip_i < frame && frame < ip_i + sz)
+        {
+            return false;
+        }
+    }
+    frame_out = frame;
+    return true;
+}
+
+/**
+ * @brief UASM text of one relocated mov r16, imm16.
+ *
+ * Not assembled by listing_uasm_verify_one. The scratch file has no frame
+ * label, so verify would demote a correct line to db.
+ *
+ * @param opcode Opcode B8+r. The low three bits select ax..di.
+ * @param frame  Byte offset of the frame label (imm * 16).
+ * @return `mov r16, (dxfrm_XXXX - dximg0) SHR 4` with lowercase hex.
+ */
+static inline std::string listing_uasm_reloc_mov_text(uint8_t opcode, uint32_t frame)
+{
+    static const char* r16[] = {"ax", "cx", "dx", "bx", "sp", "bp", "si", "di"};
+    const char* reg = r16[opcode - 0xB8];
+    return std::format("mov {}, (dxfrm_{:04x} - dximg0) SHR 4", reg, frame);
+}
+
+/**
  * @brief Emit UASM source that assembles back to the load image.
  *
  * No address column and no hex-byte column. Real instructions go through
@@ -1852,6 +1948,15 @@ static inline bool listing_uasm_verify_one(const ListingUasmScratch& scratch,
  * `mov ax, imm16` with a 66h prefix. After `.model` the segment stays USE16
  * and `.386` still enables 386 mnemonics.
  *
+ * A relocated mov r16, imm16 (B8–BF, size 3, no prefix) whose immediate word
+ * is a fixup, and whose paragraph lands in this image and not strictly inside
+ * another decoded instruction, is printed as
+ * `mov rx, (dxfrm_XXXX - dximg0) SHR 4`. That line is not passed to
+ * listing_uasm_verify_one and does not raise the CPU level. It is emitted
+ * only for one org-0 segment (image size <= 65536, not COM). dximg0 and
+ * dxfrm_ labels are registered before the slice walk, and only when at least
+ * one such line is emitted.
+ *
  * @param g            CFG for the image (may be empty; gaps are still emitted).
  * @param image        CS-relative bytes. COM-without-PSP includes the 256-byte hole.
  * @param entry_ip     Entry IP inside @p image (0100h for a pure COM).
@@ -1865,6 +1970,7 @@ static inline bool listing_uasm_verify_one(const ListingUasmScratch& scratch,
  *                     (whitelist, sized branch, or a successful verify).
  * @param external     Optional symbol map (same names as the human listing).
  * @param entry_in_window False when the MZ entry is past the 64 KiB window.
+ * @param relocs          MZ fixups into @p image. Empty leaves immediates numeric.
  * @return UASM source. The last line is `end <entry label>` for COM and a
  *         one-segment image whose entry is inside the window. A multi-segment
  *         image, or an entry past the window, ends with a bare `end`.
@@ -1880,7 +1986,8 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
                                             size_t& n_procs,
                                             size_t& n_insns,
                                             const SymbolMap* external,
-                                            bool entry_in_window = true)
+                                            bool entry_in_window = true,
+                                            std::span<const RelocEntry> relocs = {})
 {
     std::map<uint16_t, std::string> sym;
     std::set<uint16_t> proc_starts;
@@ -1926,6 +2033,24 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
     std::vector<Slice> slices;
     size_t off = emit_lo > image.size() ? image.size() : emit_lo;
 
+    // Q8 labels must exist before the left-to-right slice walk. A frame that
+    // sits before its mov is already missed if the label is added inside stood().
+    const std::set<uint32_t> reloc_at = cfg_reloc_sites(image, relocs);
+    std::set<uint32_t> q8_frames;
+    if (!reloc_at.empty() && !uasm_com && image.size() <= 65536)
+    {
+        for (const auto& kv : at)
+        {
+            uint32_t frame = 0;
+            if (listing_uasm_reloc_frame(image, at, reloc_at, uasm_com, kv.first,
+                                         kv.second, frame))
+            {
+                q8_frames.insert(frame);
+            }
+        }
+    }
+    const bool q8_any = !q8_frames.empty();
+
     auto labels_at = [&](size_t at_off) -> std::vector<std::string>
     {
         std::vector<std::string> labs;
@@ -1941,6 +2066,14 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
         else if (proc_starts.count(ip) || (entry_in_window && ip == entry_ip))
         {
             labs.push_back(listing_symbol_name(ip));
+        }
+        if (q8_any && at_off == 0)
+        {
+            labs.push_back("dximg0");
+        }
+        if (q8_any && q8_frames.count(static_cast<uint32_t>(at_off)) != 0)
+        {
+            labs.push_back(std::format("dxfrm_{:04x}", at_off));
         }
         return labs;
     };
@@ -2002,6 +2135,13 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
             {
                 return 0;
             }
+        }
+        uint32_t q8_frame = 0;
+        if (listing_uasm_reloc_frame(image, at, reloc_at, uasm_com, ip, in, q8_frame))
+        {
+            // Skip the whitelist and listing_uasm_verify_one. Do not raise cpu.
+            text_out = listing_uasm_reloc_mov_text(image[at_off], q8_frame);
+            return in.size;
         }
         bool blocked = false;
         const size_t opi = listing_uasm_opcode_index(in, blocked);
@@ -2359,6 +2499,7 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
 
 /**
  * @brief Build multi-pass listing text for a CS-relative image.
+ * @param relocs MZ fixups into the load image. Passed to the CFG and to --uasm.
  * @return false on hard failure (empty image / capstone)
  */
 static inline bool listing_generate(const std::vector<uint8_t>& fileData,
@@ -2378,7 +2519,8 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
                                     bool uasm_com = false,
                                     bool uasm_com_psp = false,
                                     std::string* human_stdout = nullptr,
-                                    bool entry_in_window = true)
+                                    bool entry_in_window = true,
+                                    std::span<const RelocEntry> relocs = {})
 {
     out_text.clear();
     n_procs = 0;
@@ -2399,7 +2541,7 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
     if (entry_in_window)
     {
         g = cfg_build_annotated(fileData, image_file_off, len, entry_ip, cs_seg,
-                                file_cs, cfg_opts);
+                                file_cs, cfg_opts, relocs);
     }
     if (g.blocks.empty() && !opts.uasm)
     {
@@ -2421,7 +2563,7 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
         kind_out = ListingExportKind::Uasm;
         out_text = listing_emit_uasm(g, image, entry_ip, opts, source_name, tc,
                                      uasm_com, uasm_com_psp, n_procs, n_insns, ext,
-                                     entry_in_window);
+                                     entry_in_window, relocs);
         if (human_stdout && opts.showDisasm && !opts.jsonOut)
         {
             if (g.blocks.empty())
@@ -2644,6 +2786,7 @@ static inline int listing_deliver(const Options& opts,
  *
  * @param uasm_com     Pure .COM (org 100h program bytes). Not an MZ load image.
  * @param uasm_com_psp The COM image starts with an embedded PSP.
+ * @param relocs       MZ fixups into the load image. Empty for COM and non-MZ.
  *
  * --uasm skips auto-repack. The .asm file is UASM source, not a REPACK-V1 listing.
  */
@@ -2659,7 +2802,8 @@ static inline int listing_run(const std::vector<uint8_t>& fileData,
                                const TurboPascalReport* tp = nullptr,
                                bool uasm_com = false,
                                bool uasm_com_psp = false,
-                               bool entry_in_window = true)
+                               bool entry_in_window = true,
+                               std::span<const RelocEntry> relocs = {})
 {
     std::string text;
     std::string human;
@@ -2669,7 +2813,7 @@ static inline int listing_run(const std::vector<uint8_t>& fileData,
         (opts.uasm && opts.showDisasm && !opts.jsonOut) ? &human : nullptr;
     if (!listing_generate(fileData, image_file_off, image_len, entry_ip, cs_seg, file_cs,
                           opts, input_path, text, n_procs, n_insns, kind, tc, tp, uasm_com,
-                          uasm_com_psp, human_ptr, entry_in_window))
+                          uasm_com_psp, human_ptr, entry_in_window, relocs))
     {
         if (!opts.jsonOut && !opts.uasm_stdout_only())
             std::cout << "\nListing: image offset outside file or empty.\n";
