@@ -2010,14 +2010,17 @@ static inline int listing_run(const std::vector<uint8_t>& fileData,
  * @param cs     Capstone CS base (segment)
  * @param ip     Entry IP (also used as first IP in window when window==entry)
  * @param opts   Options
+ * @param window_bytes Length from the file offset of IP 0 (after the rewind
+ *        below). Not from @p offset. Zero decodes through EOF.
  * @param input_path Original filename for .asm default naming (may be empty)
  *
- * When @p offset is the entry-point file offset, the image window is from
- * offset to EOF and entry_ip is @p ip only if the window starts at IP 0 of a
- * synthetic image — for COM we pass offset=0 and real entry_ip.
+ * When @p offset is the entry-point file offset and @p ip fits in it, the
+ * image is rewound so image[@p ip] is that byte. @p window_bytes is counted
+ * from the rewound offset. COM still passes offset 0 and the real entry IP.
  */
 static inline void disassemble(const std::vector<uint8_t>& data, size_t offset,
                                uint16_t cs, uint16_t ip, const Options& opts,
+                               size_t window_bytes = 0,
                                const std::string& input_path = {})
 {
     if (offset >= data.size())
@@ -2051,7 +2054,12 @@ static inline void disassemble(const std::vector<uint8_t>& data, size_t offset,
         img_off = offset;
         entry = 0;
     }
-    const size_t img_len = data.size() - img_off;
+    // Zero means through EOF so MZ/SYS/COM callers stay unchanged.
+    size_t img_len = data.size() - img_off;
+    if (window_bytes != 0)
+    {
+        img_len = std::min(window_bytes, img_len);
+    }
     const std::string path = input_path.empty() ? std::string("binary") : input_path;
     if (listing_run(data, img_off, img_len, static_cast<uint16_t>(entry), cs, cs, opts,
                     path) != 0)

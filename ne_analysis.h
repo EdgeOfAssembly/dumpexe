@@ -403,11 +403,10 @@ static inline void ne_print_resources(const std::vector<uint8_t>& data,
     }
 }
 
-/// Disassemble a code segment (linear Capstone 16-bit).
+/// Disassemble one CODE segment for its on-disk length, not a preview cap.
 static inline void ne_disasm_segment(const std::vector<uint8_t>& data,
                                      const NEParsed& ne,
-                                     size_t seg_index_0based,
-                                     size_t max_bytes = 256)
+                                     size_t seg_index_0based)
 {
     if (seg_index_0based >= ne.segs.size())
         return;
@@ -420,11 +419,9 @@ static inline void ne_disasm_segment(const std::vector<uint8_t>& data,
         return;
     if (foff + flen > data.size())
         flen = data.size() - foff;
-    if (flen > max_bytes)
-        flen = max_bytes;
 
     std::cout << "\n=== Disassembly CODE segment " << (seg_index_0based + 1)
-              << " (file " << std::hex << foff << "h, first "
+              << " (file " << std::hex << foff << "h, decoded "
               << std::dec << flen << " bytes) ===\n";
 
     Options o{};
@@ -432,8 +429,8 @@ static inline void ne_disasm_segment(const std::vector<uint8_t>& data,
     o.noIntAnnot = true;
     o.writeAsmFile = false;
     const uint16_t cs = static_cast<uint16_t>(seg_index_0based + 1);
-    // disassemble(data, file_offset, cs, ip, opts) — image from offset, entry ip
-    disassemble(data, foff, cs, /*ip=*/0, o);
+    // flen starts at foff, which is IP 0 for this segment.
+    disassemble(data, foff, cs, /*ip=*/0, o, flen);
 }
 
 //=============================================================================
@@ -519,8 +516,8 @@ static inline bool analyze_ne(const Options& opts,
                               << std::dec;
                     Options o = opts;
                     o.writeAsmFile = false;
-                    // Start at entry instruction; IP for labels = entry IP
-                    disassemble(fileData, entry_off, ne.hdr.cs, ne.hdr.ip, o);
+                    // entry_off is foff+IP; flen is from foff because of the rewind.
+                    disassemble(fileData, entry_off, ne.hdr.cs, ne.hdr.ip, o, flen);
                 }
             }
         }
@@ -529,7 +526,7 @@ static inline bool analyze_ne(const Options& opts,
             for (size_t i = 0; i < ne.segs.size(); ++i)
             {
                 if (!(ne.segs[i].flags & NE_SEG_DATA))
-                    ne_disasm_segment(fileData, ne, i, 128);
+                    ne_disasm_segment(fileData, ne, i);
             }
         }
     }

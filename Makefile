@@ -174,6 +174,8 @@ test: dumpexe bin2exe tools/bin2exe/test_header
 	@bash tests/test_listing_bugs.sh
 	@bash tests/test_uasm.sh
 	@bash tests/test_v213.sh
+	@bash tests/test_p0_sim.sh
+	@bash tests/test_p0_ne.sh
 	@./tools/bin2exe/test_header
 	@bash tools/bin2exe/tests/test_cli.sh
 

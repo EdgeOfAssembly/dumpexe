@@ -45,7 +45,7 @@ at offset 3Ch pointing to
 .B 4Eh 45h
 ('NE'). Dumps segments, imports, resources;
 .B \-d
-disassembles the entry code segment.
+disassembles the entry code segment and stops at that segment's on-disk end.
 .IP \(bu 2
 .B .SYS device driver
 \(em first four bytes are
@@ -576,6 +576,8 @@ are annotated with descriptions from the Ralf Brown Interrupt List (RBIL) databa
 .SS Simulation (--simulate)
 .B Dynamic execution trace
 that simulates DOS loading and program startup.
+A direct far call or jump sets CS:IP from the segment and the offset.
+Opcode 98 is CBW in this 16-bit guest (Capstone names it CWDE).
 Guest data files start empty.
 Create, open, read, and write stay inside the simulator and do not
 open host files.
