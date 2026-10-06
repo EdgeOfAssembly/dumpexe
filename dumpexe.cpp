@@ -11,7 +11,7 @@ static inline void print_version()
     int cap_major = 0;
     int cap_minor = 0;
     (void)cs_version(&cap_major, &cap_minor);
-    std::cout << "dumpexe 2.17 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
+    std::cout << "dumpexe 2.18 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
                  "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n"
                  "License: GPLv2 | Commercial (contact author)\n";
     std::cout << std::format(
@@ -379,6 +379,14 @@ int main(int argc, char* argv[]) {
         const bool want_json_listing_file =
             opts.jsonOut && want_listing_file &&
             (opts.showDisasm || opts.showAll || opts.uasm);
+        // Human --cfg, Graphviz --cfg-dot, or always under --json.
+        const bool want_cfg_view =
+            opts.showCfg || !opts.cfgDotPath.empty() || opts.jsonOut;
+        CfgGraph cfg_g{};
+        // True only when listing_generate assigned a graph cfg_build_annotated
+        // produced. image_size stays 0 when the slice was empty or the entry
+        // was outside the window (*cfg_out is not written).
+        bool cfg_shared = false;
         if (opts.uasm || want_human_listing || want_json_listing_file) {
             int listing_rc = 0;
             if (opts.x86Bits == 32 && dext_rep.detected &&
@@ -396,11 +404,22 @@ int main(int argc, char* argv[]) {
                 uint16_t cs_seg = 0;
                 mz_cfg_window(header, sizes, cfg_file_off, cfg_len, cs_seg, opts);
                 const MzEntryLoc entry = mz_entry_image_ip(header);
+                // Share only for an in-window entry. Past-window --cfg/--json
+                // still seeds IP 0 in cfg_analyze_image below.
+                CfgGraph* cfg_slot = nullptr;
+                if (want_cfg_view && entry.in_window)
+                {
+                    cfg_slot = &cfg_g;
+                }
                 listing_rc = listing_run(fileData, cfg_file_off, cfg_len,
                                 entry.ip, cs_seg, static_cast<uint16_t>(header.cs), opts, opts.filename,
                                 opts.toolchainDetect ? &tc_rep : nullptr,
                                 opts.toolchainDetect ? &tp_rep : nullptr,
-                                false, false, entry.in_window, relocs);
+                                false, false, entry.in_window, relocs, cfg_slot);
+                if (listing_rc == 0 && cfg_g.image_size != 0)
+                {
+                    cfg_shared = true;
+                }
             }
             // A refused packed listing must not hide the unpack report.
             if (want_human_listing || (opts.uasm && !opts.jsonOut))
@@ -409,23 +428,29 @@ int main(int argc, char* argv[]) {
                 return 1;
         }
 
-        // CFG: human --cfg, Graphviz --cfg-dot, or always under --json (scripting)
-        CfgGraph cfg_g{};
         bool cfg_ran = false;
-        if (opts.showCfg || !opts.cfgDotPath.empty() || opts.jsonOut)
+        if (want_cfg_view)
         {
-            size_t cfg_file_off = 0, cfg_len = 0;
-            uint16_t cs_seg = 0;
-            mz_cfg_window(header, sizes, cfg_file_off, cfg_len, cs_seg, opts);
             Options cfg_opts = opts;
             if ((opts.jsonOut && !opts.showCfg) || opts.uasm_stdout_only())
                 cfg_opts.showCfg = false; // DOT/JSON or --uasm -o - — no human CFG dump
-            const MzEntryLoc cfg_entry = mz_entry_image_ip(header);
-            cfg_g = cfg_analyze_image(fileData, cfg_file_off, cfg_len,
-                                      cfg_entry.in_window ? cfg_entry.ip : uint16_t{0},
-                                      cs_seg, static_cast<uint16_t>(header.cs), cfg_opts,
-                                      relocs);
-            cfg_ran = true;
+            if (cfg_shared)
+            {
+                cfg_emit_views(cfg_g, cfg_opts);
+                cfg_ran = true;
+            }
+            else
+            {
+                size_t cfg_file_off = 0, cfg_len = 0;
+                uint16_t cs_seg = 0;
+                mz_cfg_window(header, sizes, cfg_file_off, cfg_len, cs_seg, opts);
+                const MzEntryLoc cfg_entry = mz_entry_image_ip(header);
+                cfg_g = cfg_analyze_image(fileData, cfg_file_off, cfg_len,
+                                          cfg_entry.in_window ? cfg_entry.ip : uint16_t{0},
+                                          cs_seg, static_cast<uint16_t>(header.cs), cfg_opts,
+                                          relocs);
+                cfg_ran = true;
+            }
         }
 
         if (opts.simulate && !opts.uasm_stdout_only())

@@ -2700,6 +2700,9 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
 /**
  * @brief Build multi-pass listing text for a CS-relative image.
  * @param relocs MZ fixups into the load image. Passed to the CFG and to --uasm.
+ * @param cfg_out Optional annotated CFG. Assigned only when
+ *        @c cfg_build_annotated ran. Left untouched when null, when
+ *        @p entry_in_window is false, or when the image slice is empty.
  * @return false on hard failure (empty image / capstone)
  */
 static inline bool listing_generate(const std::vector<uint8_t>& fileData,
@@ -2720,7 +2723,8 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
                                     bool uasm_com_psp = false,
                                     std::string* human_stdout = nullptr,
                                     bool entry_in_window = true,
-                                    std::span<const RelocEntry> relocs = {})
+                                    std::span<const RelocEntry> relocs = {},
+                                    CfgGraph* cfg_out = nullptr)
 {
     out_text.clear();
     n_procs = 0;
@@ -2738,10 +2742,15 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
     cfg_opts.showCfg = false;
     CfgGraph g{};
     // An entry past 64 KiB is not seeded at FFFF. The window stays 64 KiB.
+    // *cfg_out stays untouched on that path so the caller can still build.
     if (entry_in_window)
     {
         g = cfg_build_annotated(fileData, image_file_off, len, entry_ip, cs_seg,
                                 file_cs, cfg_opts, relocs);
+        if (cfg_out != nullptr)
+        {
+            *cfg_out = g;
+        }
     }
     if (g.blocks.empty() && !opts.uasm)
     {
@@ -2987,6 +2996,9 @@ static inline int listing_deliver(const Options& opts,
  * @param uasm_com     Pure .COM (org 100h program bytes). Not an MZ load image.
  * @param uasm_com_psp The COM image starts with an embedded PSP.
  * @param relocs       MZ fixups into the load image. Empty for COM and non-MZ.
+ * @param cfg_out      Optional annotated CFG. Same contract as
+ *                     @c listing_generate: written only when
+ *                     @c cfg_build_annotated ran. Null skips the copy.
  *
  * --uasm skips auto-repack. The .asm file is UASM source, not a REPACK-V1 listing.
  */
@@ -3003,7 +3015,8 @@ static inline int listing_run(const std::vector<uint8_t>& fileData,
                                bool uasm_com = false,
                                bool uasm_com_psp = false,
                                bool entry_in_window = true,
-                               std::span<const RelocEntry> relocs = {})
+                               std::span<const RelocEntry> relocs = {},
+                               CfgGraph* cfg_out = nullptr)
 {
     std::string text;
     std::string human;
@@ -3013,7 +3026,7 @@ static inline int listing_run(const std::vector<uint8_t>& fileData,
         (opts.uasm && opts.showDisasm && !opts.jsonOut) ? &human : nullptr;
     if (!listing_generate(fileData, image_file_off, image_len, entry_ip, cs_seg, file_cs,
                           opts, input_path, text, n_procs, n_insns, kind, tc, tp, uasm_com,
-                          uasm_com_psp, human_ptr, entry_in_window, relocs))
+                          uasm_com_psp, human_ptr, entry_in_window, relocs, cfg_out))
     {
         if (!opts.jsonOut && !opts.uasm_stdout_only())
             std::cout << "\nListing: image offset outside file or empty.\n";
