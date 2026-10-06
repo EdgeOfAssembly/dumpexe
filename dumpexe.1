@@ -219,6 +219,11 @@ when the target is a label.
 Any other non-branch line is kept only when
 .BR uasm (1)
 assembles it back to those bytes.
+A relocated
+.B "mov r16, imm16"
+(opcodes B8 through BF) whose paragraph frame lies in this image is printed as
+.B "mov rx, (dxfrm_XXXX - dximg0) SHR 4"
+and is not sent through that one-instruction check.
 Ordinary
 .B \-d
 /
@@ -296,6 +301,9 @@ A same-segment far call is followed when its segment matches the
 file CS in the MZ header, including when
 .B \-\-base
 is left at the default 1000h.
+A far call or jump whose segment word is a relocation is followed at
+segment*16+offset inside the load image instead.
+A target past 64 KiB is not followed.
 COM and a one-segment EXE still end with
 .B end func_XXXX .
 .BR bin2exe (1)

@@ -4,8 +4,10 @@
 //
 // Recursive-descent / leader-based CFG: basic blocks + edges (fall-through,
 // jmp, jcc true/false, call, ret). Optional scan for near-jump tables
-// (Pascal MT+ style E9 stubs). Near control flow, plus a direct far
-// transfer whose segment immediate equals this segment's CS.
+// (Pascal MT+ style E9 stubs). Near control flow. A direct far transfer
+// whose segment word is relocated is followed at seg*16+off inside this
+// load image. A far transfer that is not relocated is followed only when
+// its segment immediate equals the file CS (M1).
 //
 // This builds a *graph*, not a path tree: joins reuse the same block node.
 
@@ -22,11 +24,13 @@
 #include <map>
 #include <queue>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 #include <capstone/capstone.h>
 
+#include "exe.h"
 #include "options.h"
 
 //=============================================================================
@@ -153,6 +157,7 @@ static inline bool cfg_is_far_xfer(std::string_view m)
  *                 not the load base. For a COM image it is the load base.
  * @param off_out Receives operand 1 when the segment matches.
  * @return true when both operands are immediates and operand 0 equals @p file_cs.
+ * @note Not used when the segment word itself is a relocation. See cfg_far_reloc_site.
  */
 static inline bool cfg_far_same_seg_off(const cs_x86& x86,
                                         uint16_t file_cs,
@@ -173,6 +178,105 @@ static inline bool cfg_far_same_seg_off(const cs_x86& x86,
     }
     off_out = static_cast<uint16_t>(x86.operands[1].imm);
     return true;
+}
+
+/**
+ * @brief How a direct far 9Ah/EAh relates to the relocation table.
+ */
+enum class CfgFarRelocKind : uint8_t
+{
+    NotPinned, ///< Segment word is not relocated. The caller keeps M1.
+    Outside,   ///< Pinned, but the linear target is not an in-image IP.
+    InImage    ///< @c CfgFarReloc::ip is the in-image target. Do not also apply M1.
+};
+
+/**
+ * @brief In-image result of a relocation-pinned far transfer.
+ */
+struct CfgFarReloc
+{
+    CfgFarRelocKind kind = CfgFarRelocKind::NotPinned;
+    uint16_t ip = 0; ///< Valid only when @c kind is InImage.
+};
+
+/**
+ * @brief Load-image linear addresses of MZ relocation fixups.
+ *
+ * Each location is segment * 16 + offset. image[0] is IP 0. A location at
+ * or past the image is ignored. One set is built per cfg_build.
+ *
+ * @param image  Load image bytes.
+ * @param relocs Relocation table. Empty yields an empty set.
+ * @return In-image fixup locations.
+ */
+static inline std::set<uint32_t> cfg_reloc_sites(const std::vector<uint8_t>& image,
+                                                 std::span<const RelocEntry> relocs)
+{
+    std::set<uint32_t> sites;
+    for (const RelocEntry& r : relocs)
+    {
+        const uint32_t loc = static_cast<uint32_t>(r.segment) * 16u +
+                             static_cast<uint32_t>(r.offset);
+        if (static_cast<size_t>(loc) < image.size())
+        {
+            sites.insert(loc);
+        }
+    }
+    return sites;
+}
+
+/**
+ * @brief Classify a direct far 9Ah/EAh against the relocation table.
+ *
+ * Pinned only when @p size is 5, the opcode at @p ip is 9Ah or EAh (no
+ * prefix; opcode index 0), and @p reloc_at contains the segment word at
+ * IP+3. Both words are little-endian in the image. The target linear
+ * address is seg_word * 16 + off_word. A pinned target with linear above
+ * 0xFFFF, or at or past the image, is Outside: the caller must not enqueue
+ * it and must not fall through to M1.
+ *
+ * @param image    Load image. image[0] is IP 0.
+ * @param ip       Instruction IP. The opcode byte is image[@p ip].
+ * @param size     Decoded instruction length.
+ * @param reloc_at In-image fixup locations from cfg_reloc_sites.
+ * @return InImage with the target IP, Outside when pinned but not an
+ *         in-image root, or NotPinned when M1 still applies.
+ */
+static inline CfgFarReloc cfg_far_reloc_site(const std::vector<uint8_t>& image,
+                                             uint16_t ip,
+                                             uint16_t size,
+                                             const std::set<uint32_t>& reloc_at)
+{
+    CfgFarReloc result;
+    const size_t at = static_cast<size_t>(ip);
+    if (size != 5 || at + 5 > image.size())
+    {
+        return result;
+    }
+    const uint8_t op = image[at];
+    if (op != 0x9A && op != 0xEA)
+    {
+        return result;
+    }
+    const uint32_t seg_at = static_cast<uint32_t>(at) + 3u;
+    if (!reloc_at.contains(seg_at))
+    {
+        return result;
+    }
+    const uint16_t off_word = static_cast<uint16_t>(
+        image[at + 1] | (static_cast<unsigned>(image[at + 2]) << 8));
+    const uint16_t seg_word = static_cast<uint16_t>(
+        image[at + 3] | (static_cast<unsigned>(image[at + 4]) << 8));
+    const uint32_t linear = static_cast<uint32_t>(seg_word) * 16u +
+                            static_cast<uint32_t>(off_word);
+    if (linear <= 0xFFFFu && static_cast<size_t>(linear) < image.size())
+    {
+        result.kind = CfgFarRelocKind::InImage;
+        result.ip = static_cast<uint16_t>(linear);
+        return result;
+    }
+    result.kind = CfgFarRelocKind::Outside;
+    return result;
 }
 
 static inline bool cfg_is_jcc(std::string_view m) {
@@ -335,13 +439,16 @@ static inline void cfg_find_near_jmp_tables(const std::vector<uint8_t>& image,
 /// @param file_base  file offset corresponding to image[0]
 /// @param follow_calls if true, treat call targets as leaders (depth unlimited BFS)
 /// @param max_blocks  safety cap
+/// @param relocs      MZ fixups into this load image. A relocated 9Ah/EAh
+///                    segment word is followed at seg*16+off. Empty keeps M1.
 static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                                  uint16_t entry_ip,
                                  uint16_t cs_seg,
                                  uint16_t file_cs,
                                  size_t file_base,
                                  bool follow_calls,
-                                 size_t max_blocks = 20000) {
+                                 size_t max_blocks = 20000,
+                                 std::span<const RelocEntry> relocs = {}) {
     CfgGraph g;
     g.cs_seg = cs_seg;
     g.image_file_base = file_base;
@@ -359,6 +466,8 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
         cs_close(&handle);
         return g;
     }
+
+    const std::set<uint32_t> reloc_at = cfg_reloc_sites(image, relocs);
 
     std::set<uint16_t> leaders;
     std::set<uint16_t> table_slots;
@@ -450,14 +559,24 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             };
 
             if (cfg_is_uncond_jmp(mnem)) {
-                // Far ljmp/jmpf: operand 0 is the segment, not an IP.
-                // Same-segment direct jumps enqueue operand 1. No fall-through.
+                // Far ljmp/jmpf: a relocated segment word wins over M1.
+                // Pinned in-image enqueues that IP. Pinned outside enqueues
+                // nothing. Not pinned: same-CS operand 1 (M1). No fall-through.
                 if (cfg_is_far_xfer(mnem))
                 {
-                    uint16_t far_off = 0;
-                    if (cfg_far_same_seg_off(x86, file_cs, far_off))
+                    const CfgFarReloc pin =
+                        cfg_far_reloc_site(image, ip, insn->size, reloc_at);
+                    if (pin.kind == CfgFarRelocKind::InImage)
                     {
-                        enqueue(far_off);
+                        enqueue(pin.ip);
+                    }
+                    else if (pin.kind == CfgFarRelocKind::NotPinned)
+                    {
+                        uint16_t far_off = 0;
+                        if (cfg_far_same_seg_off(x86, file_cs, far_off))
+                        {
+                            enqueue(far_off);
+                        }
                     }
                 }
                 else
@@ -498,14 +617,24 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                 }
                 if (!looks_data)
                     enqueue(next);
-                // Far lcall/callf still falls through above. Operand 0 is the
-                // segment. Operand 1 is enqueued only when it equals this CS.
+                // Far lcall/callf still falls through above. A relocated segment
+                // word is followed instead of M1, and only when follow_calls
+                // is set (same gate as M1). Pinned outside enqueues nothing.
                 if (follow_calls && cfg_is_far_xfer(mnem))
                 {
-                    uint16_t far_off = 0;
-                    if (cfg_far_same_seg_off(x86, file_cs, far_off))
+                    const CfgFarReloc pin =
+                        cfg_far_reloc_site(image, ip, insn->size, reloc_at);
+                    if (pin.kind == CfgFarRelocKind::InImage)
                     {
-                        enqueue(far_off);
+                        enqueue(pin.ip);
+                    }
+                    else if (pin.kind == CfgFarRelocKind::NotPinned)
+                    {
+                        uint16_t far_off = 0;
+                        if (cfg_far_same_seg_off(x86, file_cs, far_off))
+                        {
+                            enqueue(far_off);
+                        }
                     }
                 }
                 else if (follow_calls)
@@ -795,10 +924,23 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                 return true;
             };
 
-            // Direct far transfer. Operand 0 is never the target IP.
+            // Direct far transfer. A relocated segment word is the target.
+            // Pinned outside returns false so the caller keeps today's
+            // targetless edge. Not pinned: M1 (operand 1 when operand 0
+            // equals the file CS). Operand 0 is never the target IP.
             auto edge_far_same = [&](CfgEdgeKind kind) -> bool {
+                const CfgFarReloc pin =
+                    cfg_far_reloc_site(image, ip, insn->size, reloc_at);
+                if (pin.kind == CfgFarRelocKind::Outside)
+                {
+                    return false;
+                }
                 uint16_t off = 0;
-                if (!cfg_far_same_seg_off(x86, file_cs, off))
+                if (pin.kind == CfgFarRelocKind::InImage)
+                {
+                    off = pin.ip;
+                }
+                else if (!cfg_far_same_seg_off(x86, file_cs, off))
                 {
                     return false;
                 }
@@ -839,7 +981,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             }
 
             if (cfg_is_uncond_jmp(mnem)) {
-                // Far jump: no edge from the segment immediate, and no fall-through.
+                // Far jump: reloc pin or M1. No fall-through.
                 const CfgEdgeKind jk = table_slots.count(L) ? CfgEdgeKind::Table
                                                             : CfgEdgeKind::Jump;
                 const bool edged = cfg_is_far_xfer(mnem) ? edge_far_same(jk) : edge_imm(jk);
@@ -861,8 +1003,8 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                 blk.outs.push_back(f);
                 stop = true;
             } else if (cfg_is_call(mnem)) {
-                // Far call keeps the fall-through edge below. Operand 1 is a
-                // call target only when operand 0 equals this segment's CS.
+                // Far call keeps the fall-through edge below. The target is
+                // the reloc pin or, when the segment word is not relocated, M1.
                 const bool edged = cfg_is_far_xfer(mnem) ? edge_far_same(CfgEdgeKind::Call)
                                                          : edge_imm(CfgEdgeKind::Call);
                 if (!edged) {
@@ -2264,7 +2406,8 @@ static inline CfgGraph cfg_build_annotated(const std::vector<uint8_t>& fileData,
                                            uint16_t entry_ip,
                                            uint16_t cs_seg,
                                            uint16_t file_cs,
-                                           const Options& opts)
+                                           const Options& opts,
+                                           std::span<const RelocEntry> relocs = {})
 {
     CfgGraph empty;
     if (image_file_off >= fileData.size())
@@ -2275,7 +2418,7 @@ static inline CfgGraph cfg_build_annotated(const std::vector<uint8_t>& fileData,
         fileData.begin() + static_cast<std::ptrdiff_t>(image_file_off + len));
 
     CfgGraph g = cfg_build(image, entry_ip, cs_seg, file_cs, image_file_off,
-                           opts.cfgFollowCalls, 20000);
+                           opts.cfgFollowCalls, 20000, relocs);
     cfg_annotate(g, image);
     return g;
 }
@@ -2287,7 +2430,8 @@ static inline CfgGraph cfg_analyze_image(const std::vector<uint8_t>& fileData,
                                          uint16_t entry_ip,
                                          uint16_t cs_seg,
                                          uint16_t file_cs,
-                                         const Options& opts)
+                                         const Options& opts,
+                                         std::span<const RelocEntry> relocs = {})
 {
     if (image_file_off >= fileData.size())
     {
@@ -2297,7 +2441,7 @@ static inline CfgGraph cfg_analyze_image(const std::vector<uint8_t>& fileData,
     }
 
     CfgGraph g = cfg_build_annotated(fileData, image_file_off, image_len,
-                                     entry_ip, cs_seg, file_cs, opts);
+                                     entry_ip, cs_seg, file_cs, opts, relocs);
 
     if (!opts.cfgDotPath.empty())
         cfg_write_dot(g, opts.cfgDotPath, opts);

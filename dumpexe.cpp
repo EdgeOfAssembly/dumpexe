@@ -11,7 +11,7 @@ static inline void print_version()
     int cap_major = 0;
     int cap_minor = 0;
     (void)cs_version(&cap_major, &cap_minor);
-    std::cout << "dumpexe 2.15 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
+    std::cout << "dumpexe 2.16 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
                  "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n"
                  "License: GPLv2 | Commercial (contact author)\n";
     std::cout << std::format(
@@ -400,7 +400,7 @@ int main(int argc, char* argv[]) {
                                 entry.ip, cs_seg, static_cast<uint16_t>(header.cs), opts, opts.filename,
                                 opts.toolchainDetect ? &tc_rep : nullptr,
                                 opts.toolchainDetect ? &tp_rep : nullptr,
-                                false, false, entry.in_window);
+                                false, false, entry.in_window, relocs);
             }
             // A refused packed listing must not hide the unpack report.
             if (want_human_listing || (opts.uasm && !opts.jsonOut))
@@ -423,7 +423,8 @@ int main(int argc, char* argv[]) {
             const MzEntryLoc cfg_entry = mz_entry_image_ip(header);
             cfg_g = cfg_analyze_image(fileData, cfg_file_off, cfg_len,
                                       cfg_entry.in_window ? cfg_entry.ip : uint16_t{0},
-                                      cs_seg, static_cast<uint16_t>(header.cs), cfg_opts);
+                                      cs_seg, static_cast<uint16_t>(header.cs), cfg_opts,
+                                      relocs);
             cfg_ran = true;
         }
 
