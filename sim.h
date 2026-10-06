@@ -1390,13 +1390,14 @@ static inline bool sim_exec_insn(SimState& st, Options& opts) {
     if (mnem == "cbw" || mnem == "cbtw") {
         AH = (AL & 0x80) ? 0xFF : 0; IP = next_ip; return true;
     }
-    // cwd / cdq / cwde — in 16-bit guest treat as sign-extend AX → DX:AX
+    // cwd / cdq — in 16-bit guest treat as sign-extend AX → DX:AX.
+    // Opcode 98 is the next arm: Capstone names it cwde, and this guest does cbw.
     if (mnem == "cwd" || mnem == "cdq" || mnem == "cwtd" || mnem == "cqo") {
         DX = (AX & 0x8000) ? 0xFFFF : 0; IP = next_ip; return true;
     }
     if (mnem == "cwde" || mnem == "cwtl") {
-        // 16→32 not modeled; keep AX
-        IP = next_ip; return true;
+        // Capstone 6 names opcode 98 `cwde` in CS_MODE_16; this guest treats it as cbw.
+        AH = (AL & 0x80) ? 0xFF : 0; IP = next_ip; return true;
     }
 
     // ---- lds / les ----
@@ -1413,9 +1414,11 @@ static inline bool sim_exec_insn(SimState& st, Options& opts) {
     // ---- jumps (with loop-limit on backward edges) ----
     // Capstone names: jmp (near), ljmp (far), sometimes jmp with far mem op
     if (mnem == "ljmp" || mnem == "jmpf") {
-        if (op(0).type == X86_OP_IMM) {
-            // far absolute — Capstone may encode as one imm; rare in 16-bit dump
-            IP = static_cast<uint16_t>(op(0).imm & 0xFFFF);
+        if (x86.op_count >= 2 &&
+            op(0).type == X86_OP_IMM && op(1).type == X86_OP_IMM) {
+            // Capstone far imm: op0 is the segment, op1 the offset.
+            CS = static_cast<uint16_t>(op(0).imm & 0xFFFF);
+            IP = static_cast<uint16_t>(op(1).imm & 0xFFFF);
             return true;
         }
         if (op(0).type == X86_OP_MEM) {
@@ -1501,6 +1504,18 @@ static inline bool sim_exec_insn(SimState& st, Options& opts) {
     }
 
     // ---- call / ret ----
+    if (mnem == "lcall") {
+        if (x86.op_count >= 2 &&
+            op(0).type == X86_OP_IMM && op(1).type == X86_OP_IMM) {
+            // Capstone far imm: op0 is the segment, op1 the offset.
+            sim_push(st, CS);
+            sim_push(st, next_ip);
+            CS = static_cast<uint16_t>(op(0).imm & 0xFFFF);
+            IP = static_cast<uint16_t>(op(1).imm & 0xFFFF);
+            return true;
+        }
+        return false;
+    }
     if (mnem == "call") {
         if (op(0).type == X86_OP_IMM) {
             sim_push(st, next_ip);
