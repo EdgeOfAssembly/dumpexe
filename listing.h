@@ -1504,7 +1504,11 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
     }
 
     const bool multi = segs.size() > 1;
-    // Custom segment names assemble with -mz but not with -bin. COM stays .code.
+    // Past 64KB the image is sN segment blocks. COM stays one .code segment.
+    // uasm -bin accepts "end func_XXXX" only when that label is in UASM's
+    // first segment. .model tiny + .code is that case. .model small opens
+    // its own segment before s0, so "end func_XXXX" is error A2203. A bare
+    // "end" is valid for both -bin and -mz. The entry label stays in sN.
     const bool use_segments = multi && !uasm_com;
 
     std::ostringstream out;
@@ -1655,11 +1659,18 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
         }
     }
 
-    if (!saw_entry)
+    if (use_segments)
     {
-        out << entry_name << ":\n";
+        out << "end\n";
     }
-    out << "end " << entry_name << "\n";
+    else
+    {
+        if (!saw_entry)
+        {
+            out << entry_name << ":\n";
+        }
+        out << "end " << entry_name << "\n";
+    }
     return out.str();
 }
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dumpexe --uasm: UASM source assembles back to the load image (v2.11).
+# dumpexe --uasm: UASM source assembles back to the load image (v2.12).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -93,6 +93,7 @@ check com_has_mov grep -q 'mov' "$tmp/com.asm"
 check com_org grep -q 'org 100h' "$tmp/com.asm"
 check com_no_addr bash -c "! grep -E -q '^[[:space:]]*[0-9A-Fa-f]{4}[[:space:]]+[0-9A-Fa-f]{2}' '$tmp/com.asm'"
 check com_no_repack bash -c "! grep -q 'REPACK-V1' '$tmp/com.asm'"
+check com_end grep -qx 'end func_0100' "$tmp/com.asm"
 /usr/bin/uasm -bin -nologo -Fo "$tmp/com.bin" "$tmp/com.asm" >"$tmp/com_uasm.out" 2>"$tmp/com_uasm.err"
 check com_cmp cmp_note com "$tmp/com.bin" "$tmp/tiny.com"
 
@@ -107,6 +108,8 @@ open(sys.argv[2], "wb").write(p[cpar * 16:])
 print(f"small e_cparhdr={cpar} payload={len(p) - cpar * 16}")
 PY
 check small_cmp cmp_note small "$tmp/small.pay" "$tmp/small.img"
+/usr/bin/uasm -bin -nologo -Fo "$tmp/small.bin" "$tmp/small.asm" >"$tmp/small_bin.out" 2>"$tmp/small_bin.err"
+check small_bin_cmp cmp_note small_bin "$tmp/small.bin" "$tmp/small.img"
 
 # 3. 65540-byte load image, at least two segment directives, full payload.
 "$BIN" --uasm -o "$tmp/big.asm" "$tmp/big.exe" >"$tmp/big.out" 2>"$tmp/big.err"
@@ -120,6 +123,9 @@ open(sys.argv[2], "wb").write(p[cpar * 16:])
 print(f"big e_cparhdr={cpar} payload={len(p) - cpar * 16}")
 PY
 check big_cmp cmp_note big "$tmp/big.pay" "$tmp/big.img"
+check big_bare_end bash -c 'tail -n 1 "$1" | grep -qx end' _ "$tmp/big.asm"
+/usr/bin/uasm -bin -nologo -Fo "$tmp/big.bin" "$tmp/big.asm" >"$tmp/big_bin.out" 2>"$tmp/big_bin.err"
+check big_bin_cmp cmp_note big_bin "$tmp/big.bin" "$tmp/big.img"
 
 # 7. Stood-behind mov plus a 66h byte. .model before .386 keeps USE16.
 "$BIN" --uasm -o "$tmp/wide.asm" "$tmp/wide.com" >"$tmp/wide.out" 2>"$tmp/wide.err"
@@ -179,7 +185,7 @@ check aximm_cmp cmp_note aximm "$tmp/aximm.bin" "$tmp/aximm.com"
 check help_uasm grep -q -- '--uasm' "$tmp/help.txt"
 check help_no_disable bash -c "! grep -q -- '--no-uasm' '$tmp/help.txt'"
 "$BIN" -v >"$tmp/ver.txt"
-check version_211 grep -q '2.11' "$tmp/ver.txt"
+check version_212 grep -q '2.12' "$tmp/ver.txt"
 
 echo "uasm tests: $pass passed, $fail failed"
 if [[ "$fail" -ne 0 ]]; then

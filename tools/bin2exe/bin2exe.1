@@ -69,16 +69,14 @@ Page counts, relocations, SS:SP, minalloc, and the checksum are not
 rewritten.
 This mode is off unless the option is given.
 .SH NOTES
+A flat image has no entry point. The copied header carries CS:IP.
+dumpexe writes a bare
+.B end
+on a multi-segment listing so
 .B uasm \-bin
-rejects
-.B end
-followed by a label that is not in the first segment
-(Error A2203).
-A flat image has no entry point; the copied header carries CS:IP.
-Assemble with a bare
-.B end
-before
-.BR \-\-header .
+accepts it.
+COM listings keep
+.BR "end func_0100" .
 .PP
 The default wrap asks DOS for the largest free block
 (maxalloc FFFFh) so the COM stack at PSP:FFFE is inside the allocation.
