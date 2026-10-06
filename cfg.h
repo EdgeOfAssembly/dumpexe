@@ -250,6 +250,30 @@ static inline bool cfg_is_tracked_int(uint8_t inum)
     }
 }
 
+/**
+ * @brief True when a DOS `int` does not return to the next instruction.
+ *
+ * INT 20h and INT 27h always terminate. INT 21h terminates only when AH is
+ * exactly 00h, 4Ch, or 31h. Unknown AH (greater than 0xFF, including the
+ * initial 0x100) is not an exit. INTO (opcode CE) is not an `int`.
+ *
+ * @param int_num Immediate byte of a CD instruction.
+ * @param ah      AH at that interrupt, or a value above 0xFF when unknown.
+ * @return true when control does not fall through.
+ */
+static inline bool cfg_int_noreturn(uint8_t int_num, uint16_t ah)
+{
+    if (int_num == 0x20 || int_num == 0x27)
+    {
+        return true;
+    }
+    if (int_num != 0x21 || ah > 0xFF)
+    {
+        return false;
+    }
+    return ah == 0x00 || ah == 0x4C || ah == 0x31;
+}
+
 //=============================================================================
 // Jump-table heuristic (Pascal MT+ etc.): run of near JMPs (E9 xx xx)
 //=============================================================================
@@ -343,6 +367,9 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
     std::vector<uint32_t> owner(image.size(), kCfgUnowned);
     std::set<uint16_t> decoded_from;
     std::queue<uint16_t> work;
+    // Straight-line noreturn sites. A tracked CD is its own leader, so the
+    // int block's AH is unknown. This set is what stops that block.
+    std::set<uint16_t> noreturn_ips;
 
     auto enqueue = [&](uint16_t ip) {
         if (!cfg_ip_in_image(ip, image.size())) {
@@ -376,6 +403,8 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             return;
 
         uint16_t ip = start;
+        // AH for this walk only. 0x100 is unknown. A nop does not clear it.
+        uint16_t flow_ah = 0x100;
         for (int step = 0; step < 4096; ++step) {
             if (!cfg_ip_in_image(ip, image.size()))
                 break;
@@ -485,10 +514,33 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                 }
                 break;
             }
+            // B4 ib and B8 iw only. Every other opcode, including nop, keeps AH.
+            if (insn->size >= 2 && insn->bytes[0] == 0xB4)
+            {
+                flow_ah = insn->bytes[1];
+            }
+            else if (insn->size >= 3 && insn->bytes[0] == 0xB8)
+            {
+                flow_ah = insn->bytes[2];
+            }
+
             if (cfg_is_ret(mnem) || mnem == "int" || mnem == "into" || mnem == "hlt") {
-                // int returns on DOS. An opcode CD this decode actually executed
-                // is an INT leader; keep walking so AH setup stays reachable.
+                // int returns on DOS unless cfg_int_noreturn says otherwise.
+                // This walk still sees mov ah before the INT seed splits CD
+                // into its own block, where AH would be unknown.
                 if (mnem == "int" || mnem == "into") {
+                    const bool cd = insn->size >= 2 && insn->bytes[0] == 0xCD;
+                    const uint8_t inum = cd ? insn->bytes[1] : 0;
+                    if (cd && cfg_int_noreturn(inum, flow_ah))
+                    {
+                        noreturn_ips.insert(ip);
+                        break;
+                    }
+                    // A returning INT 21h clobbers AH. INTO does not.
+                    if (cd && inum == 0x21)
+                    {
+                        flow_ah = 0x100;
+                    }
                     leaders.insert(ip);
                     ip = next;
                     continue;
@@ -640,6 +692,8 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
         uint16_t limit = next_leader_after(L);
         uint16_t ip = L;
         bool stop = false;
+        // AH from the start of this block only. Unknown until B4 or B8.
+        uint16_t block_ah = 0x100;
 
         while (!stop && ip < limit && cfg_ip_in_image(ip, image.size())) {
             size_t off = ip;
@@ -764,6 +818,26 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                 return true;
             };
 
+            if (ci.size >= 2 && ci.bytes[0] == 0xB4)
+            {
+                block_ah = ci.bytes[1];
+            }
+            else if (ci.size >= 3 && ci.bytes[0] == 0xB8)
+            {
+                block_ah = ci.bytes[2];
+            }
+            const bool cd = ci.size >= 2 && ci.bytes[0] == 0xCD;
+            const uint8_t inum = cd ? ci.bytes[1] : 0;
+            // The set covers a tracked int whose mov ah lives in the previous
+            // block. Bytes cover an int that stayed in this block (INT 27h).
+            const bool insn_noreturn =
+                noreturn_ips.count(ip) != 0 ||
+                (cd && cfg_int_noreturn(inum, block_ah));
+            if (!insn_noreturn && cd && inum == 0x21)
+            {
+                block_ah = 0x100;
+            }
+
             if (cfg_is_uncond_jmp(mnem)) {
                 // Far jump: no edge from the segment immediate, and no fall-through.
                 const CfgEdgeKind jk = table_slots.count(L) ? CfgEdgeKind::Table
@@ -819,7 +893,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                     blk.outs.push_back(cont);
                 }
                 stop = true;
-            } else if (cfg_is_ret(mnem) || mnem == "hlt") {
+            } else if (cfg_is_ret(mnem) || mnem == "hlt" || insn_noreturn) {
                 CfgEdge e;
                 e.kind = CfgEdgeKind::Ret;
                 e.has_target = false;

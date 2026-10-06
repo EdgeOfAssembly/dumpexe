@@ -11,7 +11,7 @@ static inline void print_version()
     int cap_major = 0;
     int cap_minor = 0;
     (void)cs_version(&cap_major, &cap_minor);
-    std::cout << "dumpexe 2.14 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
+    std::cout << "dumpexe 2.15 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
                  "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n"
                  "License: GPLv2 | Commercial (contact author)\n";
     std::cout << std::format(
