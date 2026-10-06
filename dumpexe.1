@@ -205,6 +205,20 @@ The UASM file has no address column and no hex-byte column: one instruction
 per line (mnemonic and operands only), or
 .B db
 of the exact bytes.
+Opcode 98 is printed
+.B cbw
+and opcode 99 is printed
+.B cwd .
+A relative branch is
+.B jmp short ,
+.B jmp near ptr ,
+.B call near ptr ,
+or a conditional
+.B short
+when the target is a label.
+Any other non-branch line is kept only when
+.BR uasm (1)
+assembles it back to those bytes.
 Ordinary
 .B \-d
 /
@@ -570,7 +584,15 @@ Example:
 .SS Disassembly (-d)
 .B Static code analysis
 using Capstone x86-16 disassembler. Shows file offset, raw bytes, mnemonic, and
-operands for every instruction from the entry point to EOF.  INT instructions
+operands for instructions reached from the entry point.
+A NE segment stops at its on-disk end.
+INT 20h, INT 27h, and INT 21h with AH 00h, 4Ch, or 31h end the walk.
+Opcode 98 is shown as
+.B cbw
+and opcode 99 as
+.B cwd
+unless a 66h prefix is present.
+INT instructions
 are annotated with descriptions from the Ralf Brown Interrupt List (RBIL) database.
 
 .SS Simulation (--simulate)

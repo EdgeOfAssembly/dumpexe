@@ -19,16 +19,23 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fcntl.h>
 #include <format>
 #include <fstream>
 #include <iostream>
 #include <map>
 #include <set>
+#include <spawn.h>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <vector>
 
 #include "cfg.h"
@@ -275,6 +282,75 @@ static inline bool listing_is_ret_mnem(std::string_view m)
            m == "iretd";
 }
 
+/**
+ * @brief Index of the opcode after segment, lock, and rep prefixes.
+ *
+ * Does not skip 66h, 67h, or 0Fh. If any of those bytes appears anywhere in
+ * the instruction, @p blocked is set and the UASM path must stay `db`.
+ *
+ * @param in       Instruction bytes.
+ * @param blocked  Set when 66h, 67h, or 0Fh appears.
+ * @return Opcode index, or @p in.size when every byte is a skipped prefix.
+ */
+static inline size_t listing_uasm_opcode_index(const CfgInsn& in, bool& blocked)
+{
+    blocked = false;
+    for (uint8_t k = 0; k < in.size; ++k)
+    {
+        const uint8_t b = in.bytes[k];
+        if (b == 0x66 || b == 0x67 || b == 0x0F)
+        {
+            blocked = true;
+        }
+    }
+    size_t i = 0;
+    while (i < in.size)
+    {
+        const uint8_t p = in.bytes[i];
+        if (p == 0x26 || p == 0x2E || p == 0x36 || p == 0x3E || p == 0xF0 ||
+            p == 0xF2 || p == 0xF3)
+        {
+            ++i;
+            continue;
+        }
+        break;
+    }
+    return i;
+}
+
+/**
+ * @brief 8086 name for opcodes 98h and 99h.
+ *
+ * Capstone may print `cwde`/`cwtl` or `cdq`/`cwtd`. A 66h prefix is not
+ * skipped, so `66 98` stays `cwde`. This is not a blind rename of every
+ * `cwde` inside listing_masm_mnem.
+ *
+ * @param in    Instruction bytes.
+ * @param mnem  Lowercase mnemonic, already split from its operands.
+ * @return `cbw`, `cwd`, or @p mnem unchanged.
+ */
+static inline std::string listing_uasm_fix_mnem(const CfgInsn& in,
+                                                std::string_view mnem)
+{
+    bool blocked = false;
+    const size_t opi = listing_uasm_opcode_index(in, blocked);
+    (void)blocked;
+    if (opi >= in.size)
+    {
+        return std::string(mnem);
+    }
+    const uint8_t op = in.bytes[opi];
+    if (op == 0x98 && (mnem == "cwde" || mnem == "cwtl"))
+    {
+        return "cbw";
+    }
+    if (op == 0x99 && (mnem == "cdq" || mnem == "cwtd"))
+    {
+        return "cwd";
+    }
+    return std::string(mnem);
+}
+
 //=============================================================================
 // Emit listing text
 //=============================================================================
@@ -403,6 +479,15 @@ static inline std::string listing_emit_text(const CfgGraph& g,
             std::string mlow = mnem;
             for (char& c : mlow)
                 c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            // Mnemonic only. Operands stay Capstone text (0x42 must survive).
+            {
+                const std::string fixed = listing_uasm_fix_mnem(in, mlow);
+                if (fixed != mlow)
+                {
+                    mlow = fixed;
+                    mnem = fixed;
+                }
+            }
 
             std::string rops = listing_rewrite_ops(mlow, ops, b, sym, true);
             std::string far_note;
@@ -1053,18 +1138,303 @@ static inline int listing_uasm_cpu_level(const CfgInsn& in)
 }
 
 /**
+ * @brief Trim leading and trailing ASCII space from @p text.
+ *
+ * @param text Operand fragment.
+ * @return Trimmed copy. Empty when @p text is only space.
+ */
+static inline std::string listing_uasm_trim(std::string_view text)
+{
+    size_t begin = 0;
+    size_t end = text.size();
+    while (begin < end &&
+           std::isspace(static_cast<unsigned char>(text[begin])) != 0)
+    {
+        ++begin;
+    }
+    while (end > begin &&
+           std::isspace(static_cast<unsigned char>(text[end - 1])) != 0)
+    {
+        --end;
+    }
+    return std::string(text.substr(begin, end - begin));
+}
+
+/**
+ * @brief Bare string mnemonic for a string opcode, or nullptr.
+ *
+ * @param opcode Opcode byte after prefixes (A4–A7, AA–AF).
+ * @return `movsb` and the rest, or nullptr when @p opcode is not a string op.
+ */
+static inline const char* listing_uasm_string_base(uint8_t opcode)
+{
+    switch (opcode)
+    {
+    case 0xA4: return "movsb";
+    case 0xA5: return "movsw";
+    case 0xA6: return "cmpsb";
+    case 0xA7: return "cmpsw";
+    case 0xAA: return "stosb";
+    case 0xAB: return "stosw";
+    case 0xAC: return "lodsb";
+    case 0xAD: return "lodsw";
+    case 0xAE: return "scasb";
+    case 0xAF: return "scasw";
+    default: return nullptr;
+    }
+}
+
+/**
+ * @brief Rewrite bare decimal immediate tokens to listing_uasm_imm form.
+ *
+ * A token is a maximal digit run that is not part of an identifier, has no
+ * sign, and has no `h` suffix. `0xNN` is already rewritten by listing_masm_ops.
+ * `1` becomes `1h`, `0` becomes `0h`.
+ *
+ * @param ops Operand text after listing_masm_ops.
+ * @return Operand text with those immediates in 0NNh form.
+ */
+static inline std::string listing_uasm_decimal_imms(std::string_view ops)
+{
+    std::string out;
+    out.reserve(ops.size() + 8);
+    size_t i = 0;
+    while (i < ops.size())
+    {
+        const unsigned char c = static_cast<unsigned char>(ops[i]);
+        if (std::isdigit(c) == 0)
+        {
+            out.push_back(static_cast<char>(c));
+            ++i;
+            continue;
+        }
+        const bool boundary =
+            (i == 0) ||
+            (std::isalnum(static_cast<unsigned char>(ops[i - 1])) == 0 &&
+             ops[i - 1] != '_' && ops[i - 1] != '$' && ops[i - 1] != '.');
+        const bool sign = (i > 0) && (ops[i - 1] == '+' || ops[i - 1] == '-');
+        size_t j = i;
+        while (j < ops.size() &&
+               std::isdigit(static_cast<unsigned char>(ops[j])) != 0)
+        {
+            ++j;
+        }
+        const bool suffix_h =
+            (j < ops.size()) && (ops[j] == 'h' || ops[j] == 'H');
+        const bool tail_ident =
+            (j < ops.size()) &&
+            (std::isalpha(static_cast<unsigned char>(ops[j])) != 0 ||
+             ops[j] == '_');
+        if (!boundary || sign || suffix_h || tail_ident || (j - i) > 8)
+        {
+            out.append(ops.substr(i, j - i));
+            i = j;
+            continue;
+        }
+        unsigned value = 0;
+        for (size_t k = i; k < j; ++k)
+        {
+            value = value * 10u + static_cast<unsigned>(ops[k] - '0');
+        }
+        out += listing_uasm_imm(value);
+        i = j;
+    }
+    return out;
+}
+
+/**
+ * @brief Spell one UASM line from Capstone text and the raw bytes.
+ *
+ * Renames 98h/99h, forces CC to `int 3`, swaps `xchg reg, ax`, drops string
+ * memory operands, and inserts `dword ptr` on lds/les. Does not call uasm.
+ *
+ * @param in    Instruction bytes.
+ * @param mnem  Lowercase mnemonic from listing_masm_mnem. May be only the
+ *              first word when Capstone's mnemonic itself contains a space.
+ * @param ops   Operands after listing_masm_ops and decimal rewrite.
+ * @return Nothing. @p mnem and @p ops are updated in place.
+ */
+static inline void listing_uasm_spell(const CfgInsn& in,
+                                      std::string& mnem,
+                                      std::string& ops)
+{
+    bool blocked = false;
+    const size_t opi = listing_uasm_opcode_index(in, blocked);
+    if (blocked || opi >= in.size)
+    {
+        return;
+    }
+    const uint8_t opcode = in.bytes[opi];
+    mnem = listing_uasm_fix_mnem(in, mnem);
+
+    if (in.size == 1 && opcode == 0xCC)
+    {
+        mnem = "int";
+        ops = "3";
+        return;
+    }
+
+    if (in.size == 1 && opcode >= 0x91 && opcode <= 0x97 && mnem == "xchg")
+    {
+        const size_t comma = ops.find(',');
+        if (comma != std::string::npos)
+        {
+            const std::string left = listing_uasm_trim(ops.substr(0, comma));
+            const std::string right = listing_uasm_trim(ops.substr(comma + 1));
+            if (right == "ax")
+            {
+                ops = "ax, " + left;
+            }
+        }
+        return;
+    }
+
+    const char* base = listing_uasm_string_base(opcode);
+    if (base != nullptr && opi + 1 == in.size)
+    {
+        int rep = 0;
+        for (size_t i = 0; i < opi; ++i)
+        {
+            if (in.bytes[i] == 0xF2)
+            {
+                rep = 2;
+            }
+            else if (in.bytes[i] == 0xF3)
+            {
+                rep = 3;
+            }
+        }
+        if (rep == 3)
+        {
+            mnem = std::string("rep ") + base;
+        }
+        else if (rep == 2)
+        {
+            mnem = std::string("repne ") + base;
+        }
+        else
+        {
+            mnem = base;
+        }
+        ops.clear();
+        return;
+    }
+
+    if ((mnem == "lds" || mnem == "les") && ops.find("ptr") != std::string::npos)
+    {
+        if (ops.find("byte ptr") == std::string::npos &&
+            ops.find("word ptr") == std::string::npos &&
+            ops.find("dword ptr") == std::string::npos)
+        {
+            const size_t at = ops.find("ptr");
+            ops.replace(at, 3, "dword ptr");
+        }
+    }
+}
+
+/**
+ * @brief Sized near branch to a symbol, from the displacement bytes.
+ *
+ * The target is `uint16_t(ip + size + disp)` with disp sign-extended.
+ * Far lcall/ljmp are not rewritten. No numeric IP. No per-branch uasm.
+ *
+ * @param in     Instruction bytes. The opcode must be the first byte.
+ * @param ip     IP of @p in.
+ * @param opcode Opcode byte (EB/E9/E8/70–7F/E0–E3).
+ * @param mnem   Lowercase Capstone mnemonic (`je`, `loopne`, …).
+ * @param sym    Labels already collected for this image.
+ * @param line   Receives `jmp short <sym>` and the other sized forms.
+ * @return true when @p sym contains the encoded target.
+ */
+static inline bool listing_uasm_sized_branch(
+    const CfgInsn& in,
+    uint16_t ip,
+    uint8_t opcode,
+    std::string_view mnem,
+    const std::map<uint16_t, std::string>& sym,
+    std::string& line)
+{
+    if (in.size < 2 || in.bytes[0] != opcode)
+    {
+        return false;
+    }
+    bool rel8 = false;
+    std::string text;
+    if (opcode == 0xEB && in.size == 2)
+    {
+        rel8 = true;
+        text = "jmp short ";
+    }
+    else if (opcode == 0xE9 && in.size == 3)
+    {
+        text = "jmp near ptr ";
+    }
+    else if (opcode == 0xE8 && in.size == 3)
+    {
+        text = "call near ptr ";
+    }
+    else if (opcode >= 0x70 && opcode <= 0x7F && in.size == 2)
+    {
+        if (mnem.empty())
+        {
+            return false;
+        }
+        rel8 = true;
+        text = std::string(mnem) + " short ";
+    }
+    else if (opcode >= 0xE0 && opcode <= 0xE3 && in.size == 2)
+    {
+        if (mnem.empty())
+        {
+            return false;
+        }
+        rel8 = true;
+        text = std::string(mnem) + " short ";
+    }
+    else
+    {
+        return false;
+    }
+
+    int disp = 0;
+    if (rel8)
+    {
+        disp = static_cast<int>(static_cast<int8_t>(in.bytes[in.size - 1]));
+    }
+    else
+    {
+        const unsigned lo = in.bytes[in.size - 2];
+        const unsigned hi = in.bytes[in.size - 1];
+        disp = static_cast<int>(static_cast<int16_t>(lo | (hi << 8)));
+    }
+    const int sum = static_cast<int>(ip) + static_cast<int>(in.size) + disp;
+    const uint16_t target = static_cast<uint16_t>(sum);
+    const auto it = sym.find(target);
+    if (it == sym.end())
+    {
+        return false;
+    }
+    line = text + it->second;
+    return true;
+}
+
+/**
  * @brief True when UASM will encode @p mnem/@p ops back to @p in.bytes.
  *
- * Anything else is emitted as db. Relative branches and memory operands are
- * not stood behind: UASM may pick a different short/near form or size.
- * AX imm16 (opcodes 05/0D/15/1D/25/2D/35/3D) is not stood behind when the
- * immediate fits in a signed byte (`imm <= 0x7F` or `imm >= 0xFF80`).
- * UASM shortens a signed-byte AX immediate to `83 /r ib`.
+ * Anything else is emitted as db unless isolated verify accepts it.
+ * Relative branches and memory operands are not stood behind here: UASM may
+ * pick a different short/near form or size. AX imm16 (opcodes
+ * 05/0D/15/1D/25/2D/35/3D) is not stood behind when the immediate fits in a
+ * signed byte (`imm <= 0x7F` or `imm >= 0xFF80`). UASM shortens that form to
+ * `83 /r ib`. Opcode CD immediate 03 is never stood behind: UASM encodes
+ * `int 3` and `int 3h` as CC.
  *
  * @param in   Instruction whose bytes already match the image.
- * @param mnem listing_masm_mnem result.
- * @param ops  listing_masm_ops result (may be empty).
+ * @param mnem Spelled mnemonic (listing_masm_mnem, then listing_uasm_spell).
+ * @param ops  Spelled operands (may be empty).
+ * @return true when the spelled text is the one encoding of these bytes.
  */
+
 static inline bool listing_uasm_stand_behind(const CfgInsn& in,
                                             std::string_view mnem,
                                             std::string_view ops)
@@ -1126,6 +1496,14 @@ static inline bool listing_uasm_stand_behind(const CfgInsn& in,
         case 0xCE: return eq("into");
         case 0xCF: return eq("iret");
         case 0xD7: return eq("xlat") || eq("xlatb");
+        case 0x06: return eq("push es");
+        case 0x07: return eq("pop es");
+        case 0x0E: return eq("push cs");
+        case 0x16: return eq("push ss");
+        case 0x17: return eq("pop ss");
+        case 0x1E: return eq("push ds");
+        case 0x1F: return eq("pop ds");
+        case 0xCC: return eq("int 3");
         default: break;
         }
         if (b[0] >= 0x40 && b[0] <= 0x47)
@@ -1153,6 +1531,11 @@ static inline bool listing_uasm_stand_behind(const CfgInsn& in,
 
     if (in.size == 2 && b[0] == 0xCD)
     {
+        // int 3 / int 3h / int 03h all assemble to CC, never CD 03.
+        if (b[1] == 0x03)
+        {
+            return false;
+        }
         return eq("int " + listing_uasm_imm(b[1]));
     }
     if (in.size == 2 && b[0] >= 0xB0 && b[0] <= 0xB7)
@@ -1197,12 +1580,264 @@ static inline bool listing_uasm_stand_behind(const CfgInsn& in,
 }
 
 /**
+ * @brief Scratch .asm/.bin pair for one listing_emit_uasm call.
+ *
+ * The directory is created with mkdtemp under /tmp. Both files are unlinked
+ * on every return path, including when verify is never called.
+ */
+class ListingUasmScratch
+{
+public:
+    /**
+     * @brief Create the scratch directory and remember the two paths.
+     */
+    ListingUasmScratch()
+    {
+        char tmpl[] = "/tmp/dumpexe-uasm-XXXXXX";
+        if (::mkdtemp(tmpl) == nullptr)
+        {
+            return;
+        }
+        dir_ = tmpl;
+        asm_path_ = dir_ + "/line.asm";
+        bin_path_ = dir_ + "/line.bin";
+        err_path_ = dir_ + "/line.err";
+        ready_ = true;
+        uasm_ok_ = (::access("/usr/bin/uasm", X_OK) == 0);
+    }
+
+    ListingUasmScratch(const ListingUasmScratch&) = delete;
+
+    /**
+     * @brief Copying the scratch paths would double-unlink them.
+     * @return Nothing. Deleted.
+     */
+    ListingUasmScratch& operator=(const ListingUasmScratch&) = delete;
+
+    /**
+     * @brief Unlink the scratch .asm and .bin, then remove the directory.
+     * @return Nothing.
+     */
+    ~ListingUasmScratch()
+    {
+        if (!asm_path_.empty())
+        {
+            ::unlink(asm_path_.c_str());
+        }
+        if (!bin_path_.empty())
+        {
+            ::unlink(bin_path_.c_str());
+        }
+        if (!err_path_.empty())
+        {
+            ::unlink(err_path_.c_str());
+        }
+        if (!dir_.empty())
+        {
+            ::rmdir(dir_.c_str());
+        }
+    }
+
+    /**
+     * @brief True when mkdtemp succeeded.
+     * @return false when the scratch directory was not created.
+     */
+    bool ready() const
+    {
+        return ready_;
+    }
+
+    /**
+     * @brief True when /usr/bin/uasm is executable.
+     * @return false when the assembler is missing.
+     */
+    bool uasm_ok() const
+    {
+        return uasm_ok_;
+    }
+
+    /**
+     * @brief Path of the reused assembly file.
+     * @return Absolute .asm path, empty when not ready.
+     */
+    const std::string& asm_path() const
+    {
+        return asm_path_;
+    }
+
+    /**
+     * @brief Path of the reused binary file.
+     * @return Absolute .bin path, empty when not ready.
+     */
+    const std::string& bin_path() const
+    {
+        return bin_path_;
+    }
+
+    /**
+     * @brief Scratch directory. The child assembler runs here.
+     * @return Absolute directory, empty when not ready.
+     */
+    const std::string& dir() const
+    {
+        return dir_;
+    }
+
+private:
+    std::string dir_;
+    std::string asm_path_;
+    std::string bin_path_;
+    std::string err_path_;
+    bool ready_ = false;
+    bool uasm_ok_ = false;
+};
+
+/**
+ * @brief Assemble one line with /usr/bin/uasm and compare the bytes.
+ *
+ * Level 0 writes `.8086` before `.model tiny`. Level 1 writes `.186` after
+ * `.model tiny`. Level 2 and 3 are not assembled. `org 100h` does not pad, so
+ * the output must equal @p in.bytes. The spawn argv is uasm, -bin, -nologo,
+ * -Fo, the bin path, and the asm path. No shell.
+ *
+ * @param scratch Scratch paths for this listing_emit_uasm call.
+ * @param line    One instruction. The caller rejects comments and labels.
+ * @param level   listing_uasm_cpu_level of @p in. Must be 0 or 1.
+ * @param in      Instruction whose bytes are the expected output.
+ * @return true when uasm's output equals @p in.bytes.
+ */
+static inline bool listing_uasm_verify_one(const ListingUasmScratch& scratch,
+                                          const std::string& line,
+                                          int level,
+                                          const CfgInsn& in)
+{
+    if (!scratch.ready() || !scratch.uasm_ok() || level >= 2 || in.size == 0 ||
+        in.size > 16)
+    {
+        return false;
+    }
+    ::unlink(scratch.bin_path().c_str());
+    FILE* af = std::fopen(scratch.asm_path().c_str(), "w");
+    if (af == nullptr)
+    {
+        return false;
+    }
+    bool wrote = true;
+    if (level == 0 && std::fputs(".8086\n", af) < 0)
+    {
+        wrote = false;
+    }
+    if (wrote && std::fputs(".model tiny\n", af) < 0)
+    {
+        wrote = false;
+    }
+    if (wrote && level == 1 && std::fputs(".186\n", af) < 0)
+    {
+        wrote = false;
+    }
+    if (wrote && std::fputs(".code\norg 100h\n", af) < 0)
+    {
+        wrote = false;
+    }
+    if (wrote && std::fwrite(line.data(), 1, line.size(), af) != line.size())
+    {
+        wrote = false;
+    }
+    if (wrote && std::fputs("\nend\n", af) < 0)
+    {
+        wrote = false;
+    }
+    if (std::fclose(af) != 0)
+    {
+        wrote = false;
+    }
+    if (!wrote)
+    {
+        return false;
+    }
+
+    std::string bin_arg = scratch.bin_path();
+    std::string asm_arg = scratch.asm_path();
+    char arg0[] = "uasm";
+    char arg1[] = "-bin";
+    char arg2[] = "-nologo";
+    char arg3[] = "-Fo";
+    char* argv[] = {
+        arg0, arg1, arg2, arg3, bin_arg.data(), asm_arg.data(), nullptr};
+
+    posix_spawn_file_actions_t actions;
+    if (::posix_spawn_file_actions_init(&actions) != 0)
+    {
+        return false;
+    }
+    const int in_rc = ::posix_spawn_file_actions_addopen(
+        &actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+    const int out_rc = ::posix_spawn_file_actions_addopen(
+        &actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0);
+    const int err_rc = ::posix_spawn_file_actions_addopen(
+        &actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+    // uasm writes <basename>.err in its cwd. Keep that file inside the scratch dir.
+    const int dir_rc = ::posix_spawn_file_actions_addchdir_np(
+        &actions, scratch.dir().c_str());
+    if (in_rc != 0 || out_rc != 0 || err_rc != 0 || dir_rc != 0)
+    {
+        ::posix_spawn_file_actions_destroy(&actions);
+        return false;
+    }
+
+    extern char** environ;
+    pid_t pid = 0;
+    const int spawned = ::posix_spawn(&pid, "/usr/bin/uasm", &actions, nullptr,
+                                      argv, environ);
+    ::posix_spawn_file_actions_destroy(&actions);
+    if (spawned != 0)
+    {
+        return false;
+    }
+    int status = 0;
+    for (;;)
+    {
+        const pid_t waited = ::waitpid(pid, &status, 0);
+        if (waited < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            return false;
+        }
+        break;
+    }
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+    {
+        return false;
+    }
+
+    FILE* bf = std::fopen(scratch.bin_path().c_str(), "rb");
+    if (bf == nullptr)
+    {
+        return false;
+    }
+    uint8_t got[16];
+    const size_t nread = std::fread(got, 1, sizeof(got), bf);
+    const int extra = std::fgetc(bf);
+    std::fclose(bf);
+    if (extra != EOF || nread != in.size)
+    {
+        return false;
+    }
+    return std::memcmp(got, in.bytes, nread) == 0;
+}
+
+/**
  * @brief Emit UASM source that assembles back to the load image.
  *
  * No address column and no hex-byte column. Real instructions go through
- * listing_masm_mnem / listing_masm_ops. Bytes the CFG did not decode, and any
- * instruction this exporter will not stand behind, are `db` of those exact
- * bytes (0NNh). An image longer than 65536 bytes is successive `sN segment`
+ * listing_masm_mnem / listing_masm_ops, then UASM spelling. A line is kept
+ * when the whitelist matches, when it is a sized near branch to a known
+ * symbol, or when /usr/bin/uasm assembles that one line back to the same
+ * bytes. Anything else, including bytes the CFG did not decode, is `db`
+ * (0NNh). An image longer than 65536 bytes is successive `sN segment`
  * / `org 0` / `sN ends` chunks (byte alignment, so uasm -mz does not pad).
  * An instruction is never split across a segment. No .stack and no REPACK-V1.
  *
@@ -1226,7 +1861,8 @@ static inline bool listing_uasm_stand_behind(const CfgInsn& in,
  * @param uasm_com     True for a pure .COM (not an MZ load image).
  * @param uasm_com_psp True when @p image begins with a real embedded PSP.
  * @param n_procs      Set to the procedure-label count.
- * @param n_insns      Set to how many instructions were stood behind.
+ * @param n_insns      Set to how many instructions were emitted as text
+ *                     (whitelist, sized branch, or a successful verify).
  * @param external     Optional symbol map (same names as the human listing).
  * @param entry_in_window False when the MZ entry is past the 64 KiB window.
  * @return UASM source. The last line is `end <entry label>` for COM and a
@@ -1309,6 +1945,39 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
         return labs;
     };
 
+    // Local to this emit. Not a process-lifetime static.
+    ListingUasmScratch scratch;
+    std::map<std::string, bool> verify_cache;
+    auto verify_cached = [&](const std::string& line, const CfgInsn& insn) -> bool
+    {
+        if (line.empty() ||
+            line.find(';') != std::string::npos ||
+            line.find('\n') != std::string::npos ||
+            line.find("func_") != std::string::npos ||
+            line.find("loc_") != std::string::npos)
+        {
+            return false;
+        }
+        const int level = listing_uasm_cpu_level(insn);
+        if (level >= 2)
+        {
+            return false;
+        }
+        std::string key;
+        key.reserve(line.size() + 1 + insn.size);
+        key.append(line);
+        key.push_back('\0');
+        key.append(reinterpret_cast<const char*>(insn.bytes), insn.size);
+        const auto found = verify_cache.find(key);
+        if (found != verify_cache.end())
+        {
+            return found->second;
+        }
+        const bool ok = listing_uasm_verify_one(scratch, line, level, insn);
+        verify_cache.emplace(std::move(key), ok);
+        return ok;
+    };
+
     auto stood = [&](size_t at_off, std::string& text_out) -> size_t
     {
         text_out.clear();
@@ -1334,6 +2003,13 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
                 return 0;
             }
         }
+        bool blocked = false;
+        const size_t opi = listing_uasm_opcode_index(in, blocked);
+        if (blocked || opi >= in.size)
+        {
+            return 0;
+        }
+        const uint8_t opcode = in.bytes[opi];
         std::string mnem = in.text;
         std::string ops;
         const size_t sp = in.text.find(' ');
@@ -1342,21 +2018,36 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
             mnem = in.text.substr(0, sp);
             ops = in.text.substr(sp + 1);
         }
-        const std::string mlow = listing_masm_mnem(mnem);
+        std::string mlow = listing_masm_mnem(mnem);
+        std::string branch;
+        if (listing_uasm_sized_branch(in, ip, opcode, mlow, sym, branch))
+        {
+            text_out = std::move(branch);
+            return in.size;
+        }
         std::string rops = ops;
         const CfgBlock* bp = blk_at.count(ip) ? blk_at[ip] : nullptr;
-        if (bp)
+        if (bp != nullptr)
         {
             rops = listing_rewrite_ops(mlow, ops, *bp, sym);
         }
         rops = listing_masm_ops(rops);
-        if (!listing_uasm_stand_behind(in, mlow, rops))
+        rops = listing_uasm_decimal_imms(rops);
+        listing_uasm_spell(in, mlow, rops);
+        if (listing_uasm_stand_behind(in, mlow, rops))
         {
-            return 0;
+            cpu = std::max(cpu, listing_uasm_cpu_level(in));
+            text_out = rops.empty() ? mlow : (mlow + " " + rops);
+            return in.size;
         }
-        cpu = std::max(cpu, listing_uasm_cpu_level(in));
-        text_out = rops.empty() ? mlow : (mlow + " " + rops);
-        return in.size;
+        const std::string line = rops.empty() ? mlow : (mlow + " " + rops);
+        if (verify_cached(line, in))
+        {
+            cpu = std::max(cpu, listing_uasm_cpu_level(in));
+            text_out = line;
+            return in.size;
+        }
+        return 0;
     };
 
     while (off < image.size())
