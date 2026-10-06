@@ -144,16 +144,25 @@ static inline void dx_list_unpacked(const Options& opts,
             size_t cfg_len = 0;
             uint16_t cs_seg = 0;
             mz_cfg_window(header, sizes, cfg_file_off, cfg_len, cs_seg, uopts);
-            listing_run(image, cfg_file_off, cfg_len, mz_entry_image_ip(header), cs_seg,
-                        uopts, bin_path);
+            const MzEntryLoc entry = mz_entry_image_ip(header);
+            if (listing_run(image, cfg_file_off, cfg_len, entry.ip, cs_seg,
+                            static_cast<uint16_t>(header.cs),
+                            uopts, bin_path, nullptr, nullptr, false, false,
+                            entry.in_window) != 0)
+            {
+                return;
+            }
             return;
         }
     }
 
     std::vector<uint8_t> com_image;
     com_listing_image(image, false, com_image);
-    listing_run(com_image, 0, com_image.size(), COM_ENTRY_IP, uopts.loadBase, uopts,
-                bin_path, nullptr, nullptr, true, false);
+    if (listing_run(com_image, 0, com_image.size(), COM_ENTRY_IP, uopts.loadBase,
+                    uopts.loadBase, uopts, bin_path, nullptr, nullptr, true, false) != 0)
+    {
+        return;
+    }
 }
 
 /**
@@ -170,7 +179,8 @@ static inline void dx_after_packed_listing(const Options& opts,
                                            const std::vector<uint8_t>& fileData,
                                            const std::string& packer)
 {
-    if (opts.jsonOut || !(opts.showDisasm || opts.showAll || opts.uasm))
+    // --uasm may decode in memory. Side files need -d or -a as well.
+    if (opts.jsonOut || !(opts.showDisasm || opts.showAll))
     {
         return;
     }

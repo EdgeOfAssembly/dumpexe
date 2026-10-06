@@ -397,6 +397,26 @@ static void do_write_dcmpr(deark *c, lctx *d)
 			}
 		}
 	}
+	/* LZEXE 0.90 only. Deark's clamped minalloc can sit below SS:SP
+	 * (Chamber FIXIN.EXE: stack paragraph 1094, minimum 795). Raise
+	 * minalloc to the stack top when that paragraph count fits in a
+	 * uint16. 0.91 images that already match Deark are not touched.
+	 * minalloc stays <= maxalloc.
+	 */
+	if(d->ver==LZEXE_VER_090 && d->dcmpr_code) {
+		i64 stack_top = (i64)(int16_t)d->ephdr.regSS * 16
+			+ (i64)d->ephdr.regSP;
+		i64 image_len = d->dcmpr_code->len;
+		if(stack_top > image_len) {
+			i64 extra = stack_top - image_len;
+			i64 paras = (extra + 15) / 16;
+			if(paras > 0 && paras <= 65535 && (UI)paras > final_minmem) {
+				final_minmem = (UI)paras;
+				if(final_maxmem != 0xffff && final_maxmem < final_minmem)
+					final_maxmem = final_minmem;
+			}
+		}
+	}
 	dbuf_writeu16le(outf, (i64)final_minmem); // 10  # of paragraphs required
 	dbuf_writeu16le(outf, (i64)final_maxmem); // 12  # of paragraphs requested
 

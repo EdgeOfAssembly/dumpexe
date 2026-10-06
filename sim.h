@@ -111,6 +111,9 @@ inline constexpr size_t kSimIoCap = 65536;
 
 /// All guest files in one run, summed. A write that would pass this fails.
 inline constexpr size_t kSimGuestTotalCap = 16u * 1024u * 1024u;
+/// Distinct guest-file names in one run. Create past this fails.
+/// Truncate releases vector capacity so a recreate loop cannot keep it.
+inline constexpr size_t kSimGuestFileCap = 64;
 
 struct SimFile {
     std::string path;       ///< Map key: accepted path, ASCII letters uppercased.
@@ -444,6 +447,38 @@ static inline size_t sim_guest_read_mem(SimState& st, const std::vector<uint8_t>
     return n;
 }
 
+/**
+ * @brief Drop a guest file's bytes and its capacity.
+ *
+ * @c clear keeps the allocation. A truncate-and-recreate loop would
+ * otherwise throw @c std::bad_alloc under the default breakpoint budget.
+ *
+ * @param data Guest file buffer. Empty and capacity-free on return.
+ */
+static inline void sim_guest_truncate(std::vector<uint8_t>& data)
+{
+    std::vector<uint8_t> empty;
+    data.swap(empty);
+}
+
+/**
+ * @brief True when creating @p gkey would stay within @c kSimGuestFileCap.
+ *
+ * An existing key may be truncated. A new key at the cap is refused.
+ *
+ * @param st   Simulator state.
+ * @param gkey Sandbox file name.
+ * @return False when this would be a new file past the cap.
+ */
+static inline bool sim_guest_can_create(const SimState& st, const std::string& gkey)
+{
+    if (st.guest_files.contains(gkey))
+    {
+        return true;
+    }
+    return st.guest_files.size() < kSimGuestFileCap;
+}
+
 /// Bytes currently stored in every guest file of this run.
 static inline size_t sim_guest_total_bytes(const SimState& st)
 {
@@ -747,8 +782,11 @@ static inline void sim_int21(SimState& st, const Options& opts) {
         if (!sim_guest_accept(raw, gkey)) {
             AL = 0xFF;
             log_int(std::format("FCB create '{}' → FAIL", raw));
+        } else if (!sim_guest_can_create(st, gkey)) {
+            AL = 0xFF;
+            log_int(std::format("FCB create '{}' → FAIL (guest file cap)", raw));
         } else {
-            st.guest_files[gkey].clear();
+            sim_guest_truncate(st.guest_files[gkey]);
             SimFile sf;
             sf.path = gkey;
             sf.cursor = 0;
@@ -772,7 +810,14 @@ static inline void sim_int21(SimState& st, const Options& opts) {
             return;
         }
         if (ah == 0x3C) {
-            st.guest_files[gkey].clear();
+            if (!sim_guest_can_create(st, gkey))
+            {
+                CF = 1;
+                AX = 3;
+                log_int(std::format("handle create '{}' → FAIL (guest file cap)", raw));
+                return;
+            }
+            sim_guest_truncate(st.guest_files[gkey]);
         } else if (!st.guest_files.contains(gkey)) {
             CF = 1;
             AX = 2;

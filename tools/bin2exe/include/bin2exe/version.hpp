@@ -8,8 +8,8 @@
 namespace bin2exe
 {
 
-inline constexpr const char k_version[] = "0.1";
-inline constexpr const char k_version_line[] = "bin2exe 0.1";
+inline constexpr const char k_version[] = "0.2";
+inline constexpr const char k_version_line[] = "bin2exe 0.2";
 
 } /* namespace bin2exe */
 

@@ -157,10 +157,12 @@ The four bytes
 at file offset 1Ch are not enough.
 LHarc matches an embedded header that would pass Deark
 .B de_identify_lha
-(recognized method, header level 0..3, and that level's size checks).
+and also has a level-0/1 header checksum or a level-2 CRC, a packed
+size that fits, and a start in the SFX trailer (the end of the MZ image).
 An
 .B LHA
 sentence is not enough.
+A checksummed header in the middle of the file is not enough.
 LZEXE 0.91 or 0.90 suppresses LHarc.
 .TP
 .BR \-o ", " \-\-output " PATH"
@@ -248,7 +250,11 @@ An EXE load image uses
 .B org 0
 so the
 .B uasm -mz
-payload
+output is that load-image payload only.
+It does not rebuild the MZ header.
+Restore the header with
+.BR bin2exe .
+The payload length
 .RI ( "e_cparhdr * 16" )
 is the full load image.
 An image longer than 65536 bytes is split into byte-aligned
@@ -267,7 +273,15 @@ so
 accepts it.
 The entry label stays inside its
 .B sN
-segment.
+segment when the entry is inside the 64 KiB decode window.
+An entry past that window is not labeled
+.B func_FFFF
+and the listing ends with a bare
+.BR end .
+A same-segment far call is followed when its segment matches the
+file CS in the MZ header, including when
+.B \-\-base
+is left at the default 1000h.
 COM and a one-segment EXE still end with
 .B end func_XXXX .
 .BR bin2exe (1)
@@ -394,8 +408,11 @@ Print only breakpoint hits and a final summary. Implies
 .BI \-\-max-insns= N
 Stop after
 .I N
-instructions (default 64, or 1000000 with
+instructions (default 64, 10000 with
+.BR \-\-trace ,
+or 1000000 with
 .BR \-\-bp ).
+A leading minus is an error.
 Implies
 .BR \-\-simulate .
 .TP
@@ -439,6 +456,9 @@ The simulator is an in-memory sandbox.
 Guest data files start empty.
 Guest I/O does not open host files.
 A write to handle 1 (stdout) or handle 2 (stderr) returns CF=1 and AX=6.
+At most 64 guest files are created.
+Truncating a guest file releases its allocation, so recreate does not
+keep the old capacity.
 Shows:
 .RS
 .IP \(bu 2
@@ -559,7 +579,8 @@ that simulates DOS loading and program startup.
 Guest data files start empty.
 Create, open, read, and write stay inside the simulator and do not
 open host files.
-A write to handle 1 or handle 2 returns CF=1 and AX=6:
+A write to handle 1 or handle 2 returns CF=1 and AX=6.
+At most 64 guest files. Truncate releases capacity:
 
 .B Initial Register State:
 .RS

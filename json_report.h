@@ -32,7 +32,7 @@
 struct JsonReport
 {
     std::string tool = "dumpexe";
-    std::string version = "2.12";
+    std::string version = "2.13";
     std::string file;
     std::string format; ///< "mz" | "com" | "sys"
 
@@ -70,6 +70,8 @@ struct JsonReport
     CfgGraph cfg{};
     bool cfg_ran = false;
     std::string cfg_dot_path;
+    /// Non-empty: print one error object and nothing else. Exit stays 1.
+    std::string error;
 
     void set_mz(const std::string& path,
                 const MZHeader& h,
@@ -114,6 +116,17 @@ struct JsonReport
 
     void print(std::ostream& os) const
     {
+        if (!error.empty())
+        {
+            os << "{\n";
+            os << std::format("  \"tool\": \"{}\",\n", json_escape(tool));
+            os << std::format("  \"version\": \"{}\",\n", json_escape(version));
+            os << std::format("  \"file\": \"{}\",\n", json_escape(file));
+            os << std::format("  \"format\": \"{}\",\n", json_escape(format));
+            os << std::format("  \"error\": \"{}\"\n", json_escape(error));
+            os << "}\n";
+            return;
+        }
         os << "{\n";
         os << std::format("  \"tool\": \"{}\",\n", json_escape(tool));
         os << std::format("  \"version\": \"{}\",\n", json_escape(version));
@@ -239,13 +252,15 @@ struct JsonReport
         if (!toolchain_ran)
             os << "null";
         else if (!toolchain.detected)
-            os << std::format("{{\"detected\": false, \"confidence\": {:.3f}}}",
-                              toolchain.confidence);
+            os << std::format(
+                "{{\"detected\": false, \"confidence\": {:.3f}, \"packer\": \"{}\"}}",
+                toolchain.confidence, json_escape(toolchain.packer));
         else
         {
             os << "{\n";
             os << "    \"detected\": true,\n";
             os << std::format("    \"confidence\": {:.3f},\n", toolchain.confidence);
+            os << std::format("    \"packer\": \"{}\",\n", json_escape(toolchain.packer));
             os << std::format("    \"assembler\": \"{}\",\n",
                               json_escape(toolchain.assembler));
             os << std::format("    \"assembler_version\": \"{}\",\n",
@@ -306,7 +321,7 @@ struct JsonReport
             os << std::format("    \"image_file_base\": {},\n", cfg.image_file_base);
             os << std::format("    \"image_size\": {},\n", cfg.image_size);
             os << std::format("    \"blocks\": {},\n", cfg.blocks.size());
-            os << std::format("    \"edges\": {},\n", cfg.n_edges);
+            os << std::format("    \"n_edges\": {},\n", cfg.n_edges);
             os << std::format("    \"back_edges\": {},\n", cfg.n_loops_back);
             os << std::format("    \"int_sites\": {},\n", cfg.n_int_sites);
             os << std::format("    \"string_xrefs\": {},\n", cfg.n_str_xrefs);
@@ -360,10 +375,11 @@ struct JsonReport
             }
             os << "    ],\n";
 
-            // Edges (capped for size)
+            // Edges (capped for size). The count is n_edges, above.
             os << "    \"edges\": [\n";
             size_t ecount = 0;
             const size_t emax = 2000;
+            bool edges_truncated = false;
             bool first_e = true;
             for (const auto& kv : cfg.blocks)
             {
@@ -371,7 +387,10 @@ struct JsonReport
                 for (const CfgEdge& e : b.outs)
                 {
                     if (ecount >= emax)
+                    {
+                        edges_truncated = true;
                         break;
+                    }
                     if (!first_e)
                         os << ",\n";
                     first_e = false;
@@ -382,10 +401,12 @@ struct JsonReport
                         e.has_target ? "true" : "false");
                     ++ecount;
                 }
-                if (ecount >= emax)
+                if (edges_truncated)
                     break;
             }
-            os << "\n    ]\n";
+            os << "\n    ],\n";
+            os << std::format("    \"edges_truncated\": {}\n",
+                              edges_truncated ? "true" : "false");
             os << "  }";
         }
         os << "\n}\n";

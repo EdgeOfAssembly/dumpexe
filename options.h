@@ -112,8 +112,8 @@ struct Options {
     }
 
     // --- Simulation controls ---
-    /// Max instructions to execute (0 = default: 1_000_000, or 64 if --trace
-    /// and no breakpoints for a short startup dump).
+    /// Max instructions to execute. 0 means the parser fills the default:
+    /// 1_000_000 with --bp, 10_000 with --trace, otherwise 64.
     uint64_t maxInsns = 0;
     bool maxInsnsSet = false;
     bool simTrace = false;          ///< --trace: print every executed instruction
@@ -539,8 +539,14 @@ struct Options {
                     return false;
                 }
             } else if (arg.starts_with("--max-insns=")) {
+                const std::string_view num = arg.substr(12);
+                if (num.empty() || num.front() == '-' || num.front() == '+')
+                {
+                    std::cerr << "Error: Invalid --max-insns value\n";
+                    return false;
+                }
                 try {
-                    maxInsns = std::stoull(std::string(arg.substr(12)));
+                    maxInsns = std::stoull(std::string(num));
                     maxInsnsSet = true;
                     simulate = true;
                 } catch (...) {
@@ -632,10 +638,13 @@ static inline void show_usage(const char* progname) {
         "                      LHarc also write <stem>_UNPACKED.EXE (or .COM) and\n"
         "                      <stem>_UNPACKED.asm of the unpacked program.\n"
         "                      DIET and LHarc are structural (Deark identify rules), not\n"
-        "                      the bytes DIET at 0x1C or an LHA sentence\n"
+        "                      the bytes DIET at 0x1C or an LHA sentence. LHarc also needs\n"
+        "                      a header checksum (or a level-2 CRC) in the SFX trailer.\n"
         "  -o, --output PATH   Packed listing file (default: <stem>.asm); use - for stdout only.\n"
-        "                      -o - writes no .asm, no _UNPACKED.EXE, and no _UNPACKED.asm\n"
-        "                      (both listings still go to stdout)\n"
+        "                      -o - writes no .asm, no _UNPACKED.EXE, and no _UNPACKED.asm.\n"
+        "                      A named -o file is not also printed on stdout.\n"
+        "                      --json keeps JSON on stdout and still writes a named -o file.\n"
+        "                      --json -o - does not claim a UASM listing was written.\n"
         "  --no-asm-file       Do not write .asm file (listing still on stdout unless --json)\n"
         "  --no-repack         Do not write <stem>.repack.exe after TP/JWASM export (default: on)\n"
         "  --repack-output=P   Override repack EXE path (implies repack on)\n"
@@ -669,21 +678,29 @@ static inline void show_usage(const char* progname) {
         "                      no address column and no hex-byte column. -d/-a with a file keeps\n"
         "                      the address listing on stdout. -o PATH names the UASM file. -o -\n"
         "                      is UASM on stdout only and no file, including with -d or -a.\n"
-        "                      MZ and COM only. Skips auto-repack (no\n"
+        "                      Does not write _UNPACKED.EXE or _UNPACKED.asm unless -d or -a\n"
+        "                      is also set. MZ and COM only. Skips auto-repack (no\n"
         "                      REPACK-V1). Images longer than 65536 bytes are split into\n"
         "                      segments of at most 65536 bytes with no padding.\n"
+        "                      uasm -mz writes the load-image payload only, not the MZ header.\n"
+        "                      A same-segment far call is followed when its segment is the\n"
+        "                      file CS (the MZ header), including when --base is not 0.\n"
+        "                      An entry past the 64 KiB window is not labeled inside sN.\n"
         "  --json              Machine-readable JSON report on stdout (default: off).\n"
         "                      Does not unpack\n"
         "  --cfg-dot=FILE      Write Graphviz DOT of CFG to FILE (default: off)\n"
         "  -n, --no-int-annotations  Suppress INT annotation comments in disassembly\n"
         "  --simulate          In-memory DOS sandbox. Guest data files start empty.\n"
         "                      Guest I/O does not open host files. A write to handle 1\n"
-        "                      or 2 (stdout/stderr) returns CF=1 and AX=6\n"
+        "                      or 2 (stdout/stderr) returns CF=1 and AX=6.\n"
+        "                      At most 64 guest files. Truncate releases capacity, so\n"
+        "                      recreate does not keep the old allocation.\n"
         "  --base=XXXX         Set load image segment (hex, default: 1000h)\n"
         "  --psp               Force .COM to be treated as having an embedded PSP\n"
         "  --no-psp            Force .COM to be treated as having no embedded PSP\n\n"
         "Simulation / breakpoints (imply --simulate):\n"
-        "  --max-insns=N       Stop after N instructions (default: 64, or 1e6 with --bp)\n"
+        "  --max-insns=N       Stop after N instructions (default: 64;\n"
+        "                      10000 with --trace; 1e6 with --bp). A leading minus is an error.\n"
         "  --loop-limit=N      Tight jmp/jcc: take short back-edge at most N times,\n"
         "                      then fall through (default: 10000; 0=off; 1≈once)\n"
         "  --loop-span=XX      Max IP distance for a 'tight' loop (hex, default 100h)\n"
@@ -701,7 +718,7 @@ static inline void show_usage(const char* progname) {
         "Supported file formats (detected from file content):\n"
         "  MZ EXE   — first two bytes are 'MZ' (0x5A4D); pure DOS image\n"
         "  NE EXE   — MZ stub with e_lfanew → 'NE' (Windows 3.x / Win16)\n"
-        "  .SYS     — first four bytes are FFFFFFFFh (DOS device driver)\n"
+        "  .SYS     — DOS device driver (last-in-chain FFFFFFFFh, or a chained header)\n"
         "  .COM     — all other files (fallback); PSP presence auto-detected\n\n"
         "Examples:\n"
         "  {} --simulate --bp=int:21,ah=0F --dump=ds:0:25 game.EXE\n"

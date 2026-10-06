@@ -1228,7 +1228,10 @@ static inline bool listing_uasm_stand_behind(const CfgInsn& in,
  * @param n_procs      Set to the procedure-label count.
  * @param n_insns      Set to how many instructions were stood behind.
  * @param external     Optional symbol map (same names as the human listing).
- * @return UASM source. The last line is `end <entry label>`.
+ * @param entry_in_window False when the MZ entry is past the 64 KiB window.
+ * @return UASM source. The last line is `end <entry label>` for COM and a
+ *         one-segment image whose entry is inside the window. A multi-segment
+ *         image, or an entry past the window, ends with a bare `end`.
  */
 static inline std::string listing_emit_uasm(const CfgGraph& g,
                                             const std::vector<uint8_t>& image,
@@ -1240,7 +1243,8 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
                                             bool uasm_com_psp,
                                             size_t& n_procs,
                                             size_t& n_insns,
-                                            const SymbolMap* external)
+                                            const SymbolMap* external,
+                                            bool entry_in_window = true)
 {
     std::map<uint16_t, std::string> sym;
     std::set<uint16_t> proc_starts;
@@ -1264,28 +1268,9 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
         }
     }
 
+    // CPU level comes only from instructions this emitter prints. Data that
+    // Capstone decoded is not a .386/.286/.186 directive.
     int cpu = 0;
-    for (const auto& kv : at)
-    {
-        const CfgInsn& in = kv.second;
-        if (static_cast<size_t>(in.ip) + in.size > image.size())
-        {
-            continue;
-        }
-        bool match = true;
-        for (uint8_t k = 0; k < in.size; ++k)
-        {
-            if (image[static_cast<size_t>(in.ip) + k] != in.bytes[k])
-            {
-                match = false;
-                break;
-            }
-        }
-        if (match)
-        {
-            cpu = std::max(cpu, listing_uasm_cpu_level(in));
-        }
-    }
 
     const std::string entry_name =
         sym.count(entry_ip) ? sym[entry_ip] : listing_symbol_name(entry_ip);
@@ -1317,7 +1302,7 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
         {
             labs.push_back(sym[ip]);
         }
-        else if (proc_starts.count(ip) || ip == entry_ip)
+        else if (proc_starts.count(ip) || (entry_in_window && ip == entry_ip))
         {
             labs.push_back(listing_symbol_name(ip));
         }
@@ -1369,6 +1354,7 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
         {
             return 0;
         }
+        cpu = std::max(cpu, listing_uasm_cpu_level(in));
         text_out = rops.empty() ? mlow : (mlow + " " + rops);
         return in.size;
     };
@@ -1508,7 +1494,9 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
     // uasm -bin accepts "end func_XXXX" only when that label is in UASM's
     // first segment. .model tiny + .code is that case. .model small opens
     // its own segment before s0, so "end func_XXXX" is error A2203. A bare
-    // "end" is valid for both -bin and -mz. The entry label stays in sN.
+    // "end" is valid for both -bin and -mz. When the entry is inside the
+    // decoded image, its label stays in sN. An entry past 64 KiB is not
+    // labeled func_FFFF.
     const bool use_segments = multi && !uasm_com;
 
     std::ostringstream out;
@@ -1520,6 +1508,10 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
     }
     out << "; dumpexe UASM export\n";
     out << std::format("; source: {}\n", source_name);
+    if (!entry_in_window)
+    {
+        out << "; entry is past the 64 KiB decode window\n";
+    }
     out << std::format(".model {}\n", model);
     if (cpu != 0)
     {
@@ -1659,7 +1651,7 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
         }
     }
 
-    if (use_segments)
+    if (use_segments || !entry_in_window)
     {
         out << "end\n";
     }
@@ -1683,6 +1675,7 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
                                     size_t image_len,
                                     uint16_t entry_ip,
                                     uint16_t cs_seg,
+                                    uint16_t file_cs,
                                     const Options& opts,
                                     const std::string& source_name,
                                     std::string& out_text,
@@ -1693,7 +1686,8 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
                                     const TurboPascalReport* tp = nullptr,
                                     bool uasm_com = false,
                                     bool uasm_com_psp = false,
-                                    std::string* human_stdout = nullptr)
+                                    std::string* human_stdout = nullptr,
+                                    bool entry_in_window = true)
 {
     out_text.clear();
     n_procs = 0;
@@ -1709,8 +1703,13 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
 
     Options cfg_opts = opts;
     cfg_opts.showCfg = false;
-    CfgGraph g = cfg_build_annotated(fileData, image_file_off, len, entry_ip, cs_seg,
-                                     cfg_opts);
+    CfgGraph g{};
+    // An entry past 64 KiB is not seeded at FFFF. The window stays 64 KiB.
+    if (entry_in_window)
+    {
+        g = cfg_build_annotated(fileData, image_file_off, len, entry_ip, cs_seg,
+                                file_cs, cfg_opts);
+    }
     if (g.blocks.empty() && !opts.uasm)
     {
         out_text = "; dumpexe listing: no basic blocks recovered\n";
@@ -1730,7 +1729,8 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
     {
         kind_out = ListingExportKind::Uasm;
         out_text = listing_emit_uasm(g, image, entry_ip, opts, source_name, tc,
-                                     uasm_com, uasm_com_psp, n_procs, n_insns, ext);
+                                     uasm_com, uasm_com_psp, n_procs, n_insns, ext,
+                                     entry_in_window);
         if (human_stdout && opts.showDisasm && !opts.jsonOut)
         {
             if (g.blocks.empty())
@@ -1785,21 +1785,49 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
     return true;
 }
 
+/**
+ * @brief True when @p a and @p b name the same path.
+ *
+ * Compares lexical forms and, when both exist, `equivalent`. `-` is never
+ * the same as a file.
+ */
+static inline bool listing_paths_same(const std::string& a, const std::string& b)
+{
+    if (a.empty() || b.empty() || a == "-" || b == "-")
+    {
+        return false;
+    }
+    const std::filesystem::path left = std::filesystem::path(a).lexically_normal();
+    const std::filesystem::path right = std::filesystem::path(b).lexically_normal();
+    if (left == right)
+    {
+        return true;
+    }
+    std::error_code ec;
+    return std::filesystem::equivalent(a, b, ec);
+}
+
 /// Write listing to stdout and/or default/override .asm file.
 /// @param human_stdout Address listing for -d/--uasm. Empty when --uasm is off
 ///        or -d was not requested. Ignored unless @p kind is Uasm.
-static inline void listing_deliver(const Options& opts,
-                                   const std::string& input_path,
-                                   const std::string& text,
-                                   size_t n_procs,
-                                   size_t n_insns,
-                                   ListingExportKind kind,
-                                   const std::string& human_stdout = {})
+/// @return 0 when the listing was delivered, there was nothing to write, or the
+///         default `<stem>.asm` could not be created (the error is on stderr;
+///         stdout already has the listing). 1 when a path was refused or a
+///         named `-o` write failed.
+static inline int listing_deliver(const Options& opts,
+                                  const std::string& input_path,
+                                  const std::string& text,
+                                  size_t n_procs,
+                                  size_t n_insns,
+                                  ListingExportKind kind,
+                                  const std::string& human_stdout = {})
 {
     if (text.empty())
-        return;
+        return 0;
 
-    if (!opts.jsonOut)
+    // -o FILE owns the listing. Do not also print it. -o - stays on stdout.
+    const bool named_file = !opts.outputPath.empty() && opts.outputPath != "-";
+    if (!opts.jsonOut && !named_file)
     {
         const bool uasm_file = opts.uasm && kind == ListingExportKind::Uasm;
         if (uasm_file && opts.outputPath == "-")
@@ -1842,43 +1870,60 @@ static inline void listing_deliver(const Options& opts,
                                : opts.outputPath;
         if (path == "-")
         {
-            std::cerr << std::format(
-                "listing: {} procs, {} insns (stdout only, -o -)\n", n_procs,
-                n_insns);
-            return;
+            // --json owns stdout. Do not claim a UASM listing was written there.
+            if (!opts.jsonOut)
+            {
+                std::cerr << std::format(
+                    "listing: {} procs, {} insns (stdout only, -o -)\n", n_procs,
+                    n_insns);
+            }
+            return 0;
         }
         if (opts.outputPath.empty() && !opts.writeAsmFile)
-            return;
-        // Default <stem>.asm is kept. A path the user named with -o may replace.
+            return 0;
+        // Default <stem>.asm is kept. A path the user named with -o may replace
+        // a regular file, but not the input and not a symlink.
         if (opts.outputPath.empty() && output_file_exists(path))
         {
             std::cerr << "listing: refuse to overwrite '" << path << "'\n";
-            return;
+            return 1;
+        }
+        if (!opts.outputPath.empty() && listing_paths_same(path, input_path))
+        {
+            std::cerr << "listing: refuse to overwrite input '" << path << "'\n";
+            return 1;
+        }
+        if (!opts.outputPath.empty())
+        {
+            std::error_code ec;
+            const std::filesystem::file_status st =
+                std::filesystem::symlink_status(path, ec);
+            if (!ec && std::filesystem::is_symlink(st))
+            {
+                std::cerr << "listing: refuse to follow symlink '" << path << "'\n";
+                return 1;
+            }
         }
         if (opts.outputPath.empty())
         {
-            // Default <stem>.asm: do not follow a dangling symlink.
+            // Default <stem>.asm: do not follow a dangling symlink. A create
+            // error is reported and is not a hard failure: -d already printed
+            // the listing, and a later unpack must still run (a read-only
+            // directory is not "unpack failed").
             std::string werr;
             if (!output_create_nofollow(path, text.data(), text.size(), werr))
             {
                 std::cerr << "Error: cannot write listing to '" << path << "'\n";
-                return;
+                return 0;
             }
         }
         else
         {
-            std::ofstream f(path);
-            if (!f)
+            std::string werr;
+            if (!output_write_nofollow(path, text.data(), text.size(), werr))
             {
                 std::cerr << "Error: cannot write listing to '" << path << "'\n";
-                return;
-            }
-            f << text;
-            f.flush();
-            if (!f)
-            {
-                std::cerr << "Error: cannot write listing to '" << path << "'\n";
-                return;
+                return 1;
             }
         }
         if (kind == ListingExportKind::Jwasm)
@@ -1900,6 +1945,7 @@ static inline void listing_deliver(const Options& opts,
             std::cerr << std::format("listing: wrote {} ({} procs, {} insns)\n", path,
                                      n_procs, n_insns);
     }
+    return 0;
 }
 
 /**
@@ -1910,17 +1956,19 @@ static inline void listing_deliver(const Options& opts,
  *
  * --uasm skips auto-repack. The .asm file is UASM source, not a REPACK-V1 listing.
  */
-static inline void listing_run(const std::vector<uint8_t>& fileData,
-                               size_t image_file_off,
-                               size_t image_len,
-                               uint16_t entry_ip,
-                               uint16_t cs_seg,
-                               const Options& opts,
+static inline int listing_run(const std::vector<uint8_t>& fileData,
+                              size_t image_file_off,
+                              size_t image_len,
+                              uint16_t entry_ip,
+                              uint16_t cs_seg,
+                              uint16_t file_cs,
+                              const Options& opts,
                                const std::string& input_path,
                                const ToolchainReport* tc = nullptr,
                                const TurboPascalReport* tp = nullptr,
                                bool uasm_com = false,
-                               bool uasm_com_psp = false)
+                               bool uasm_com_psp = false,
+                               bool entry_in_window = true)
 {
     std::string text;
     std::string human;
@@ -1928,18 +1976,18 @@ static inline void listing_run(const std::vector<uint8_t>& fileData,
     ListingExportKind kind = ListingExportKind::Human;
     std::string* human_ptr =
         (opts.uasm && opts.showDisasm && !opts.jsonOut) ? &human : nullptr;
-    if (!listing_generate(fileData, image_file_off, image_len, entry_ip, cs_seg, opts,
-                          input_path, text, n_procs, n_insns, kind, tc, tp, uasm_com,
-                          uasm_com_psp, human_ptr))
+    if (!listing_generate(fileData, image_file_off, image_len, entry_ip, cs_seg, file_cs,
+                          opts, input_path, text, n_procs, n_insns, kind, tc, tp, uasm_com,
+                          uasm_com_psp, human_ptr, entry_in_window))
     {
         if (!opts.jsonOut && !opts.uasm_stdout_only())
             std::cout << "\nListing: image offset outside file or empty.\n";
-        return;
+        return 0;
     }
-    listing_deliver(opts, input_path, text, n_procs, n_insns, kind, human);
+    const int delivered = listing_deliver(opts, input_path, text, n_procs, n_insns, kind, human);
 
     // Default ON: after TP/JWASM export, write runnable <stem>.repack.exe.
-    // --uasm is a round-trip assembly, not a repack carrier.
+    // A refused <stem>.asm must not skip this. --uasm is not a repack carrier.
     if (!opts.uasm &&
         (kind == ListingExportKind::TurboPascal || kind == ListingExportKind::Jwasm))
     {
@@ -1951,6 +1999,7 @@ static inline void listing_run(const std::vector<uint8_t>& fileData,
             std::cerr << "repack: failed\n";
         }
     }
+    return delivered;
 }
 
 /**
@@ -2004,7 +2053,11 @@ static inline void disassemble(const std::vector<uint8_t>& data, size_t offset,
     }
     const size_t img_len = data.size() - img_off;
     const std::string path = input_path.empty() ? std::string("binary") : input_path;
-    listing_run(data, img_off, img_len, static_cast<uint16_t>(entry), cs, opts, path);
+    if (listing_run(data, img_off, img_len, static_cast<uint16_t>(entry), cs, cs, opts,
+                    path) != 0)
+    {
+        return;
+    }
 }
 
 #endif // LISTING_H

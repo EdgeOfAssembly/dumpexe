@@ -387,7 +387,10 @@ PY
 mkdir -p "$TD/sy"
 printf '\xc3' > "$TD/sy/t.com"
 ln -s "$TD/sy/missing-asm" "$TD/sy/t.asm"
+set +e
 "$BIN" -d --no-repack "$TD/sy/t.com" >"$TD/sy/out.txt" 2>"$TD/sy/err.txt"
+echo $? >"$TD/sy/rc.txt"
+set -e
 check dangling_asm_symlink python3 - "$TD/sy" << 'PY'
 import os, sys
 from pathlib import Path
@@ -399,6 +402,10 @@ if missing.exists():
     sys.exit(1)
 if not link.is_symlink():
     print("t.asm is no longer a symlink")
+    sys.exit(1)
+rc = int((sy / "rc.txt").read_text().strip())
+if rc == 0:
+    print("refusing an existing asm symlink exited 0")
     sys.exit(1)
 err = (sy / "err.txt").read_text(encoding="utf-8", errors="replace")
 if "refuse to overwrite" not in err or "t.asm" not in err:
@@ -412,13 +419,20 @@ PY
 mkdir -p "$TD/ow"
 printf 'KEEP\n' > "$TD/ow/t.asm"
 printf '\xc3' > "$TD/ow/t.com"
+set +e
 "$BIN" -d "$TD/ow/t.com" >"$TD/ow/stdout.txt" 2>"$TD/ow/err.txt"
-check asm_refuse_default python3 - "$TD/ow/t.asm" "$TD/ow/err.txt" "$TD/ow/stdout.txt" << 'PY'
+echo $? >"$TD/ow/rc.txt"
+set -e
+check asm_refuse_default python3 - "$TD/ow/t.asm" "$TD/ow/err.txt" "$TD/ow/stdout.txt" "$TD/ow/rc.txt" << 'PY'
 import sys
-asm, err_p, out_p = sys.argv[1:]
+asm, err_p, out_p, rc_p = sys.argv[1:]
 body = open(asm, encoding="utf-8").read()
 if body != "KEEP\n":
     print("default asm was overwritten:", repr(body[:80]))
+    sys.exit(1)
+rc = int(open(rc_p, encoding="utf-8").read().strip())
+if rc == 0:
+    print("refusing an existing default asm exited 0")
     sys.exit(1)
 err = open(err_p, encoding="utf-8", errors="replace").read()
 want = f"listing: refuse to overwrite '{asm}'"
@@ -464,7 +478,10 @@ else
   cp -f "$CAT" "$TD/re/CATACOMB.EXE"
   "$BIN" -d "$TD/re/CATACOMB.EXE" >/dev/null 2>"$TD/re/err1.txt"
   cp -f "$TD/re/CATACOMB.repack.exe" "$TD/re/first.repack.exe"
+  set +e
   "$BIN" -d "$TD/re/CATACOMB.EXE" >/dev/null 2>"$TD/re/err2.txt"
+  echo $? >"$TD/re/rc2.txt"
+  set -e
   check repack_refuse_default python3 - "$TD/re" << 'PY'
 import pathlib, sys
 re = pathlib.Path(sys.argv[1])
@@ -475,6 +492,10 @@ if first != second:
     sys.exit(1)
 if len(first) < 64:
     print("repack output too small")
+    sys.exit(1)
+rc = int((re / "rc2.txt").read_text(encoding="utf-8").strip())
+if rc == 0:
+    print("second -d should exit non-zero: default asm already exists")
     sys.exit(1)
 err = (re / "err2.txt").read_text(encoding="utf-8", errors="replace")
 want = "repack: refuse to overwrite '" + str(re / "CATACOMB.repack.exe") + "'"
@@ -489,7 +510,10 @@ if "repack: failed" in err:
 print("repack refuse ok", len(first))
 PY
   printf 'KEEP' > "$TD/re/named.exe"
+  set +e
   "$BIN" -d --repack-output="$TD/re/named.exe" "$TD/re/CATACOMB.EXE" >/dev/null 2>"$TD/re/err3.txt"
+  echo $? >"$TD/re/rc3.txt"
+  set -e
   check repack_named_overwrite python3 - "$TD/re" << 'PY'
 import pathlib, sys
 re = pathlib.Path(sys.argv[1])
@@ -504,6 +528,10 @@ kept = (re / "CATACOMB.repack.exe").read_bytes()
 first = (re / "first.repack.exe").read_bytes()
 if kept != first:
     print("named repack rewrote the default file")
+    sys.exit(1)
+rc = int((re / "rc3.txt").read_text(encoding="utf-8").strip())
+if rc == 0:
+    print("named repack should still exit non-zero: default asm already exists")
     sys.exit(1)
 err = (re / "err3.txt").read_text(encoding="utf-8", errors="replace")
 if "repack: failed" in err:

@@ -11,7 +11,9 @@
  * EXEPACK are structural MZ matches (signed CS, entry in-file), not a
  * whole-file scan for "PKLITE", "RB", or "Packed file is corrupt".
  * DIET follows Deark identify_diet_fmt (EXE stub offsets plus the COM and
- * data patterns). LHarc follows de_identify_lha on an embedded header.
+ * data patterns). LHarc follows de_identify_lha on an embedded header,
+ * then a level-0/1 checksum or a level-2 header CRC, a packed size that
+ * fits the file, and an SFX trailer (at or after the MZ image).
  * "DIET" at 0x1C and an "LHA " sentence are not enough. Turbo C,
  * Turbo C++, Borland C++, Microsoft C, QuickBASIC, Clipper, TopSpeed, and
  * Watcom are literal banners. BRUN alone is not QuickBASIC. The same scan
@@ -598,13 +600,260 @@ static inline bool toolchain_lha_window(const uint8_t win[22])
 }
 
 /**
- * @brief Find an embedded header that would pass @c de_identify_lha.
+ * @brief CRC-16/ARC (reflected poly 0xA001, init 0), one more byte.
  *
- * Slides a 22-byte window across @p data. The first hit wins.
+ * Same algorithm Deark uses for an LHA header CRC (@c DE_CRCOBJ_CRC16_ARC).
+ *
+ * @param crc Running value.
+ * @param byte Next header byte.
+ * @return Updated CRC.
+ */
+static inline uint16_t toolchain_crc16_arc_byte(uint16_t crc, uint8_t byte)
+{
+    crc = static_cast<uint16_t>(crc ^ byte);
+    for (int bit = 0; bit < 8; ++bit)
+    {
+        if ((crc & 1u) != 0)
+        {
+            crc = static_cast<uint16_t>((crc >> 1) ^ 0xA001u);
+        }
+        else
+        {
+            crc = static_cast<uint16_t>(crc >> 1);
+        }
+    }
+    return crc;
+}
+
+/**
+ * @brief Sum of the level-0/1 header bytes after the checksum byte.
+ *
+ * @param hdr Header start. Caller has checked the length.
+ * @param hsize Byte 0. The sum covers the next @p hsize bytes.
+ * @return True when byte 1 equals that sum modulo 256.
+ */
+static inline bool toolchain_lha_checksum_ok(const uint8_t* hdr, int hsize)
+{
+    unsigned sum = 0;
+    for (int i = 0; i < hsize; ++i)
+    {
+        sum = (sum + hdr[2 + i]) & 0xFFu;
+    }
+    return sum == hdr[1];
+}
+
+/**
+ * @brief Level-2 header CRC, with the stored CRC bytes treated as zero.
+ *
+ * Walks extended headers from offset 24. The common header (id 0) holds
+ * the CRC. The covered range is the header size at bytes 0..1.
+ *
+ * @param hdr Header start.
+ * @param avail Bytes available from @p hdr.
+ * @param header_len Value of the uint16 at offset 0. Must fit in @p avail.
+ * @return True when a common-header CRC matches.
+ */
+static inline bool toolchain_lha_level2_crc_ok(const uint8_t* hdr,
+                                              size_t avail,
+                                              size_t header_len)
+{
+    if (header_len < 31 || header_len > avail || header_len > 4096)
+    {
+        return false;
+    }
+    size_t crc_off = 0;
+    bool found = false;
+    size_t pos = 24;
+    while (pos + 2 <= header_len)
+    {
+        const uint16_t esize = static_cast<uint16_t>(hdr[pos]) |
+                               static_cast<uint16_t>(static_cast<uint16_t>(hdr[pos + 1]) << 8);
+        if (esize == 0)
+        {
+            break;
+        }
+        if (esize < 3 || pos + esize > header_len)
+        {
+            return false;
+        }
+        if (hdr[pos + 2] == 0 && esize >= 5)
+        {
+            crc_off = pos + 3;
+            found = true;
+            break;
+        }
+        pos += esize;
+    }
+    if (!found || crc_off + 2 > header_len)
+    {
+        return false;
+    }
+    const uint16_t reported = static_cast<uint16_t>(hdr[crc_off]) |
+                              static_cast<uint16_t>(static_cast<uint16_t>(hdr[crc_off + 1]) << 8);
+    uint16_t crc = 0;
+    for (size_t i = 0; i < header_len; ++i)
+    {
+        const uint8_t byte = (i == crc_off || i == crc_off + 1) ? uint8_t{0} : hdr[i];
+        crc = toolchain_crc16_arc_byte(crc, byte);
+    }
+    return crc == reported;
+}
+
+/**
+ * @brief Packed size fits in the bytes after this header.
+ *
+ * A zero size is accepted only for the directory method @c -lhd-.
+ * Anything above 16 MiB is refused (the unpack image cap).
+ *
+ * @param hdr Header start.
+ * @param avail Bytes available from @p hdr.
+ * @param header_len Header length, already checked against @p avail.
+ * @return True when the compressed-size field is sane.
+ */
+static inline bool toolchain_lha_size_ok(const uint8_t* hdr,
+                                        size_t avail,
+                                        size_t header_len)
+{
+    if (header_len < 11 || header_len > avail)
+    {
+        return false;
+    }
+    const uint32_t comp = static_cast<uint32_t>(hdr[7]) |
+                          (static_cast<uint32_t>(hdr[8]) << 8) |
+                          (static_cast<uint32_t>(hdr[9]) << 16) |
+                          (static_cast<uint32_t>(hdr[10]) << 24);
+    const size_t remain = avail - header_len;
+    if (comp > remain || comp > 16u * 1024u * 1024u)
+    {
+        return false;
+    }
+    if (comp == 0)
+    {
+        return std::memcmp(hdr + 2, "-lhd-", 5) == 0;
+    }
+    return true;
+}
+
+/**
+ * @brief Header sits in an SFX trailer, not in the middle of the image.
+ *
+ * For MZ, the window must begin in the last 32 bytes of the declared
+ * EXE or after it. A non-MZ file rejects a header whose previous eight
+ * bytes are all printable (an LHA sentence).
+ *
+ * @param data File bytes.
+ * @param hit  Window start.
+ * @return True when the position is an SFX trailer.
+ */
+static inline bool toolchain_lha_in_sfx_trailer(const std::vector<uint8_t>& data,
+                                               size_t hit)
+{
+    const ToolchainMzLoc mz = toolchain_mz_loc(data);
+    if (!mz.valid)
+    {
+        if (hit >= 8)
+        {
+            bool sentence = true;
+            for (size_t i = hit - 8; i < hit; ++i)
+            {
+                const uint8_t c = data[i];
+                if (c < 32 || c > 126)
+                {
+                    sentence = false;
+                    break;
+                }
+            }
+            if (sentence)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+    uint16_t final_len = 0;
+    uint16_t num_blocks = 0;
+    if (!toolchain_read_u16(data, 2, final_len) ||
+        !toolchain_read_u16(data, 4, num_blocks) ||
+        num_blocks == 0)
+    {
+        return false;
+    }
+    int64_t declared = (final_len == 0)
+                           ? static_cast<int64_t>(num_blocks) * 512
+                           : (static_cast<int64_t>(num_blocks) - 1) * 512 +
+                                 static_cast<int64_t>(final_len);
+    if (declared < mz.start)
+    {
+        declared = mz.start;
+    }
+    if (declared > static_cast<int64_t>(data.size()))
+    {
+        declared = static_cast<int64_t>(data.size());
+    }
+    const int64_t earliest = declared > 32 ? declared - 32 : 0;
+    return static_cast<int64_t>(hit) >= earliest;
+}
+
+/**
+ * @brief Checksum or level-2 CRC, plus a packed size that fits.
+ *
+ * @param data File bytes.
+ * @param hit  Start of a window that already passed @c toolchain_lha_window.
+ * @return True when the header is authenticated and sized.
+ */
+static inline bool toolchain_lha_authenticated(const std::vector<uint8_t>& data,
+                                              size_t hit)
+{
+    if (hit >= data.size())
+    {
+        return false;
+    }
+    const uint8_t* hdr = data.data() + hit;
+    const size_t avail = data.size() - hit;
+    const uint8_t level = hdr[20];
+    size_t header_len = 0;
+    if (level == 0 || level == 1)
+    {
+        const int hsize = static_cast<int>(hdr[0]);
+        if (hsize < 22 || static_cast<size_t>(hsize) + 2 > avail)
+        {
+            return false;
+        }
+        if (!toolchain_lha_checksum_ok(hdr, hsize))
+        {
+            return false;
+        }
+        header_len = static_cast<size_t>(2 + hsize);
+    }
+    else if (level == 2)
+    {
+        if (avail < 26)
+        {
+            return false;
+        }
+        header_len = static_cast<size_t>(hdr[0]) |
+                     (static_cast<size_t>(hdr[1]) << 8);
+        if (!toolchain_lha_level2_crc_ok(hdr, avail, header_len))
+        {
+            return false;
+        }
+    }
+    else
+    {
+        return false;
+    }
+    return toolchain_lha_size_ok(hdr, avail, header_len);
+}
+
+/**
+ * @brief Find an authenticated LHA header in the SFX trailer.
+ *
+ * Slides a 22-byte window. The first window with a real checksum or
+ * level-2 CRC, a sane packed size, and a trailer position wins.
  *
  * @param data File bytes.
  * @param hit_off Window start when this returns true.
- * @return true when some window is a recognized LHA header.
+ * @return true when some window is an LHA header.
  */
 static inline bool toolchain_lha_match(const std::vector<uint8_t>& data,
                                        size_t& hit_off)
@@ -616,6 +865,14 @@ static inline bool toolchain_lha_match(const std::vector<uint8_t>& data,
     for (size_t i = 0; i + 22 <= data.size(); ++i)
     {
         if (!toolchain_lha_window(data.data() + i))
+        {
+            continue;
+        }
+        if (!toolchain_lha_authenticated(data, i))
+        {
+            continue;
+        }
+        if (!toolchain_lha_in_sfx_trailer(data, i))
         {
             continue;
         }
@@ -643,8 +900,10 @@ static inline bool toolchain_lha_match(const std::vector<uint8_t>& data,
  * in [entry+200, entry+300). The English sentence "Packed file is corrupt"
  * is neither required nor sufficient. No stub CRC bypass.
  *
- * DIET is @c toolchain_diet_match. LHarc is @c toolchain_lha_match, and it
- * is not set when LZEXE already matched. Compiler banners stay literal
+ * DIET is @c toolchain_diet_match. LHarc is @c toolchain_lha_match: a
+ * Deark-shaped header, a level-0/1 checksum or a level-2 CRC, a packed
+ * size that fits, and a position in the SFX trailer. It is not set when
+ * LZEXE already matched. Compiler banners stay literal
  * strings. The first packer name wins (PKLITE, LZEXE, DIET, EXEPACK, LHarc);
  * later hits stay in the evidence list.
  *
