@@ -32,7 +32,7 @@
 struct JsonReport
 {
     std::string tool = "dumpexe";
-    std::string version = "2.11";
+    std::string version = "2.12";
     std::string file;
     std::string format; ///< "mz" | "com" | "sys"
 

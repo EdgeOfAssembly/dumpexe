@@ -260,15 +260,18 @@ An image longer than 65536 bytes is split into byte-aligned
 chunks of at most 65536 bytes with no padding and no
 .BR .stack .
 .PP
-.BR bin2exe (1),
-built with dumpexe, turns the flat image back into an EXE.
+A multi-segment listing ends with a bare
+.B end
+so
 .B uasm \-bin
-rejects
-.B end
-followed by a label that is not in the first segment.
-Assemble that listing with a bare
-.B end
-and copy the original header:
+accepts it.
+The entry label stays inside its
+.B sN
+segment.
+COM and a one-segment EXE still end with
+.B end func_XXXX .
+.BR bin2exe (1)
+copies the original header, including CS:IP:
 .B bin2exe \-\-header ORIGINAL.EXE IMAGE.bin \-o RESTORED.EXE .
 The default
 .B bin2exe

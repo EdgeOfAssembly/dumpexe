@@ -20,8 +20,8 @@ Living roadmap for the DOS RE toolkit and ICON preservation work.
 - [x] Overlay/map/dat tags (`icon0.ovl`, `l?.map`, …)
 - [x] Load/I/O call graph from path+FCB seeds (`cfg_print_load_graph`)
 - [x] MAP/ADV/DAT working notes (`games/icon-quest-for-the-ring/FORMAT-NOTES.md`)
-- [x] UASM-friendly listing export (2.11, `--uasm`). No address column. COM round-trips with `uasm -bin`. EXE load images round-trip with `uasm -mz`, including a segment split past 64KB. `.model` is emitted before `.186` / `.286` / `.386`. 2.11 leaves a signed-byte AX imm16 as db.
-- [x] **bin2exe** 0.1, built and installed with dumpexe (`tools/bin2exe/`). Default COM wrap (`CS=SS=FFF0`, `IP=0100`, `SP=FFFE`). `--header` copies an original MZ header unchanged. `uasm -bin` needs a bare `end` when the start label is not in the first segment. dumpexe does not exec bin2exe.
+- [x] UASM-friendly listing export (2.12, `--uasm`). No address column. COM round-trips with `uasm -bin` and keeps `end func_0100`. A single-segment EXE does too. An image past 64KB is `sN segment` blocks and ends with a bare `end`, so `uasm -bin` accepts it. EXE load images also round-trip with `uasm -mz`. `.model` is emitted before `.186` / `.286` / `.386`. A signed-byte AX imm16 stays db.
+- [x] **bin2exe** 0.1, built and installed with dumpexe (`tools/bin2exe/`). Default COM wrap (`CS=SS=FFF0`, `IP=0100`, `SP=FFFE`). `--header` copies an original MZ header unchanged. dumpexe does not exec bin2exe.
 - [ ] Validate MAP 64×H decode vs DOSBox screenshot
 - [ ] On FCB AH=27 hit, dump DS:5C name (sim or DOSBox) for real `LA.MAP` strings
 - [ ] Propagate DX/AH through more than fall/call preds (memory stores to FCB@5C)
