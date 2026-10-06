@@ -98,6 +98,9 @@ struct Options {
     /// --uasm: write UASM source (enable-only; no disable switch).
     /// The file has no address column and no hex-byte column. -d stdout is unchanged.
     bool uasm = false;
+    /// --uasm-stats: one stderr coverage line (enable-only). Does not imply
+    /// --uasm. There is no disable twin. Parse fails unless --uasm is also set.
+    bool uasm_stats = false;
 
     /**
      * @brief True when --uasm -o - should be the only stdout.
@@ -388,6 +391,9 @@ struct Options {
             } else if (arg == "--uasm") {
                 // Enable-only. There is no disable twin (cli-design sane defaults).
                 uasm = true;
+            } else if (arg == "--uasm-stats") {
+                // Enable-only. Does not imply --uasm. There is no disable twin.
+                uasm_stats = true;
             } else if (arg == "--no-asm-file") {
                 // Default ON when disassembling: only provide disable switch
                 writeAsmFile = false;
@@ -608,6 +614,12 @@ struct Options {
             return false;
         }
 
+        if (uasm_stats && !uasm)
+        {
+            std::cerr << "Error: --uasm-stats requires --uasm\n";
+            return false;
+        }
+
         // Default instruction budget
         if (!maxInsnsSet) {
             if (!breakpoints.empty())
@@ -686,6 +698,10 @@ static inline void show_usage(const char* progname) {
         "                      A same-segment far call is followed when its segment is the\n"
         "                      file CS (the MZ header), including when --base is not 0.\n"
         "                      An entry past the 64 KiB window is not labeled inside sN.\n"
+        "  --uasm-stats        With --uasm, print one coverage line on stderr when a\n"
+        "                      UASM listing is emitted (image, decoded, text, db,\n"
+        "                      labels). Enable-only. Does not imply --uasm. Requires\n"
+        "                      --uasm. Not a JSON field.\n"
         "  --json              Machine-readable JSON report on stdout (default: off).\n"
         "                      Does not unpack\n"
         "  --cfg-dot=FILE      Write Graphviz DOT of CFG to FILE (default: off)\n"

@@ -316,6 +316,23 @@ mode, with no
 wraps a COM-sized image so DOS enters it at PSP:0100.
 dumpexe does not run bin2exe.
 .PP
+.B \-\-uasm-stats
+is enable-only.
+It does not turn
+.B \-\-uasm
+on.
+Without
+.B \-\-uasm
+the program rejects the command.
+When both are set and a UASM listing was emitted, one coverage line is
+written to stderr (walked image bytes, decoded CFG bytes, bytes emitted as
+instructions,
+.B db
+bytes, and label definitions and whole-token references).
+stdout stays the product.
+The line is not a JSON field.
+There is no disable form.
+.PP
 An existing default
 .I <stem>.asm
 or

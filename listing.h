@@ -26,6 +26,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <format>
+#include <functional>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -1926,6 +1927,178 @@ static inline std::string listing_uasm_reloc_mov_text(uint8_t opcode, uint32_t f
 }
 
 /**
+ * @brief True when @p c can appear in a UASM label token.
+ *
+ * @param c Character to test.
+ * @return true for an ASCII letter, digit, or underscore.
+ */
+static inline bool listing_uasm_label_char(char c)
+{
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+           (c >= '0' && c <= '9') || c == '_';
+}
+
+/**
+ * @brief True when @p line is one label definition.
+ *
+ * @param line Listing line without its newline.
+ * @param name Receives the identifier before the colon.
+ * @return true when @p line is exactly `name:`.
+ */
+static inline bool listing_uasm_label_def_line(std::string_view line, std::string& name)
+{
+    if (line.size() < 2 || line.back() != ':')
+    {
+        return false;
+    }
+    const std::string_view body = line.substr(0, line.size() - 1);
+    if (body.empty() || !listing_uasm_label_char(body.front()) ||
+        (body.front() >= '0' && body.front() <= '9'))
+    {
+        return false;
+    }
+    for (const char c : body)
+    {
+        if (!listing_uasm_label_char(c))
+        {
+            return false;
+        }
+    }
+    name.assign(body);
+    return true;
+}
+
+/**
+ * @brief Count `name:` lines and whole-token uses of those names.
+ *
+ * Definition lines are not references. Every other line counts one reference
+ * per identifier token equal to a defined name, including `end func_0100`.
+ *
+ * @param text       Emitted UASM listing.
+ * @param defined    Set to the number of definition lines.
+ * @param referenced Set to the number of whole-token uses on other lines.
+ */
+static inline void listing_uasm_count_labels(std::string_view text,
+                                            size_t& defined,
+                                            size_t& referenced)
+{
+    defined = 0;
+    referenced = 0;
+
+    struct Line
+    {
+        std::string_view text;
+        bool is_def = false;
+    };
+    std::vector<Line> lines;
+    std::set<std::string, std::less<>> names;
+
+    size_t begin = 0;
+    while (begin < text.size())
+    {
+        const size_t nl = text.find('\n', begin);
+        const size_t stop = (nl == std::string_view::npos) ? text.size() : nl;
+        std::string_view line = text.substr(begin, stop - begin);
+        if (!line.empty() && line.back() == '\r')
+        {
+            line.remove_suffix(1);
+        }
+        Line row;
+        row.text = line;
+        std::string name;
+        if (listing_uasm_label_def_line(line, name))
+        {
+            row.is_def = true;
+            ++defined;
+            names.insert(std::move(name));
+        }
+        lines.push_back(row);
+        if (nl == std::string_view::npos)
+        {
+            break;
+        }
+        begin = nl + 1;
+    }
+
+    for (const Line& row : lines)
+    {
+        if (row.is_def)
+        {
+            continue;
+        }
+        const std::string_view line = row.text;
+        size_t i = 0;
+        while (i < line.size())
+        {
+            if (!listing_uasm_label_char(line[i]))
+            {
+                ++i;
+                continue;
+            }
+            const size_t start = i;
+            ++i;
+            while (i < line.size() && listing_uasm_label_char(line[i]))
+            {
+                ++i;
+            }
+            const std::string_view tok = line.substr(start, i - start);
+            if (names.find(tok) != names.end())
+            {
+                ++referenced;
+            }
+        }
+    }
+}
+
+/**
+ * @brief Percent text for one uasm-stats field.
+ *
+ * @param part  Numerator.
+ * @param whole Denominator. Zero yields `0.0` and does not divide.
+ * @return `std::format("{:.1f}", 100.0 * part / whole)`, or `0.0`.
+ */
+static inline std::string listing_uasm_stats_percent(size_t part, size_t whole)
+{
+    if (whole == 0)
+    {
+        return "0.0";
+    }
+    return std::format("{:.1f}", 100.0 * static_cast<double>(part) /
+                                     static_cast<double>(whole));
+}
+
+/**
+ * @brief Print one `uasm-stats:` line to stderr.
+ *
+ * @param listing   Emitted UASM source (label counts come from this text).
+ * @param image     Walked byte count (`emit_lo` through `image.size()`).
+ * @param decoded   Sum of in-window CFG instruction sizes.
+ * @param text_n    Sum of lengths of slices emitted as instructions.
+ */
+static inline void listing_uasm_print_stats(std::string_view listing,
+                                           size_t image,
+                                           size_t decoded,
+                                           size_t text_n)
+{
+    const size_t db = image - text_n;
+    size_t defined = 0;
+    size_t referenced = 0;
+    listing_uasm_count_labels(listing, defined, referenced);
+    std::cerr << std::format(
+        "uasm-stats: image={} decoded={} ({}%) text={} ({}%) db={} ({}%) "
+        "labels_defined={} labels_referenced={}\n",
+        image,
+        decoded,
+        listing_uasm_stats_percent(decoded, image),
+        text_n,
+        listing_uasm_stats_percent(text_n, image),
+        db,
+        listing_uasm_stats_percent(db, image),
+        defined,
+        referenced);
+}
+
+/**
  * @brief Emit UASM source that assembles back to the load image.
  *
  * No address column and no hex-byte column. Real instructions go through
@@ -1974,6 +2147,8 @@ static inline std::string listing_uasm_reloc_mov_text(uint8_t opcode, uint32_t f
  * @return UASM source. The last line is `end <entry label>` for COM and a
  *         one-segment image whose entry is inside the window. A multi-segment
  *         image, or an entry past the window, ends with a bare `end`.
+ * @note When @p opts has both --uasm and --uasm-stats, one `uasm-stats:` line
+ *       is written to stderr. The line is not part of the returned source.
  */
 static inline std::string listing_emit_uasm(const CfgGraph& g,
                                             const std::vector<uint8_t>& image,
@@ -2494,7 +2669,32 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
         }
         out << "end " << entry_name << "\n";
     }
-    return out.str();
+    const std::string listing = out.str();
+    if (opts.uasm && opts.uasm_stats)
+    {
+        const size_t image_n =
+            (emit_lo < image.size()) ? (image.size() - emit_lo) : size_t{0};
+        size_t decoded_n = 0;
+        for (const auto& kv : at)
+        {
+            const size_t ip = kv.first;
+            const size_t sz = kv.second.size;
+            if (ip >= emit_lo && ip + sz <= image.size())
+            {
+                decoded_n += sz;
+            }
+        }
+        size_t text_n = 0;
+        for (const Slice& sl : slices)
+        {
+            if (sl.insn)
+            {
+                text_n += sl.len;
+            }
+        }
+        listing_uasm_print_stats(listing, image_n, decoded_n, text_n);
+    }
+    return listing;
 }
 
 /**

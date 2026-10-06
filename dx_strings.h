@@ -1,5 +1,5 @@
 /**
- * @file strings.h
+ * @file dx_strings.h
  * @brief Standalone string extraction for DOS images (Pascal + ASCIIZ).
  *
  * Pascal MT+ and Turbo Pascal commonly embed:
@@ -8,8 +8,8 @@
  *
  * Also reports C-style ASCIIZ runs for convenience.
  */
-#ifndef STRINGS_H
-#define STRINGS_H
+#ifndef DX_STRINGS_H
+#define DX_STRINGS_H
 
 #include <algorithm>
 #include <cctype>
@@ -259,4 +259,4 @@ static inline void dump_strings(const Options& opts,
     print_strings_report(strs);
 }
 
-#endif // STRINGS_H
+#endif // DX_STRINGS_H
