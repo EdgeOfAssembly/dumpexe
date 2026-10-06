@@ -22,7 +22,7 @@
 //   com_analysis.h — MS-DOS .COM file analysis functions
 //   ne.h           — Windows 3.x NE (New Executable) structures
 //   ne_analysis.h  — NE detect / header / segment / resource / disasm
-//   strings.h      — Pascal length-prefixed / CALL-inline + ASCIIZ (--strings)
+//   dx_strings.h   — Pascal length-prefixed / CALL-inline + ASCIIZ (--strings)
 //   pascal_mt.h    — Pascal MT+86 3.1.1 detect/annotate (default on; --no-pascal-mt)
 //   json_report.h  — Machine-readable --json report
 
@@ -44,7 +44,7 @@
 #include "ne.h"
 #include "ne_analysis.h"
 #include "dos_extender.h"
-#include "strings.h"
+#include "dx_strings.h"
 #include "pascal_mt.h"
 #include "turbo_pascal.h"
 #include "toolchain.h"

@@ -22,7 +22,7 @@
 #include "options.h"
 #include "json_escape.h"
 #include "pascal_mt.h"
-#include "strings.h"
+#include "dx_strings.h"
 #include "toolchain.h"
 
 //=============================================================================
@@ -32,7 +32,7 @@
 struct JsonReport
 {
     std::string tool = "dumpexe";
-    std::string version = "2.16";
+    std::string version = "2.17";
     std::string file;
     std::string format; ///< "mz" | "com" | "sys"
 

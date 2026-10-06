@@ -39,7 +39,7 @@ CAPSTONE_LIBS   := $(shell pkg-config --libs capstone 2>/dev/null)
 
 all: dumpexe bin2exe
 
-HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h listing.h cfg.h analysis.h sim.h sim_path.h sys.h sys_analysis.h com.h com_analysis.h ne.h ne_shift.h ne_analysis.h dos_extender.h strings.h pascal_mt.h turbo_pascal.h toolchain.h symbols.h repack.h json_escape.h json_report.h unpack.h unpack_integrate.h
+HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h listing.h cfg.h analysis.h sim.h sim_path.h sys.h sys_analysis.h com.h com_analysis.h ne.h ne_shift.h ne_analysis.h dos_extender.h dx_strings.h pascal_mt.h turbo_pascal.h toolchain.h symbols.h repack.h json_escape.h json_report.h unpack.h unpack_integrate.h
 
 # Deark modules (MIT, Jason Summers). Host glue is unpack_host.c.
 # -I so <#include <deark-private.h>> in the modules resolves.
@@ -179,6 +179,8 @@ test: dumpexe bin2exe tools/bin2exe/test_header
 	@bash tests/test_p0_uasm.sh
 	@bash tests/test_p0_cfg.sh
 	@bash tests/test_p0_reloc.sh
+	@bash tests/test_p0_stats.sh
+	@bash tests/test_p0_shift.sh
 	@./tools/bin2exe/test_header
 	@bash tools/bin2exe/tests/test_cli.sh
 
