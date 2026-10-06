@@ -2423,7 +2423,29 @@ static inline CfgGraph cfg_build_annotated(const std::vector<uint8_t>& fileData,
     return g;
 }
 
-/// Convenience: build, optional DOT export, optional human print.
+/**
+ * @brief Present an already-built CFG. Does not build another graph.
+ *
+ * Writes DOT when @p opts.cfgDotPath is set. Prints the human dump when
+ * @p opts.showCfg is set and JSON output is off.
+ *
+ * @param g    Annotated control-flow graph.
+ * @param opts Presentation flags (@c cfgDotPath, @c showCfg, @c jsonOut).
+ */
+static inline void cfg_emit_views(const CfgGraph& g, const Options& opts)
+{
+    if (!opts.cfgDotPath.empty())
+    {
+        cfg_write_dot(g, opts.cfgDotPath, opts);
+    }
+    // Human CFG dump when --cfg (or cfg-* that set showCfg), not in pure JSON mode
+    if (opts.showCfg && !opts.jsonOut)
+    {
+        cfg_print(g, opts);
+    }
+}
+
+/// Convenience: build once, then optional DOT export and human print.
 static inline CfgGraph cfg_analyze_image(const std::vector<uint8_t>& fileData,
                                          size_t image_file_off,
                                          size_t image_len,
@@ -2442,14 +2464,7 @@ static inline CfgGraph cfg_analyze_image(const std::vector<uint8_t>& fileData,
 
     CfgGraph g = cfg_build_annotated(fileData, image_file_off, image_len,
                                      entry_ip, cs_seg, file_cs, opts, relocs);
-
-    if (!opts.cfgDotPath.empty())
-        cfg_write_dot(g, opts.cfgDotPath, opts);
-
-    // Human CFG dump when --cfg (or cfg-* that set showCfg), not in pure JSON mode
-    if (opts.showCfg && !opts.jsonOut)
-        cfg_print(g, opts);
-
+    cfg_emit_views(g, opts);
     return g;
 }
 

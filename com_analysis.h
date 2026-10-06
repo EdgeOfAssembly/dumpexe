@@ -241,21 +241,57 @@ static inline int analyze_com(const Options& opts,
 
     // Disassembly from entry point. No-PSP images are org 0100h (see
     // com_listing_image); the filename is the listing "; source:" line.
+    // The listing image is the CFG image. Reuse it when --cfg will print.
+    CfgGraph com_cfg{};
+    bool com_cfg_shared = false;
     if (opts.showDisasm || opts.showAll || opts.uasm) {
         std::vector<uint8_t> image;
         com_listing_image(data, has_psp, image);
+        const bool want_cfg = opts.showCfg && !uasm_quiet;
+        CfgGraph* cfg_slot = want_cfg ? &com_cfg : nullptr;
         if (listing_run(image, 0, image.size(), COM_ENTRY_IP, opts.loadBase,
                         opts.loadBase, opts, opts.filename, nullptr, nullptr, true,
-                        has_psp) != 0)
+                        has_psp, true, {}, cfg_slot) != 0)
         {
             return 1;
         }
+        // A failed generate does not write *cfg_slot (image_size stays 0).
+        com_cfg_shared = cfg_slot != nullptr && com_cfg.image_size != 0;
     }
 
     if (opts.showCfg && !uasm_quiet) {
         // COM: file image maps to CS:0100 (or CS:0000 if PSP embedded).
         // Build CFG in a virtual image where IP 0100 is entry for no-PSP files.
-        if (has_psp) {
+        if (com_cfg_shared)
+        {
+            if (has_psp)
+            {
+                // File offsets already match cfg_analyze_image. DOT + human.
+                cfg_emit_views(com_cfg, opts);
+            }
+            else
+            {
+                // listing_run's 256-byte hole makes file_off equal the IP.
+                // Same adjustment as the no-PSP build. No DOT on this path.
+                for (auto& [ip, blk] : com_cfg.blocks)
+                {
+                    (void)ip;
+                    if (blk.start_ip >= COM_PSP_SIZE)
+                    {
+                        blk.file_off = blk.start_ip - COM_PSP_SIZE;
+                    }
+                    for (auto& in : blk.insns)
+                    {
+                        if (in.ip >= COM_PSP_SIZE)
+                        {
+                            in.file_off = in.ip - COM_PSP_SIZE;
+                        }
+                    }
+                }
+                cfg_print(com_cfg, opts);
+            }
+        }
+        else if (has_psp) {
             cfg_analyze_image(data, 0, data.size(), COM_ENTRY_IP, opts.loadBase,
                               opts.loadBase, opts);
         } else {
