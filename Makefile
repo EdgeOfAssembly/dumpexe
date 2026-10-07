@@ -196,6 +196,7 @@ test-uasm: dumpexe
 	@bash -c 'source tests/lib_uasm.sh && uasm_resolve >/dev/null'
 	@bash tests/test_uasm.sh
 	@bash tests/test_p0_uasm.sh
+	@bash tests/test_p0_linear.sh
 	@bash tests/test_p0_shift.sh
 	@bash tests/test_p0_stats.sh
 	@bash tests/test_p0_reloc.sh

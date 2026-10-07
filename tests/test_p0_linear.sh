@@ -35,7 +35,8 @@ import struct, sys
 from pathlib import Path
 td = Path(sys.argv[1])
 
-def build_mz(image, crlc=0, paras=2, sp=0x200, ip=0, cs=0, lfarlc=0x1C, reloc=None):
+def build_mz(image, crlc=0, paras=2, sp=0x200, ip=0, cs=0, lfarlc=0x1C,
+             reloc=None, minalloc=0):
     header_bytes = paras * 16
     total = header_bytes + len(image)
     final_len = total % 512
@@ -45,7 +46,7 @@ def build_mz(image, crlc=0, paras=2, sp=0x200, ip=0, cs=0, lfarlc=0x1C, reloc=No
     hdr = bytearray(header_bytes)
     struct.pack_into("<14H", hdr, 0,
                      0x5A4D, final_len, num_blocks, crlc, paras,
-                     0, 0xFFFF, 0, sp, 0, ip, cs & 0xFFFF, lfarlc, 0)
+                     minalloc, 0xFFFF, 0, sp, 0, ip, cs & 0xFFFF, lfarlc, 0)
     if reloc is not None:
         off, seg = reloc
         struct.pack_into("<HH", hdr, lfarlc, off & 0xFFFF, seg & 0xFFFF)
@@ -130,6 +131,13 @@ save("x6", x6, ip=0, cs=0x1000)
 
 # 15. X10: 64 KiB COM of byte 0x73. Branch targets are not string immediates.
 (td / "x10.com").write_bytes(bytes([0x73]) * 65536)
+
+# 16. RG4: CS=0100h IP=0, header 32 bytes, minalloc 0x10. INT 21h at
+# linear 0x200 sits under the entry frame. Frame 0 must cover it.
+rg4 = bytearray(0x1100)
+rg4[0x1000:0x1005] = bytes.fromhex("b8004ccd21")
+rg4[0x200:0x20C] = bytes.fromhex("b409ba0000cd21b8004ccd21")
+save("rg4", rg4, ip=0, cs=0x0100, minalloc=0x10)
 print("fixtures", td)
 PY
 
@@ -393,6 +401,17 @@ case_x6_int_past64() {
   echo "x6 ${ms} ms"
 }
 
+case_rg4_int_below_frame() {
+  json_of rg4 || return 1
+  py_edges rg4 << 'PY'
+import json, sys
+cfg = json.load(open(sys.argv[1]))["cfg"]
+if cfg["blocks"] < 5:
+    sys.exit("blocks " + str(cfg["blocks"]))
+print("rg4 int below frame", cfg["blocks"])
+PY
+}
+
 case_x10_printrun() {
   local start end ms
   start=$(date +%s%N)
@@ -432,6 +451,7 @@ check negcs case_negcs
 check negcs_fff0 case_negcs_fff0
 check x6_int_past64 case_x6_int_past64
 check x10_printrun case_x10_printrun
+check rg4_int_below_frame case_rg4_int_below_frame
 
 echo "linear tests: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]
