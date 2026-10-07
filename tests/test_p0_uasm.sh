@@ -788,6 +788,232 @@ case_v4_env() {
   fi
 }
 
+# N-I2: cwd ./uasm must not run for an empty or relative PATH component.
+case_ni2_path() {
+  local stub_dir="$TD/ni2cwd"
+  local abs_bin="$TD/ni2abs"
+  mkdir -p "$stub_dir" "$abs_bin"
+  cp "$UASM_ABS" "$abs_bin/uasm"
+  chmod +x "$abs_bin/uasm"
+  cat > "$stub_dir/uasm" << EOF
+#!/bin/sh
+touch '$TD/ni2.marker'
+exit 1
+EOF
+  chmod +x "$stub_dir/uasm"
+  printf '\x8b\xc3\xc3' > "$stub_dir/mov.com"
+
+  rm -f "$TD/ni2.marker"
+  if ! (
+    cd "$stub_dir" || exit 1
+    env -u DUMPEXE_UASM PATH=":$abs_bin" \
+      "$BIN" --uasm --uasm-verify -o mov-lead.asm mov.com \
+      >mov-lead.stdout 2>mov-lead.stderr
+  ); then
+    echo "leading-colon PATH failed" >&2
+    cat "$stub_dir/mov-lead.stderr" >&2 || true
+    return 1
+  fi
+  if ! grep -E -q '^[[:space:]]+mov ax, bx' "$stub_dir/mov-lead.asm"; then
+    echo "leading-colon PATH did not promote mov ax, bx" >&2
+    cat "$stub_dir/mov-lead.asm" >&2 || true
+    cat "$stub_dir/mov-lead.stderr" >&2 || true
+    return 1
+  fi
+  if [[ -e "$TD/ni2.marker" ]]; then
+    echo "leading-colon PATH ran ./uasm" >&2
+    return 1
+  fi
+
+  rm -f "$TD/ni2.marker"
+  local rc=0
+  (
+    cd "$stub_dir" || exit 1
+    env -u DUMPEXE_UASM PATH="." \
+      "$BIN" --uasm --uasm-verify -o mov-dot.asm mov.com \
+      >mov-dot.stdout 2>mov-dot.stderr
+  ) || rc=$?
+  if [[ "$rc" -eq 0 ]]; then
+    echo "PATH=. exited 0" >&2
+    cat "$stub_dir/mov-dot.stderr" >&2 || true
+    return 1
+  fi
+  if [[ -e "$TD/ni2.marker" ]]; then
+    echo "PATH=. ran ./uasm" >&2
+    return 1
+  fi
+  if [[ -f "$stub_dir/mov-dot.asm" ]] &&
+      grep -F -q '; verified:' "$stub_dir/mov-dot.asm"; then
+    echo "PATH=. header claims verified" >&2
+    cat "$stub_dir/mov-dot.asm" >&2 || true
+    return 1
+  fi
+  if ! grep -F -q 'assembler not found' "$stub_dir/mov-dot.stderr"; then
+    echo "PATH=. did not report a missing assembler" >&2
+    cat "$stub_dir/mov-dot.stderr" >&2 || true
+    return 1
+  fi
+
+  rm -f "$TD/ni2.marker"
+  if ! (
+    cd "$stub_dir" || exit 1
+    env -u DUMPEXE_UASM PATH="$abs_bin:" \
+      "$BIN" --uasm --uasm-verify -o mov-trail.asm mov.com \
+      >mov-trail.stdout 2>mov-trail.stderr
+  ); then
+    echo "trailing-colon PATH failed" >&2
+    cat "$stub_dir/mov-trail.stderr" >&2 || true
+    return 1
+  fi
+  if [[ -e "$TD/ni2.marker" ]]; then
+    echo "trailing colon ran ./uasm" >&2
+    return 1
+  fi
+  if ! grep -E -q '^[[:space:]]+mov ax, bx' "$stub_dir/mov-trail.asm"; then
+    echo "trailing colon did not promote mov ax, bx" >&2
+    cat "$stub_dir/mov-trail.asm" >&2 || true
+    cat "$stub_dir/mov-trail.stderr" >&2 || true
+    return 1
+  fi
+}
+
+# V1b: out-of-image near calls are not offered, so one mov still verifies.
+case_v1b_numeric() {
+  python3 - "$TD/ncall.com" << 'PY'
+import pathlib
+import sys
+body = bytearray()
+for i in range(1200):
+    off = i * 3
+    ip = 0x100 + off
+    target = 0xF000 + i
+    disp = (target - (ip + 3)) & 0xFFFF
+    body += bytes((0xE8, disp & 0xFF, (disp >> 8) & 0xFF))
+body += bytes((0x8B, 0xC3))
+pathlib.Path(sys.argv[1]).write_bytes(body)
+PY
+  : > "$TD/uasm-spawns"
+  if ! "$BIN" --uasm --uasm-verify --uasm-bin "$TD/uasm-count" \
+      -o "$TD/ncall.asm" "$TD/ncall.com" \
+      >"$TD/ncall.stdout" 2>"$TD/ncall.stderr"; then
+    echo "numeric call verify failed" >&2
+    cat "$TD/ncall.stderr" >&2 || true
+    return 1
+  fi
+  if ! grep -E -q '^[[:space:]]+mov ax, bx' "$TD/ncall.asm"; then
+    echo "mov ax, bx stayed db" >&2
+    cat "$TD/ncall.asm" >&2 || true
+    return 1
+  fi
+  if grep -E -q '^[[:space:]]+call' "$TD/ncall.asm"; then
+    echo "numeric call was promoted" >&2
+    grep -E -n '^[[:space:]]+call' "$TD/ncall.asm" >&2 || true
+    return 1
+  fi
+  local n
+  n="$(spawn_lines)"
+  if [[ "$n" -ne 1 ]]; then
+    echo "numeric call spawn count $n" >&2
+    cat "$TD/ncall.stderr" >&2 || true
+    return 1
+  fi
+}
+
+# V1b: the verify spawn passes UASM's error limit.
+case_v1b_e100000() {
+  cat > "$TD/uasm-argv" << EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> '$TD/uasm-args'
+exec '$UASM_ABS' "\$@"
+EOF
+  chmod +x "$TD/uasm-argv"
+  printf '\x8b\xc3\xc3' > "$TD/e100.com"
+  : > "$TD/uasm-args"
+  if ! "$BIN" --uasm --uasm-verify --uasm-bin "$TD/uasm-argv" \
+      -o "$TD/e100.asm" "$TD/e100.com" \
+      >"$TD/e100.stdout" 2>"$TD/e100.stderr"; then
+    echo "e100000 verify failed" >&2
+    cat "$TD/e100.stderr" >&2 || true
+    return 1
+  fi
+  if ! grep -F -q -- '-e100000' "$TD/uasm-args"; then
+    echo "argv missing -e100000" >&2
+    cat "$TD/uasm-args" >&2 || true
+    return 1
+  fi
+  local n
+  n="$(wc -l < "$TD/uasm-args" | tr -d ' ')"
+  if [[ "$n" -ne 1 ]]; then
+    echo "e100000 spawn count $n" >&2
+    cat "$TD/uasm-args" >&2 || true
+    return 1
+  fi
+  has e100 "; verified: uasm" || return 1
+}
+
+# V1b: 16 unnamed bisects of 40 memory movs leave a non-empty queue.
+case_v1b_cap() {
+  python3 - "$TD/vcap.com" << 'PY'
+import pathlib
+import sys
+# 89 87 lo hi is mov [bx+disp16], ax. A 0Fh, 66h, or 67h byte is not a
+# candidate, so skip displacement 15 (low byte 0Fh). Forty others stay.
+body = bytearray()
+disps = [i for i in range(0, 64) if i != 0x0F][:40]
+for disp in disps:
+    body += bytes((0x89, 0x87, disp & 0xFF, (disp >> 8) & 0xFF))
+pathlib.Path(sys.argv[1]).write_bytes(body)
+PY
+  cat > "$TD/uasm-fail" << EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> '$TD/vcap-args'
+printf 'uasm: fatal\n' > line.err
+exit 1
+EOF
+  chmod +x "$TD/uasm-fail"
+  : > "$TD/vcap-args"
+  if ! "$BIN" --uasm --uasm-verify --uasm-bin "$TD/uasm-fail" \
+      -o "$TD/vcap.asm" "$TD/vcap.com" \
+      >"$TD/vcap.stdout" 2>"$TD/vcap.stderr"; then
+    echo "cap verify failed" >&2
+    cat "$TD/vcap.stderr" >&2 || true
+    return 1
+  fi
+  if ! grep -F -q 'unverified' "$TD/vcap.asm"; then
+    echo "header missing unverified" >&2
+    cat "$TD/vcap.asm" >&2 || true
+    cat "$TD/vcap.stderr" >&2 || true
+    return 1
+  fi
+  if ! grep -F -q 'assembler rejected 7 candidates, unverified 33' \
+      "$TD/vcap.asm"; then
+    echo "header counts were not rejected 7, unverified 33" >&2
+    cat "$TD/vcap.asm" >&2 || true
+    return 1
+  fi
+  if grep -F -q '; verified:' "$TD/vcap.asm"; then
+    echo "cap header claims verified" >&2
+    cat "$TD/vcap.asm" >&2 || true
+    return 1
+  fi
+  if ! grep -F -q 'assembler rejected' "$TD/vcap.stderr"; then
+    echo "stderr missing assembler rejected" >&2
+    cat "$TD/vcap.stderr" >&2 || true
+    return 1
+  fi
+  if ! grep -F -q 'assembler rejected 7 candidates, unverified 33' \
+      "$TD/vcap.stderr"; then
+    echo "stderr counts were not rejected 7, unverified 33" >&2
+    cat "$TD/vcap.stderr" >&2 || true
+    return 1
+  fi
+  if ! grep -F -q -- '-e100000' "$TD/vcap-args"; then
+    echo "cap argv missing -e100000" >&2
+    cat "$TD/vcap-args" >&2 || true
+    return 1
+  fi
+}
+
 check mov8b_verify case_mov8b_verify
 check rg5_com case_rg5_com
 check rg5_mz case_rg5_mz
@@ -799,6 +1025,10 @@ check v1_one_spawn case_v1_one_spawn
 check v2_rel_bin case_v2_rel
 check v3_path_dir case_v3_path_dir
 check v4_env case_v4_env
+check ni2_path case_ni2_path
+check v1b_numeric case_v1b_numeric
+check v1b_e100000 case_v1b_e100000
+check v1b_cap case_v1b_cap
 check source_name_not_label case_source_name_not_label
 check mid_insn_label case_mid_insn_label
 check ret0 case_ret0
