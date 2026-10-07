@@ -109,7 +109,8 @@ struct Options {
     /// --uasm is set.
     bool uasm_verify = false;
     /// --uasm-bin PATH: assembler for --uasm-verify. Empty means $DUMPEXE_UASM,
-    /// then PATH. Never a built-in absolute path.
+    /// then an absolute directory on PATH. An empty or relative PATH
+    /// component is ignored. Never a built-in absolute path.
     std::string uasm_bin;
 
     /**
@@ -740,13 +741,17 @@ static inline void show_usage(const char* progname) {
         "                      the image is not labeled func_FFFF.\n"
         "  --uasm-verify       With --uasm, assemble candidate lines and keep a line\n"
         "                      only when the bytes match. A clean batch is one assemble.\n"
-        "                      A rejected line is dropped and retried; the header then\n"
-        "                      does not say verified. Enable-only. Default off, so\n"
-        "                      --uasm does not run an assembler. Requires --uasm.\n"
-        "                      Does not imply --uasm-stats. The listing header says\n"
-        "                      \"; verified: uasm … at PATH\" or \"; NOT VERIFIED\".\n"
+        "                      A branch whose operand is a number stays db and is not\n"
+        "                      offered. A rejected line is dropped and retried; the header\n"
+        "                      then does not say verified. When recovery stops with lines\n"
+        "                      left, the header says rejected K, unverified M. Enable-only.\n"
+        "                      Default off, so --uasm does not run an assembler. Requires\n"
+        "                      --uasm. Does not imply --uasm-stats. The listing header says\n"
+        "                      \"; verified: uasm … at PATH\" only when every offered line\n"
+        "                      assembled, or \"; NOT VERIFIED\".\n"
         "  --uasm-bin PATH     Assembler used by --uasm-verify. Otherwise $DUMPEXE_UASM,\n"
-        "                      otherwise uasm on PATH. No built-in assembler path.\n"
+        "                      otherwise uasm on PATH. PATH search ignores empty and\n"
+        "                      relative directories. No built-in assembler path.\n"
         "  --uasm-stats        With --uasm, print one coverage line on stderr when a\n"
         "                      UASM listing is emitted (image, decoded, text, db,\n"
         "                      labels, whether verification ran). Enable-only. Does not\n"

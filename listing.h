@@ -1774,12 +1774,166 @@ static inline bool listing_uasm_line_batchable(std::string_view line,
 }
 
 /**
+ * @brief True when @p tok is one numeric immediate.
+ *
+ * The form is a leading digit, then hex digits, then an optional `h` or `H`.
+ * A token that starts with a letter or `[` is not numeric.
+ *
+ * @param tok One operand token, already trimmed.
+ * @return true when @p tok matches that immediate form.
+ */
+static inline bool listing_uasm_numeric_token(std::string_view tok)
+{
+    if (tok.empty() || tok.front() < '0' || tok.front() > '9')
+    {
+        return false;
+    }
+    size_t i = 1;
+    while (i < tok.size() &&
+           std::isxdigit(static_cast<unsigned char>(tok[i])) != 0)
+    {
+        ++i;
+    }
+    if (i == tok.size())
+    {
+        return true;
+    }
+    return i + 1 == tok.size() && (tok[i] == 'h' || tok[i] == 'H');
+}
+
+/**
+ * @brief True when a candidate line is a branch to a numeric operand.
+ *
+ * Sized branches to labels return early from analyze with `n` set, so they
+ * are not candidates. `ret`, `mov`, and `int` are not branches. After the
+ * mnemonic, one leading size phrase (`short`, `near`, `near ptr`, `far`,
+ * `far ptr`) is ignored. The rest is numeric when it is one immediate token
+ * or `seg:off` with both sides in that form. A filtered line stays db.
+ *
+ * @param line Spelled candidate (`jae 177h`, `call near ptr 0100h`).
+ * @return true when the line must not be offered to the assembler.
+ */
+static inline bool listing_uasm_numeric_branch(std::string_view line)
+{
+    size_t split = 0;
+    while (split < line.size() &&
+           std::isspace(static_cast<unsigned char>(line[split])) == 0)
+    {
+        ++split;
+    }
+    if (split == 0)
+    {
+        return false;
+    }
+    std::string mnem(line.substr(0, split));
+    for (char& c : mnem)
+    {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    static constexpr std::string_view kBranch[] = {
+        "jmp",   "call",  "ja",    "jae",   "jb",    "jbe",   "jc",    "jcxz",
+        "je",    "jg",    "jge",   "jl",    "jle",   "jna",   "jnae",  "jnb",
+        "jnbe",  "jnc",   "jne",   "jng",   "jnge",  "jnl",   "jnle",  "jno",
+        "jnp",   "jns",   "jnz",   "jo",    "jp",    "jpe",   "jpo",   "js",
+        "jz",    "jecxz", "loop",  "loope", "loopne", "loopz", "loopnz",
+    };
+    bool branch = false;
+    for (const std::string_view name : kBranch)
+    {
+        if (mnem == name)
+        {
+            branch = true;
+            break;
+        }
+    }
+    if (!branch)
+    {
+        return false;
+    }
+    std::string_view ops = line.substr(split);
+    auto trim_ws = [](std::string_view text) -> std::string_view
+    {
+        while (!text.empty() &&
+               std::isspace(static_cast<unsigned char>(text.front())) != 0)
+        {
+            text.remove_prefix(1);
+        }
+        while (!text.empty() &&
+               std::isspace(static_cast<unsigned char>(text.back())) != 0)
+        {
+            text.remove_suffix(1);
+        }
+        return text;
+    };
+    ops = trim_ws(ops);
+    auto starts_phrase = [](std::string_view text, std::string_view phrase) -> bool
+    {
+        if (text.size() < phrase.size())
+        {
+            return false;
+        }
+        for (size_t k = 0; k < phrase.size(); ++k)
+        {
+            const unsigned char c = static_cast<unsigned char>(text[k]);
+            if (static_cast<char>(std::tolower(c)) != phrase[k])
+            {
+                return false;
+            }
+        }
+        if (text.size() == phrase.size())
+        {
+            return true;
+        }
+        return std::isspace(static_cast<unsigned char>(text[phrase.size()])) != 0;
+    };
+    static constexpr std::string_view kSize[] = {
+        "near ptr", "far ptr", "short", "near", "far",
+    };
+    for (const std::string_view phrase : kSize)
+    {
+        if (starts_phrase(ops, phrase))
+        {
+            ops.remove_prefix(phrase.size());
+            break;
+        }
+    }
+    ops = trim_ws(ops);
+    if (ops.empty())
+    {
+        return false;
+    }
+    const size_t colon = ops.find(':');
+    if (colon == std::string_view::npos)
+    {
+        if (ops.find_first_of(" \t") != std::string_view::npos)
+        {
+            return false;
+        }
+        return listing_uasm_numeric_token(ops);
+    }
+    if (ops.find(':', colon + 1) != std::string_view::npos)
+    {
+        return false;
+    }
+    const std::string_view seg = trim_ws(ops.substr(0, colon));
+    const std::string_view off = trim_ws(ops.substr(colon + 1));
+    if (seg.empty() || off.empty() ||
+        seg.find_first_of(" \t") != std::string_view::npos ||
+        off.find_first_of(" \t") != std::string_view::npos)
+    {
+        return false;
+    }
+    return listing_uasm_numeric_token(seg) && listing_uasm_numeric_token(off);
+}
+
+/**
  * @brief Absolute path of one regular executable, or empty.
  *
  * A directory can be X_OK and must not win. realpath runs before the child
- * chdir, so a relative --uasm-bin, $DUMPEXE_UASM, or PATH entry still execs.
+ * chdir, so a relative --uasm-bin or $DUMPEXE_UASM still execs. PATH search
+ * does not pass an empty or relative directory here.
  *
- * @param path Flag, environment, or PATH entry. May be relative. May be empty.
+ * @param path Flag or environment path. May be relative. May be empty.
  * @return realpath of @p path when it is a regular file and executable.
  *         Empty for a directory, a missing file, or a path realpath rejects.
  */
@@ -1813,6 +1967,7 @@ static inline std::string listing_uasm_usable_bin(const std::string& path)
  *
  * Order: --uasm-bin, else $DUMPEXE_UASM when set and non-empty, else PATH.
  * A path the user named that is not a regular executable does not fall through.
+ * An empty PATH component, or one that does not start with '/', is skipped.
  * The returned path is absolute.
  *
  * @param opts Parsed options. uasm_bin may be empty.
@@ -1842,21 +1997,17 @@ static inline std::string listing_uasm_resolve_bin(const Options& opts)
         const size_t colon = rest.find(':');
         const std::string_view dir =
             (colon == std::string_view::npos) ? rest : rest.substr(0, colon);
-        std::string full;
-        if (dir.empty())
+        // A relative or empty entry would stat ./uasm in the caller's cwd.
+        if (!dir.empty() && dir.front() == '/')
         {
-            full = "uasm";
-        }
-        else
-        {
-            full.assign(dir);
+            std::string full(dir);
             full.push_back('/');
             full.append("uasm");
-        }
-        const std::string found = listing_uasm_usable_bin(full);
-        if (!found.empty())
-        {
-            return found;
+            const std::string found = listing_uasm_usable_bin(full);
+            if (!found.empty())
+            {
+                return found;
+            }
         }
         if (colon == std::string_view::npos)
         {
@@ -1939,6 +2090,9 @@ static inline std::string listing_uasm_vkey(int level, std::string_view line)
 
 /**
  * @brief Spawn the assembler once and map each candidate back to its bytes.
+ *
+ * The child argv includes `-e100000` so UASM's default error limit does not
+ * cut off a long rejected batch. Default `--uasm` does not call this.
  *
  * @param scratch  Scratch paths. The child cwd is scratch.dir().
  * @param asm_bin  Executable from listing_uasm_resolve_bin. Not hard-coded.
@@ -2024,9 +2178,12 @@ static inline bool listing_uasm_verify_batch(
     char arg0[] = "uasm";
     char arg1[] = "-bin";
     char arg2[] = "-nologo";
+    // UASM's default error limit would stop a long rejected batch.
+    char arg_e[] = "-e100000";
     char arg3[] = "-Fo";
     char* argv[] = {
-        arg0, arg1, arg2, fl_arg.data(), arg3, bin_arg.data(), asm_arg.data(), nullptr};
+        arg0, arg1, arg2, arg_e, fl_arg.data(), arg3, bin_arg.data(), asm_arg.data(),
+        nullptr};
 
     posix_spawn_file_actions_t actions;
     if (::posix_spawn_file_actions_init(&actions) != 0)
@@ -2388,13 +2545,16 @@ static inline std::set<int> listing_uasm_err_source_lines(const std::string& err
  *
  * `ran` is false when the assembler could not be spawned. `complete` is true
  * when every remaining group was assembled or dropped. `dropped` counts
- * candidates that were not assembled. `bytes` holds only lines UASM encoded.
+ * candidates that were not assembled. `unverified` counts candidates still
+ * queued when recovery stops, including a group popped for a spawn that
+ * could not start. `bytes` holds only lines UASM encoded.
  */
 struct ListingUasmVerifyOutcome
 {
     bool ran = false;
     bool complete = false;
     size_t dropped = 0;
+    size_t unverified = 0;
     std::string version;
     std::map<std::string, std::vector<uint8_t>> bytes;
 };
@@ -2405,7 +2565,9 @@ struct ListingUasmVerifyOutcome
  * A clean list is one posix_spawn. On a non-zero exit the scratch .err is
  * read for batch line numbers. Named candidates are removed and the rest are
  * assembled again. When the diagnostic names no candidate, the list is split.
- * A singleton that still fails is dropped. At most 16 spawns run.
+ * A singleton that still fails is dropped. At most 16 spawns run. When the
+ * cap is hit, or a spawn cannot start, `unverified` is how many candidates
+ * are still queued. `complete` is `queue.empty()` on the normal exit.
  *
  * @param scratch Scratch paths. The child cwd is scratch.dir().
  * @param asm_bin Absolute assembler from listing_uasm_resolve_bin.
@@ -2432,6 +2594,16 @@ static inline ListingUasmVerifyOutcome listing_uasm_verify_recover(
     }
     queue.push_back(std::move(first));
 
+    auto count_queued = [&]() -> size_t
+    {
+        size_t total = 0;
+        for (const Pending& pending : queue)
+        {
+            total += pending.idx.size();
+        }
+        return total;
+    };
+
     bool any_spawn = false;
     int spawns = 0;
     while (!queue.empty() && spawns < kSpawnCap)
@@ -2453,6 +2625,7 @@ static inline ListingUasmVerifyOutcome listing_uasm_verify_recover(
         {
             out.ran = any_spawn;
             out.complete = false;
+            out.unverified = count_queued() + group.idx.size();
             return out;
         }
         any_spawn = true;
@@ -2523,6 +2696,7 @@ static inline ListingUasmVerifyOutcome listing_uasm_verify_recover(
     }
     out.ran = any_spawn;
     out.complete = queue.empty();
+    out.unverified = count_queued();
     return out;
 }
 
@@ -2987,7 +3161,10 @@ static inline size_t listing_uasm_bad_equ_hex(std::string_view text)
  * when the whitelist matches, when it is a sized near branch to a known
  * symbol, or when --uasm-verify assembles that line back to the same
  * bytes. Default --uasm does not spawn. A candidate the assembler rejects
- * stays db, and the header then does not say verified. Anything else,
+ * stays db, and the header then does not say verified. A branch whose
+ * operand is a number is not offered and stays db. When recovery stops
+ * with candidates still queued, the header says how many were rejected
+ * and how many were left unverified. Anything else,
  * including bytes the CFG did not decode, is `db`
  * (0NNh). An image longer than 65536 bytes is successive `sN segment`
  * / `org 0` / `sN ends` chunks (byte alignment, so uasm -mz does not pad).
@@ -3247,9 +3424,10 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
 
     // Default --uasm does not spawn. --uasm-verify batches every unique line.
     // One rejected candidate is dropped and retried; it must not mark the
-    // whole listing verified.
+    // whole listing verified. A numeric branch operand is not offered.
     bool verified_ok = false;
     size_t verify_rejected = 0;
+    size_t verify_unverified = 0;
     std::string verified_path;
     std::string verified_ver;
     std::map<std::string, std::vector<uint8_t>> verified_bytes;
@@ -3273,7 +3451,8 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
                 const Classified seen_c = analyze(kv.first);
                 if (seen_c.candidate.empty() ||
                     !listing_uasm_line_batchable(seen_c.candidate, seen_c.level,
-                                                 kv.second.size))
+                                                 kv.second.size) ||
+                    listing_uasm_numeric_branch(seen_c.candidate))
                 {
                     continue;
                 }
@@ -3318,6 +3497,16 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
                         if (got.dropped == 0 && got.complete)
                         {
                             verified_ok = true;
+                        }
+                        else if (got.unverified > 0)
+                        {
+                            verify_rejected = got.dropped;
+                            verify_unverified = got.unverified;
+                            std::cerr << std::format(
+                                "listing: --uasm-verify: assembler rejected {} "
+                                "candidates, unverified {}\n",
+                                got.dropped,
+                                got.unverified);
                         }
                         else if (got.dropped > 0)
                         {
@@ -3794,6 +3983,13 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
         {
             out << std::format("; verified: uasm {} at {}\n", verified_ver, verified_path);
         }
+    }
+    else if (verify_unverified > 0)
+    {
+        out << std::format(
+            "; NOT VERIFIED (assembler rejected {} candidates, unverified {})\n",
+            verify_rejected,
+            verify_unverified);
     }
     else if (verify_rejected > 0)
     {

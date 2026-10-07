@@ -216,6 +216,9 @@ A relative branch is
 or a conditional
 .B short
 when the target is a label.
+A branch whose operand is a number is left as
+.B db
+and is not offered to the assembler.
 Any other non-branch line stays
 .B db
 unless
@@ -244,6 +247,7 @@ else
 on
 .BR PATH .
 There is no built-in assembler path.
+PATH search ignores an empty or relative directory.
 A clean batch is one assemble of every distinct candidate line.
 When that assemble accepts every line, the header says
 .B "; verified: uasm … at PATH" .
@@ -252,6 +256,9 @@ again (at most 16 runs).
 Those bytes may still be promoted.
 The header then says
 .B "; NOT VERIFIED (assembler rejected N candidates)"
+and does not say verified.
+When recovery stops with candidates still queued, the header says
+.B "; NOT VERIFIED (assembler rejected K candidates, unverified M)"
 and does not say verified.
 If verify is on and no assembler can be run, dumpexe writes an error
 on stderr and exits non-zero.
