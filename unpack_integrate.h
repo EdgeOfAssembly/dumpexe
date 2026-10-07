@@ -144,13 +144,14 @@ static inline void dx_list_unpacked(const Options& opts,
             size_t cfg_len = 0;
             uint16_t cs_seg = 0;
             mz_cfg_window(header, sizes, cfg_file_off, cfg_len, cs_seg, uopts);
-            const MzEntryLoc entry = mz_entry_image_ip(header);
+            const MzEntryLoc entry = mz_entry_image_ip(header, cfg_len);
             std::vector<RelocEntry> unpacked_relocs;
             load_relocations(header, image, unpacked_relocs);
-            if (listing_run(image, cfg_file_off, cfg_len, entry.ip, cs_seg,
+            if (listing_run(image, cfg_file_off, cfg_len, entry.linear, cs_seg,
                             static_cast<uint16_t>(header.cs),
                             uopts, bin_path, nullptr, nullptr, false, false,
-                            entry.in_window, unpacked_relocs) != 0)
+                            entry.in_window, unpacked_relocs, nullptr,
+                            entry.seg_base) != 0)
             {
                 return;
             }

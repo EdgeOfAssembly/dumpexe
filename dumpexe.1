@@ -290,10 +290,11 @@ A multi-segment listing ends with a bare
 so
 .B uasm \-bin
 accepts it.
-The entry label stays inside its
+An in-image linear entry is decoded, including past 64 KiB.
+Its label stays inside its
 .B sN
-segment when the entry is inside the 64 KiB decode window.
-An entry past that window is not labeled
+segment.
+An entry outside the image is not labeled
 .B func_FFFF
 and the listing ends with a bare
 .BR end .
@@ -301,9 +302,10 @@ A same-segment far call is followed when its segment matches the
 file CS in the MZ header, including when
 .B \-\-base
 is left at the default 1000h.
-A far call or jump whose segment word is a relocation is followed at
-segment*16+offset inside the load image instead.
-A target past 64 KiB is not followed.
+A relocation-pinned far target is followed when
+.B seg*16+off
+is inside the image, including past 64 KiB.
+A pinned target outside the image is not followed.
 COM and a one-segment EXE still end with
 .B end func_XXXX .
 .BR bin2exe (1)

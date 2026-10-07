@@ -182,6 +182,7 @@ test: dumpexe bin2exe tools/bin2exe/test_header
 	@bash tests/test_p0_stats.sh
 	@bash tests/test_p0_shift.sh
 	@bash tests/test_p0_cfg_once.sh
+	@bash tests/test_p0_linear.sh
 	@./tools/bin2exe/test_header
 	@bash tools/bin2exe/tests/test_cli.sh
 
