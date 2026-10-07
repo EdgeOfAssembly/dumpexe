@@ -72,9 +72,18 @@ static inline std::string listing_default_asm_path(const std::string& input_path
     return dir + base + ".asm";
 }
 
-static inline std::string listing_symbol_name(uint16_t ip)
+/**
+ * @brief Procedure label for a linear address.
+ *
+ * Four uppercase hex digits through 0xFFFF (`func_0100`). A larger address
+ * uses only the digits it needs (`func_10000`).
+ *
+ * @param ip Linear address inside the load image.
+ * @return `func_` plus @ref cfg_lin_hex.
+ */
+static inline std::string listing_symbol_name(CfgLin ip)
 {
-    return std::format("func_{:04X}", ip);
+    return "func_" + cfg_lin_hex(ip);
 }
 
 /**
@@ -111,9 +120,9 @@ static inline bool listing_is_near_xfer(std::string_view m)
  * @param sym Symbol table updated in place.
  */
 static inline void listing_add_loc_labels(const CfgGraph& g,
-                                         std::map<uint16_t, std::string>& sym)
+                                         std::map<CfgLin, std::string>& sym)
 {
-    std::set<uint16_t> starts;
+    std::set<CfgLin> starts;
     for (const auto& kv : g.blocks)
     {
         for (const CfgInsn& in : kv.second.insns)
@@ -127,7 +136,7 @@ static inline void listing_add_loc_labels(const CfgGraph& g,
                 continue;
             if (!starts.count(e.to_ip) || sym.count(e.to_ip))
                 continue;
-            sym[e.to_ip] = std::format("loc_{:04X}", e.to_ip);
+            sym[e.to_ip] = "loc_" + cfg_lin_hex(e.to_ip);
         }
     }
 }
@@ -137,12 +146,12 @@ static inline void listing_add_loc_labels(const CfgGraph& g,
 //=============================================================================
 
 static inline void listing_collect_symbols(const CfgGraph& g,
-                                           uint16_t entry_ip,
-                                           std::map<uint16_t, std::string>& sym,
-                                           std::set<uint16_t>& proc_starts,
+                                           CfgLin entry_ip,
+                                           std::map<CfgLin, std::string>& sym,
+                                           std::set<CfgLin>& proc_starts,
                                            const SymbolMap* external = nullptr)
 {
-    auto add = [&](uint16_t ip, std::string_view why)
+    auto add = [&](CfgLin ip, std::string_view why)
     {
         (void)why;
         if (!g.blocks.count(ip) && ip != entry_ip)
@@ -210,11 +219,11 @@ static inline void listing_collect_symbols(const CfgGraph& g,
 static inline std::string listing_rewrite_ops(std::string_view mnem,
                                               std::string_view op_str,
                                               const CfgBlock& blk,
-                                              const std::map<uint16_t, std::string>& sym,
+                                              const std::map<CfgLin, std::string>& sym,
                                               bool ip_numeric = false)
 {
     // Prefer CFG edge targets for call / uncond jmp / table
-    uint16_t edge_tgt = 0;
+    CfgLin edge_tgt = 0;
     bool have_edge = false;
     for (const CfgEdge& e : blk.outs)
     {
@@ -358,15 +367,15 @@ static inline std::string listing_uasm_fix_mnem(const CfgInsn& in,
 //=============================================================================
 
 static inline std::string listing_emit_text(const CfgGraph& g,
-                                            uint16_t entry_ip,
+                                            CfgLin entry_ip,
                                             const Options& opts,
                                             const std::string& source_name,
                                             size_t& n_procs,
                                             size_t& n_insns,
                                             const SymbolMap* external = nullptr)
 {
-    std::map<uint16_t, std::string> sym;
-    std::set<uint16_t> proc_starts;
+    std::map<CfgLin, std::string> sym;
+    std::set<CfgLin> proc_starts;
     listing_collect_symbols(g, entry_ip, sym, proc_starts, external);
     n_procs = proc_starts.size();
     listing_add_loc_labels(g, sym);
@@ -375,8 +384,8 @@ static inline std::string listing_emit_text(const CfgGraph& g,
     std::ostringstream out;
     out << "; dumpexe multi-pass listing (not single-stream Capstone only)\n";
     out << std::format("; source: {}\n", source_name);
-    out << std::format("; CS={:04X}h  entry={:04X}h  blocks={}  symbols={}\n",
-                       g.cs_seg, entry_ip, g.blocks.size(), sym.size());
+    out << std::format("; CS={:04X}h  entry={}h  blocks={}  symbols={}\n",
+                       g.cs_seg, cfg_lin_hex(entry_ip), g.blocks.size(), sym.size());
     out << "; labels: func_<IP> for entry/call/jmp; loc_<IP> for jcc/loop on insn boundaries\n";
     out << "; call/jmp/jcc/loop near targets rewritten to labels when known\n";
     out << "; blank line after procedure regions ending in ret/retf/iret\n";
@@ -442,7 +451,7 @@ static inline std::string listing_emit_text(const CfgGraph& g,
         }
 
         // INT annotations map by IP
-        std::map<uint16_t, std::string> int_notes;
+        std::map<CfgLin, std::string> int_notes;
         for (const auto& site : b.ints)
         {
             std::string note;
@@ -506,12 +515,12 @@ static inline std::string listing_emit_text(const CfgGraph& g,
                     {
                         continue;
                     }
-                    far_note = std::format("  ; → func_{:04X}", e.to_ip);
+                    far_note = std::format("  ; → func_{}", cfg_lin_hex(e.to_ip));
                     break;
                 }
             }
 
-            out << std::format("    {:04X}  {:<16}  {:<8} {}", in.ip, hex, mnem,
+            out << std::format("    {}  {:<16}  {:<8} {}", cfg_lin_hex(in.ip), hex, mnem,
                                rops);
             out << far_note;
 
@@ -623,7 +632,7 @@ static inline std::string listing_masm_mnem(std::string m)
  */
 static inline std::string listing_emit_jwasm(const CfgGraph& g,
                                             const std::vector<uint8_t>& image,
-                                            uint16_t entry_ip,
+                                            CfgLin entry_ip,
                                             const Options& opts,
                                             const std::string& source_name,
                                             const ToolchainReport& tc,
@@ -631,15 +640,15 @@ static inline std::string listing_emit_jwasm(const CfgGraph& g,
                                             size_t& n_insns,
                                             const SymbolMap* external)
 {
-    std::map<uint16_t, std::string> sym;
-    std::set<uint16_t> proc_starts;
+    std::map<CfgLin, std::string> sym;
+    std::set<CfgLin> proc_starts;
     listing_collect_symbols(g, entry_ip, sym, proc_starts, external);
     n_procs = proc_starts.size();
     n_insns = 0;
 
     // Index instructions by IP (first wins)
-    std::map<uint16_t, CfgInsn> at;
-    std::map<uint16_t, const CfgBlock*> blk_at;
+    std::map<CfgLin, CfgInsn> at;
+    std::map<CfgLin, const CfgBlock*> blk_at;
     for (const auto& kv : g.blocks)
     {
         const CfgBlock& b = kv.second;
@@ -699,7 +708,7 @@ static inline std::string listing_emit_jwasm(const CfgGraph& g,
     out << "\n";
 
     const size_t img_sz = image.size();
-    auto emit_label = [&](uint16_t ip)
+    auto emit_label = [&](CfgLin ip)
     {
         if (!sym.count(ip) && !proc_starts.count(ip))
             return;
@@ -744,7 +753,7 @@ static inline std::string listing_emit_jwasm(const CfgGraph& g,
     size_t ip = 0;
     while (ip < img_sz)
     {
-        const uint16_t uip = static_cast<uint16_t>(ip & 0xFFFF);
+        const CfgLin uip = static_cast<CfgLin>(ip);
         emit_label(uip);
 
         auto it = at.find(uip);
@@ -794,7 +803,7 @@ static inline std::string listing_emit_jwasm(const CfgGraph& g,
         size_t run_end = ip + 1;
         while (run_end < img_sz)
         {
-            const uint16_t u = static_cast<uint16_t>(run_end & 0xFFFF);
+            const CfgLin u = static_cast<CfgLin>(run_end);
             if (at.count(u) || sym.count(u) || proc_starts.count(u))
                 break;
             ++run_end;
@@ -829,7 +838,7 @@ static inline std::string listing_emit_jwasm(const CfgGraph& g,
  */
 static inline std::string listing_emit_turbo_pascal(const CfgGraph& g,
                                                     const std::vector<uint8_t>& image,
-                                                    uint16_t entry_ip,
+                                                    CfgLin entry_ip,
                                                     const Options& opts,
                                                     const std::string& source_name,
                                                     const TurboPascalReport& tp,
@@ -838,13 +847,13 @@ static inline std::string listing_emit_turbo_pascal(const CfgGraph& g,
                                                     size_t& n_insns,
                                                     const SymbolMap* external)
 {
-    std::map<uint16_t, std::string> sym;
-    std::set<uint16_t> proc_starts;
+    std::map<CfgLin, std::string> sym;
+    std::set<CfgLin> proc_starts;
     listing_collect_symbols(g, entry_ip, sym, proc_starts, external);
     n_procs = proc_starts.size();
     n_insns = 0;
 
-    std::map<uint16_t, CfgInsn> at;
+    std::map<CfgLin, CfgInsn> at;
     for (const auto& kv : g.blocks)
         for (const auto& in : kv.second.insns)
             if (!at.count(in.ip))
@@ -957,7 +966,7 @@ static inline std::string listing_emit_turbo_pascal(const CfgGraph& g,
 
     while (ip < img_sz)
     {
-        const uint16_t uip = static_cast<uint16_t>(ip & 0xFFFF);
+        const CfgLin uip = static_cast<CfgLin>(ip);
 
         // New procedure label
         if (sym.count(uip) || proc_starts.count(uip))
@@ -1042,7 +1051,7 @@ static inline std::string listing_emit_turbo_pascal(const CfgGraph& g,
         size_t run_end = ip + 1;
         while (run_end < img_sz)
         {
-            const uint16_t u = static_cast<uint16_t>(run_end & 0xFFFF);
+            const CfgLin u = static_cast<CfgLin>(run_end);
             if (at.count(u) || sym.count(u) || proc_starts.count(u))
                 break;
             ++run_end;
@@ -1337,23 +1346,25 @@ static inline void listing_uasm_spell(const CfgInsn& in,
 /**
  * @brief Sized near branch to a symbol, from the displacement bytes.
  *
- * The target is `uint16_t(ip + size + disp)` with disp sign-extended.
+ * The target is `seg_base + uint16(ip16 + size + disp)` with disp
+ * sign-extended. ip16 is `ip - in.seg_base`. Segment base 0 is today's
+ * uint16 wrap. A near displacement does not address the next segment.
  * Far lcall/ljmp are not rewritten. No numeric IP. No per-branch uasm.
  *
  * @param in     Instruction bytes. The opcode must be the first byte.
- * @param ip     IP of @p in.
+ * @param ip     Linear address of @p in.
  * @param opcode Opcode byte (EB/E9/E8/70–7F/E0–E3).
  * @param mnem   Lowercase Capstone mnemonic (`je`, `loopne`, …).
  * @param sym    Labels already collected for this image.
  * @param line   Receives `jmp short <sym>` and the other sized forms.
- * @return true when @p sym contains the encoded target.
+ * @return true when @p sym contains the wrapped linear target.
  */
 static inline bool listing_uasm_sized_branch(
     const CfgInsn& in,
-    uint16_t ip,
+    CfgLin ip,
     uint8_t opcode,
     std::string_view mnem,
-    const std::map<uint16_t, std::string>& sym,
+    const std::map<CfgLin, std::string>& sym,
     std::string& line)
 {
     if (in.size < 2 || in.bytes[0] != opcode)
@@ -1409,8 +1420,10 @@ static inline bool listing_uasm_sized_branch(
         const unsigned hi = in.bytes[in.size - 1];
         disp = static_cast<int>(static_cast<int16_t>(lo | (hi << 8)));
     }
-    const int sum = static_cast<int>(ip) + static_cast<int>(in.size) + disp;
-    const uint16_t target = static_cast<uint16_t>(sum);
+    const uint16_t ip16 = static_cast<uint16_t>(ip - in.seg_base);
+    const int sum = static_cast<int>(ip16) + static_cast<int>(in.size) + disp;
+    const uint16_t target16 = static_cast<uint16_t>(sum);
+    const CfgLin target = in.seg_base + target16;
     const auto it = sym.find(target);
     if (it == sym.end())
     {
@@ -1844,16 +1857,16 @@ static inline bool listing_uasm_verify_one(const ListingUasmScratch& scratch,
  * @param at        Decoded instructions keyed by IP.
  * @param reloc_at  Fixup locations from cfg_reloc_sites. The immediate is at IP+1.
  * @param uasm_com  True for a pure COM image. Never rewritten.
- * @param ip        Opcode IP. Already below 65536 because it is a uint16_t.
+ * @param ip        Opcode linear. The size gate keeps this inside one segment.
  * @param in        Decoded instruction whose bytes must match @p image.
  * @param frame_out Byte offset imm * 16 when the function returns true.
  * @return true when the emitter must print the segment expression.
  */
 static inline bool listing_uasm_reloc_frame(const std::vector<uint8_t>& image,
-                                            const std::map<uint16_t, CfgInsn>& at,
+                                            const std::map<CfgLin, CfgInsn>& at,
                                             const std::set<uint32_t>& reloc_at,
                                             bool uasm_com,
-                                            uint16_t ip,
+                                            CfgLin ip,
                                             const CfgInsn& in,
                                             uint32_t& frame_out)
 {
@@ -2142,17 +2155,17 @@ static inline void listing_uasm_print_stats(std::string_view listing,
  * @param n_insns      Set to how many instructions were emitted as text
  *                     (whitelist, sized branch, or a successful verify).
  * @param external     Optional symbol map (same names as the human listing).
- * @param entry_in_window False when the MZ entry is past the 64 KiB window.
+ * @param entry_in_window False when the MZ entry is outside the load image.
  * @param relocs          MZ fixups into @p image. Empty leaves immediates numeric.
  * @return UASM source. The last line is `end <entry label>` for COM and a
- *         one-segment image whose entry is inside the window. A multi-segment
- *         image, or an entry past the window, ends with a bare `end`.
+ *         one-segment image whose entry is inside the image. A multi-segment
+ *         image, or an entry outside the image, ends with a bare `end`.
  * @note When @p opts has both --uasm and --uasm-stats, one `uasm-stats:` line
  *       is written to stderr. The line is not part of the returned source.
  */
 static inline std::string listing_emit_uasm(const CfgGraph& g,
                                             const std::vector<uint8_t>& image,
-                                            uint16_t entry_ip,
+                                            CfgLin entry_ip,
                                             const Options& opts,
                                             const std::string& source_name,
                                             const ToolchainReport* tc,
@@ -2164,15 +2177,15 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
                                             bool entry_in_window = true,
                                             std::span<const RelocEntry> relocs = {})
 {
-    std::map<uint16_t, std::string> sym;
-    std::set<uint16_t> proc_starts;
+    std::map<CfgLin, std::string> sym;
+    std::set<CfgLin> proc_starts;
     listing_collect_symbols(g, entry_ip, sym, proc_starts, external);
     listing_add_loc_labels(g, sym);
     n_procs = proc_starts.size();
     n_insns = 0;
 
-    std::map<uint16_t, CfgInsn> at;
-    std::map<uint16_t, const CfgBlock*> blk_at;
+    std::map<CfgLin, CfgInsn> at;
+    std::map<CfgLin, const CfgBlock*> blk_at;
     for (const auto& kv : g.blocks)
     {
         const CfgBlock& b = kv.second;
@@ -2229,11 +2242,7 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
     auto labels_at = [&](size_t at_off) -> std::vector<std::string>
     {
         std::vector<std::string> labs;
-        if (at_off > 0xFFFFu)
-        {
-            return labs;
-        }
-        const uint16_t ip = static_cast<uint16_t>(at_off);
+        const CfgLin ip = static_cast<CfgLin>(at_off);
         if (sym.count(ip))
         {
             labs.push_back(sym[ip]);
@@ -2289,11 +2298,7 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
     auto stood = [&](size_t at_off, std::string& text_out) -> size_t
     {
         text_out.clear();
-        if (at_off > 0xFFFFu)
-        {
-            return 0;
-        }
-        const uint16_t ip = static_cast<uint16_t>(at_off);
+        const CfgLin ip = static_cast<CfgLin>(at_off);
         const auto it = at.find(ip);
         if (it == at.end() || it->second.size == 0)
         {
@@ -2496,12 +2501,12 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
     }
 
     const bool multi = segs.size() > 1;
-    // Past 64KB the image is sN segment blocks. COM stays one .code segment.
+    // Past 64 KiB the image is sN segment blocks. COM stays one .code segment.
     // uasm -bin accepts "end func_XXXX" only when that label is in UASM's
     // first segment. .model tiny + .code is that case. .model small opens
     // its own segment before s0, so "end func_XXXX" is error A2203. A bare
-    // "end" is valid for both -bin and -mz. When the entry is inside the
-    // decoded image, its label stays in sN. An entry past 64 KiB is not
+    // "end" is valid for both -bin and -mz. An in-image entry past 64 KiB
+    // keeps its real label inside sN. An entry outside the image is not
     // labeled func_FFFF.
     const bool use_segments = multi && !uasm_com;
 
@@ -2703,12 +2708,14 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
  * @param cfg_out Optional annotated CFG. Assigned only when
  *        @c cfg_build_annotated ran. Left untouched when null, when
  *        @p entry_in_window is false, or when the image slice is empty.
+ * @param entry_seg_base Segment base of @p entry_ip (`cs * 16`). 0 for COM
+ *        and for an entry outside the image.
  * @return false on hard failure (empty image / capstone)
  */
 static inline bool listing_generate(const std::vector<uint8_t>& fileData,
                                     size_t image_file_off,
                                     size_t image_len,
-                                    uint16_t entry_ip,
+                                    CfgLin entry_ip,
                                     uint16_t cs_seg,
                                     uint16_t file_cs,
                                     const Options& opts,
@@ -2724,7 +2731,8 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
                                     std::string* human_stdout = nullptr,
                                     bool entry_in_window = true,
                                     std::span<const RelocEntry> relocs = {},
-                                    CfgGraph* cfg_out = nullptr)
+                                    CfgGraph* cfg_out = nullptr,
+                                    CfgLin entry_seg_base = 0)
 {
     out_text.clear();
     n_procs = 0;
@@ -2741,12 +2749,12 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
     Options cfg_opts = opts;
     cfg_opts.showCfg = false;
     CfgGraph g{};
-    // An entry past 64 KiB is not seeded at FFFF. The window stays 64 KiB.
-    // *cfg_out stays untouched on that path so the caller can still build.
+    // An entry outside the image is not seeded. *cfg_out stays untouched
+    // on that path so the caller can still build from linear 0.
     if (entry_in_window)
     {
         g = cfg_build_annotated(fileData, image_file_off, len, entry_ip, cs_seg,
-                                file_cs, cfg_opts, relocs);
+                                file_cs, cfg_opts, relocs, entry_seg_base);
         if (cfg_out != nullptr)
         {
             *cfg_out = g;
@@ -2999,13 +3007,14 @@ static inline int listing_deliver(const Options& opts,
  * @param cfg_out      Optional annotated CFG. Same contract as
  *                     @c listing_generate: written only when
  *                     @c cfg_build_annotated ran. Null skips the copy.
+ * @param entry_seg_base Segment base of @p entry_ip (`cs * 16`). 0 for COM.
  *
  * --uasm skips auto-repack. The .asm file is UASM source, not a REPACK-V1 listing.
  */
 static inline int listing_run(const std::vector<uint8_t>& fileData,
                               size_t image_file_off,
                               size_t image_len,
-                              uint16_t entry_ip,
+                              CfgLin entry_ip,
                               uint16_t cs_seg,
                               uint16_t file_cs,
                               const Options& opts,
@@ -3016,7 +3025,8 @@ static inline int listing_run(const std::vector<uint8_t>& fileData,
                                bool uasm_com_psp = false,
                                bool entry_in_window = true,
                                std::span<const RelocEntry> relocs = {},
-                               CfgGraph* cfg_out = nullptr)
+                               CfgGraph* cfg_out = nullptr,
+                               CfgLin entry_seg_base = 0)
 {
     std::string text;
     std::string human;
@@ -3026,7 +3036,8 @@ static inline int listing_run(const std::vector<uint8_t>& fileData,
         (opts.uasm && opts.showDisasm && !opts.jsonOut) ? &human : nullptr;
     if (!listing_generate(fileData, image_file_off, image_len, entry_ip, cs_seg, file_cs,
                           opts, input_path, text, n_procs, n_insns, kind, tc, tp, uasm_com,
-                          uasm_com_psp, human_ptr, entry_in_window, relocs, cfg_out))
+                          uasm_com_psp, human_ptr, entry_in_window, relocs, cfg_out,
+                          entry_seg_base))
     {
         if (!opts.jsonOut && !opts.uasm_stdout_only())
             std::cout << "\nListing: image offset outside file or empty.\n";

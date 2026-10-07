@@ -11,7 +11,7 @@ static inline void print_version()
     int cap_major = 0;
     int cap_minor = 0;
     (void)cs_version(&cap_major, &cap_minor);
-    std::cout << "dumpexe 2.18 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
+    std::cout << "dumpexe 2.19 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
                  "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n"
                  "License: GPLv2 | Commercial (contact author)\n";
     std::cout << std::format(
@@ -147,18 +147,24 @@ static inline bool read_entire_file(const std::string& filename,
 }
 
 /**
- * @brief Load-image IP of the MZ entry.
+ * @brief Load-image linear address of the MZ entry.
  *
- * com2exe CS=FFF0 IP=0100 becomes IP 0. An entry past the 64 KiB window is
- * not clamped to FFFF: that label is the wrong place, and the window stays.
+ * `delta = int16(cs) * 16 + ip`. com2exe CS=FFF0 IP=0100 has delta <= 0 and
+ * stays at linear 0 with segment base 0. An in-image entry keeps that linear,
+ * including past 64 KiB. An entry at or past the load image is not inside it.
+ *
+ * @param header     MZ header. CS is a signed paragraph offset.
+ * @param image_size Load image length in bytes.
+ * @return Linear entry, its segment base, and whether it is inside the image.
  */
 struct MzEntryLoc
 {
-    uint16_t ip = 0;
+    uint32_t linear = 0;
+    uint32_t seg_base = 0;
     bool in_window = true;
 };
 
-static inline MzEntryLoc mz_entry_image_ip(const MZHeader& header)
+static inline MzEntryLoc mz_entry_image_ip(const MZHeader& header, size_t image_size)
 {
     MzEntryLoc loc{};
     const int32_t delta =
@@ -166,16 +172,16 @@ static inline MzEntryLoc mz_entry_image_ip(const MZHeader& header)
         static_cast<int32_t>(header.ip);
     if (delta <= 0)
     {
-        loc.ip = 0;
         return loc;
     }
-    if (delta > 0xFFFF)
+    if (static_cast<uint32_t>(delta) >= image_size)
     {
-        loc.ip = 0;
         loc.in_window = false;
         return loc;
     }
-    loc.ip = static_cast<uint16_t>(delta);
+    loc.linear = static_cast<uint32_t>(delta);
+    loc.seg_base = static_cast<uint32_t>(static_cast<uint16_t>(header.cs)) * 16u;
+    loc.in_window = true;
     return loc;
 }
 
@@ -403,19 +409,20 @@ int main(int argc, char* argv[]) {
                 size_t cfg_file_off = 0, cfg_len = 0;
                 uint16_t cs_seg = 0;
                 mz_cfg_window(header, sizes, cfg_file_off, cfg_len, cs_seg, opts);
-                const MzEntryLoc entry = mz_entry_image_ip(header);
-                // Share only for an in-window entry. Past-window --cfg/--json
-                // still seeds IP 0 in cfg_analyze_image below.
+                const MzEntryLoc entry = mz_entry_image_ip(header, cfg_len);
+                // Share only for an in-image entry. An entry outside the image
+                // still seeds linear 0 in cfg_analyze_image below.
                 CfgGraph* cfg_slot = nullptr;
                 if (want_cfg_view && entry.in_window)
                 {
                     cfg_slot = &cfg_g;
                 }
                 listing_rc = listing_run(fileData, cfg_file_off, cfg_len,
-                                entry.ip, cs_seg, static_cast<uint16_t>(header.cs), opts, opts.filename,
+                                entry.linear, cs_seg, static_cast<uint16_t>(header.cs), opts, opts.filename,
                                 opts.toolchainDetect ? &tc_rep : nullptr,
                                 opts.toolchainDetect ? &tp_rep : nullptr,
-                                false, false, entry.in_window, relocs, cfg_slot);
+                                false, false, entry.in_window, relocs, cfg_slot,
+                                entry.seg_base);
                 if (listing_rc == 0 && cfg_g.image_size != 0)
                 {
                     cfg_shared = true;
@@ -444,11 +451,12 @@ int main(int argc, char* argv[]) {
                 size_t cfg_file_off = 0, cfg_len = 0;
                 uint16_t cs_seg = 0;
                 mz_cfg_window(header, sizes, cfg_file_off, cfg_len, cs_seg, opts);
-                const MzEntryLoc cfg_entry = mz_entry_image_ip(header);
+                const MzEntryLoc cfg_entry = mz_entry_image_ip(header, cfg_len);
                 cfg_g = cfg_analyze_image(fileData, cfg_file_off, cfg_len,
-                                          cfg_entry.in_window ? cfg_entry.ip : uint16_t{0},
+                                          cfg_entry.in_window ? cfg_entry.linear : CfgLin{0},
                                           cs_seg, static_cast<uint16_t>(header.cs), cfg_opts,
-                                          relocs);
+                                          relocs,
+                                          cfg_entry.in_window ? cfg_entry.seg_base : CfgLin{0});
                 cfg_ran = true;
             }
         }

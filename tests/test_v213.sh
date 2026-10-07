@@ -116,10 +116,10 @@ bad = bytearray(32)
 struct.pack_into("<14H", bad, 0, 0x5A4D, 0, 0, 0, 2, 0, 0xFFFF, 0, 0x200, 0, 0, 0, 0x1C, 0)
 (td / "bad_mz.exe").write_bytes(bad)
 
-# L3: CS 0x1000 puts the entry at image offset 65536, past the window.
-# File is large enough that validate_header accepts the entry.
+# L3: CS 0x1000 IP 0 is linear 0x10000, inside a 65537-byte image.
 image = bytearray(65537)
 image[0] = 0xC3
+image[65536] = 0xC3
 (td / "past64.exe").write_bytes(build_mz(bytes(image), ip=0, cs=0x1000))
 
 # Level-2 LHA appended after the declared MZ image (SFX trailer).
@@ -283,8 +283,13 @@ PY
 check entry_past_window bash -c "
   set -euo pipefail
   '$BIN' --uasm -o '$TD/past64.asm' '$TD/past64.exe' >'$TD/past64.out' 2>'$TD/past64.err'
-  grep -q 'entry is past the 64 KiB decode window' '$TD/past64.asm'
-  # The listing must not end by labeling the clamped entry.
+  if grep -q 'entry is past the 64 KiB decode window' '$TD/past64.asm'; then
+    echo 'in-image entry must not print the past-window note' >&2
+    exit 1
+  fi
+  grep -q 'func_10000' '$TD/past64.asm'
+  grep -q 'ret' '$TD/past64.asm'
+  # Multi-segment listing still ends with a bare end.
   tail -n 5 '$TD/past64.asm' | grep -q '^end$'
   if grep -q 'func_FFFF' '$TD/past64.asm'; then
     echo 'func_FFFF still emitted' >&2

@@ -32,7 +32,7 @@
 struct JsonReport
 {
     std::string tool = "dumpexe";
-    std::string version = "2.18";
+    std::string version = "2.19";
     std::string file;
     std::string format; ///< "mz" | "com" | "sys"
 
@@ -347,7 +347,7 @@ struct JsonReport
             {
                 const CfgBlock& b = *interesting[i];
                 os << "      {\n";
-                os << std::format("        \"start_ip\": \"{:04X}\",\n", b.start_ip);
+                os << std::format("        \"start_ip\": \"{}\",\n", cfg_lin_hex(b.start_ip));
                 os << std::format("        \"file_offset\": {},\n", b.file_off);
                 os << "        \"tags\": [";
                 for (size_t t = 0; t < b.tags.size(); ++t)
@@ -364,9 +364,9 @@ struct JsonReport
                         os << ", ";
                     const auto& s = b.ints[t];
                     os << std::format(
-                        "{{\"ip\": \"{:04X}\", \"int\": {}, \"ah\": {}, \"note\": \"{}\", "
+                        "{{\"ip\": \"{}\", \"int\": {}, \"ah\": {}, \"note\": \"{}\", "
                         "\"path\": \"{}\"}}",
-                        s.ip, s.int_num,
+                        cfg_lin_hex(s.ip), s.int_num,
                         (s.ah == 0xFF ? -1 : static_cast<int>(s.ah)),
                         json_escape(s.note), json_escape(s.path));
                 }
@@ -395,9 +395,10 @@ struct JsonReport
                         os << ",\n";
                     first_e = false;
                     os << std::format(
-                        "      {{\"from\": \"{:04X}\", \"to\": \"{:04X}\", "
+                        "      {{\"from\": \"{}\", \"to\": \"{}\", "
                         "\"kind\": \"{}\", \"has_target\": {}}}",
-                        b.start_ip, e.to_ip, cfg_edge_name(e.kind),
+                        cfg_lin_hex(b.start_ip), cfg_lin_hex(e.to_ip),
+                        cfg_edge_name(e.kind),
                         e.has_target ? "true" : "false");
                     ++ecount;
                 }
