@@ -59,39 +59,95 @@ static inline std::string cfg_lin_hex(CfgLin v)
 }
 
 /**
- * @brief Near target inside @p seg_base, wrapping at 64 KiB.
+ * @brief Signed distance from a paragraph frame to an image linear.
  *
- * Capstone's immediate is an address, not a wrapped IP. Subtract the
- * segment base in 64-bit, keep the low 16 bits, then add the base back.
- * A displacement that underflows the base stays in the same segment.
- *
- * @param imm      Capstone immediate (CS_MODE_16 address).
- * @param seg_base Real-mode segment base (`cs * 16`), not `linear & ~0xFFFF`.
- * @return Linear target `seg_base + target16`.
+ * @param linear Non-negative image offset. Capstone is addressed with this.
+ * @param frame  Paragraph frame (`cs * 16`). May be negative.
+ * @return `linear - frame`. @p frame is not converted to an unsigned type.
  */
-static inline CfgLin cfg_near_target(uint64_t imm, CfgLin seg_base)
+static inline int64_t cfg_frame_dist(CfgLin linear, int32_t frame)
 {
-    const uint16_t target16 = static_cast<uint16_t>(
-        static_cast<uint64_t>(imm) - static_cast<uint64_t>(seg_base));
-    return seg_base + target16;
+    return static_cast<int64_t>(linear) - static_cast<int64_t>(frame);
 }
 
 /**
- * @brief Fall-through linear after an instruction, wrapping in the segment.
+ * @brief True when @p linear lies in the 64 KiB window that starts at @p frame.
  *
- * Not `linear + size`. A nop at IP 0xFFFF continues at IP 0 of this segment.
+ * The distance is not wrapped. A negative frame stays signed.
  *
- * @param linear   Instruction linear address. `linear - seg_base` is the IP.
- * @param seg_base Segment base of @p linear.
- * @param size     Decoded length. The caller rejects a size that crosses
- *                 the segment.
- * @return `seg_base + uint16(ip16 + size)`.
+ * @param linear Image offset.
+ * @param frame  Paragraph frame. May be negative.
+ * @return true when `0 <= linear - frame <= 0xFFFF`.
  */
-static inline CfgLin cfg_fall_next(CfgLin linear, CfgLin seg_base, uint16_t size)
+static inline bool cfg_in_frame(CfgLin linear, int32_t frame)
 {
-    const uint16_t ip16 = static_cast<uint16_t>(linear - seg_base);
+    const int64_t dist = cfg_frame_dist(linear, frame);
+    return dist >= 0 && dist <= static_cast<int64_t>(0xFFFF);
+}
+
+/**
+ * @brief Real-mode IP of @p linear inside @p frame.
+ *
+ * @param linear Image offset. Meaningful when cfg_in_frame is true.
+ * @param frame  Paragraph frame. May be negative.
+ * @return `(uint16_t)(linear - frame)`.
+ */
+static inline uint16_t cfg_ip16(CfgLin linear, int32_t frame)
+{
+    return static_cast<uint16_t>(cfg_frame_dist(linear, frame));
+}
+
+/**
+ * @brief Near target `frame + uint16(imm - frame)`.
+ *
+ * Capstone's immediate is a non-negative linear. The frame is subtracted
+ * in int64. A negative frame is never cast to uint32_t or uint64_t.
+ * The caller still rejects a target that is outside the image.
+ *
+ * @param imm   Capstone immediate (CS_MODE_16 address).
+ * @param frame Paragraph frame of the instruction. May be negative.
+ * @param out   Receives the linear target when it is >= 0.
+ * @return false when the target is negative. Do not enqueue it.
+ */
+static inline bool cfg_near_target(uint64_t imm, int32_t frame, CfgLin& out)
+{
+    const uint16_t target16 = static_cast<uint16_t>(
+        static_cast<int64_t>(imm) - static_cast<int64_t>(frame));
+    const int64_t next =
+        static_cast<int64_t>(frame) + static_cast<int64_t>(target16);
+    if (next < 0)
+    {
+        return false;
+    }
+    out = static_cast<CfgLin>(next);
+    return true;
+}
+
+/**
+ * @brief Fall-through linear, wrapping inside the 64 KiB frame.
+ *
+ * `ip16 = (uint16_t)(linear - frame)`, then `frame + uint16(ip16 + size)`.
+ * Not `linear + size`. A nop at IP 0xFFFF continues at IP 0 of this frame.
+ *
+ * @param linear Instruction linear. Capstone's address, not the frame.
+ * @param frame  Paragraph frame. May be negative.
+ * @param size   Decoded length. The caller rejects a size that crosses the segment.
+ * @param out    Receives the next linear when it is >= 0.
+ * @return false when the next linear is negative.
+ */
+static inline bool cfg_fall_next(CfgLin linear, int32_t frame, uint16_t size,
+                                 CfgLin& out)
+{
+    const uint16_t ip16 = cfg_ip16(linear, frame);
     const uint16_t next16 = static_cast<uint16_t>(ip16 + size);
-    return seg_base + next16;
+    const int64_t next =
+        static_cast<int64_t>(frame) + static_cast<int64_t>(next16);
+    if (next < 0)
+    {
+        return false;
+    }
+    out = static_cast<CfgLin>(next);
+    return true;
 }
 
 /**
@@ -104,6 +160,65 @@ static inline CfgLin cfg_fall_next(CfgLin linear, CfgLin seg_base, uint16_t size
 static inline bool cfg_ip16_wrapped(uint16_t ip16, uint16_t next16)
 {
     return next16 < ip16;
+}
+
+/**
+ * @brief Slot for a signed entry frame that cannot cross a CfgLin parameter.
+ *
+ * listing_run takes CfgLin. A negative frame must not be converted to
+ * uint32_t. The MZ caller stores the frame here and passes 0. cfg_build
+ * consumes the value once. dumpexe analyzes one image at a time.
+ *
+ * @return The process-lifetime slot.
+ */
+static inline int32_t& cfg_entry_frame_slot()
+{
+    static int32_t frame = 0;
+    return frame;
+}
+
+/**
+ * @brief Store a one-shot signed entry frame for the next cfg_build.
+ *
+ * @param frame Paragraph frame. A negative value is the override. 0 clears it.
+ */
+static inline void cfg_set_entry_frame_override(int32_t frame)
+{
+    cfg_entry_frame_slot() = frame;
+}
+
+/**
+ * @brief Read and clear the one-shot entry frame.
+ *
+ * @return The stored frame. The slot is 0 afterwards.
+ */
+static inline int32_t cfg_take_entry_frame_override()
+{
+    int32_t& slot = cfg_entry_frame_slot();
+    const int32_t frame = slot;
+    slot = 0;
+    return frame;
+}
+
+/**
+ * @brief CfgLin base argument for listing_run.
+ *
+ * A negative @p frame is not converted to uint32_t. It is stored as the
+ * one-shot override and this returns 0. A non-negative frame is returned
+ * unchanged and any override is cleared.
+ *
+ * @param frame Signed paragraph frame from mz_entry_image_ip.
+ * @return Value safe to pass as listing_run's segment base.
+ */
+static inline CfgLin cfg_listing_entry_base(int32_t frame)
+{
+    if (frame < 0)
+    {
+        cfg_set_entry_frame_override(frame);
+        return 0;
+    }
+    cfg_set_entry_frame_override(0);
+    return static_cast<CfgLin>(frame);
 }
 
 //=============================================================================
@@ -141,7 +256,7 @@ struct CfgEdge {
 
 struct CfgInsn {
     CfgLin      ip = 0;          ///< image-linear address of the opcode
-    CfgLin      seg_base = 0;    ///< real-mode segment base (cs * 16)
+    int32_t     seg_base = 0;    ///< paragraph frame (cs * 16); may be negative
     size_t      file_off = 0;
     uint8_t     size = 0;
     std::string text;        ///< "mnemonic op_str"
@@ -171,7 +286,7 @@ struct CfgStringXref {
 struct CfgBlock {
     CfgLin start_ip = 0;
     CfgLin end_ip   = 0;     ///< exclusive linear (first byte past last insn)
-    CfgLin seg_base = 0;     ///< real-mode segment base for this block
+    int32_t seg_base = 0;    ///< paragraph frame (cs * 16); may be negative
     size_t   file_off = 0;   ///< file offset of start
     bool     is_entry = false;
     bool     is_table_entry = false;
@@ -188,6 +303,7 @@ struct CfgBlock {
 struct CfgStringLit {
     CfgLin off = 0;          ///< image offset
     std::string text;
+    bool interesting = false; ///< cfg_string_interesting, computed once
 };
 
 struct CfgGraph {
@@ -466,8 +582,9 @@ static inline bool cfg_int_noreturn(uint8_t int_num, uint16_t ah)
 /**
  * @brief Scan @p [scan_lo, scan_hi) for consecutive near JMP (E9) stubs.
  *
- * Slot and target leaders use @p seg_base. The rel16 wraps inside that
- * segment (`seg_base + uint16(ip16 + 3 + rel)`), not as a truncated linear.
+ * Slot and target leaders use @p frame. The rel16 wraps inside that
+ * segment (`frame + uint16(ip16 + 3 + rel)`), not as a truncated linear.
+ * A negative frame is not cast to an unsigned type.
  *
  * @param image       Load image. image[0] is linear 0.
  * @param scan_lo     First linear to consider.
@@ -476,8 +593,9 @@ static inline bool cfg_int_noreturn(uint8_t int_num, uint16_t ah)
  * @param table_slots Slot linears that form a long enough run.
  * @param min_slots   Minimum consecutive E9 stubs.
  * @param owner       Byte ownership from trusted decode. Null skips the check.
- * @param seg_base    Segment base for slots in this window.
- * @param seg_of      Linear to segment base. Existing entries are kept.
+ * @param frame       Paragraph frame for slots in this window. May be negative.
+ * @param seg_of      Linear to paragraph frame. Existing entries are kept.
+ * @param frames      Distinct frames. A new frame is inserted, not every leader.
  */
 static inline void cfg_find_near_jmp_tables(const std::vector<uint8_t>& image,
                                             CfgLin scan_lo,
@@ -486,8 +604,9 @@ static inline void cfg_find_near_jmp_tables(const std::vector<uint8_t>& image,
                                             std::set<CfgLin>& table_slots,
                                             size_t min_slots,
                                             const std::vector<uint32_t>* owner,
-                                            CfgLin seg_base,
-                                            std::map<CfgLin, CfgLin>& seg_of)
+                                            int32_t frame,
+                                            std::map<CfgLin, int32_t>& seg_of,
+                                            std::set<int32_t>& frames)
 {
     if (static_cast<size_t>(scan_hi) > image.size())
     {
@@ -500,14 +619,15 @@ static inline void cfg_find_near_jmp_tables(const std::vector<uint8_t>& image,
 
     auto in_seg = [&](CfgLin lin) -> bool
     {
-        return lin >= seg_base && (lin - seg_base) <= 0xFFFFu;
+        return cfg_in_frame(lin, frame);
     };
 
     auto remember = [&](CfgLin lin)
     {
         if (!seg_of.count(lin))
         {
-            seg_of[lin] = seg_base;
+            seg_of[lin] = frame;
+            frames.insert(frame);
         }
         leaders.insert(lin);
     };
@@ -537,17 +657,23 @@ static inline void cfg_find_near_jmp_tables(const std::vector<uint8_t>& image,
         {
             const int16_t rel = static_cast<int16_t>(image[j + 1] | (image[j + 2] << 8));
             const CfgLin slot_ip = static_cast<CfgLin>(j);
-            const uint16_t ip16 = static_cast<uint16_t>(slot_ip - seg_base);
+            const uint16_t ip16 = cfg_ip16(slot_ip, frame);
             const uint16_t tgt16 = static_cast<uint16_t>(
                 static_cast<int>(ip16) + 3 + static_cast<int>(rel));
-            const CfgLin tgt = seg_base + tgt16;
+            const int64_t tgt64 =
+                static_cast<int64_t>(frame) + static_cast<int64_t>(tgt16);
             slots.push_back(slot_ip);
             remember(slot_ip);
-            // Drop a target that would restart inside an owned instruction.
-            if (owner == nullptr || !cfg_ip_in_image(tgt, image.size()) ||
-                !cfg_ip_inside_owned(*owner, tgt))
+            // A negative target is not an image linear. Do not cast it.
+            if (tgt64 >= 0)
             {
-                remember(tgt);
+                const CfgLin tgt = static_cast<CfgLin>(tgt64);
+                // Drop a target that would restart inside an owned instruction.
+                if (owner == nullptr || !cfg_ip_in_image(tgt, image.size()) ||
+                    !cfg_ip_inside_owned(*owner, tgt))
+                {
+                    remember(tgt);
+                }
             }
             table_slots.insert(slot_ip);
             j += 3;
@@ -570,10 +696,12 @@ static inline void cfg_find_near_jmp_tables(const std::vector<uint8_t>& image,
 /**
  * @brief Build a CFG over a load image using image-linear addresses.
  *
- * image[0] is linear 0. A work item is `{linear, seg_base}` with
- * `ip16 = linear - seg_base` and `ip16 <= 0xFFFF`. Near flow wraps inside
- * that segment. Capstone stays CS_MODE_16 and is given address @c linear.
- * @p cs_seg is stored for display only and is not the flow segment.
+ * image[0] is linear 0. A work item is `{linear, frame}` with
+ * `ip16 = (uint16_t)(linear - frame)` and the distance in `0..0xFFFF`.
+ * Near flow wraps inside that frame. The frame is int32_t and may be
+ * negative; it is never cast through uint32_t or uint64_t. Capstone stays
+ * CS_MODE_16 and is given the non-negative linear. @p cs_seg is stored for
+ * display only and is not the flow segment.
  *
  * A relocated 9Ah/EAh is followed at `seg*16+off` when that linear is inside
  * the image, including past 64 KiB. Pinned and outside the image stays
@@ -588,7 +716,10 @@ static inline void cfg_find_near_jmp_tables(const std::vector<uint8_t>& image,
  * @param follow_calls    When true, call targets are leaders.
  * @param max_blocks      Safety cap on blocks materialized in pass 2.
  * @param relocs          MZ fixups into this load image. Empty keeps M1 only.
- * @param entry_seg_base  Segment base of @p entry_ip (`cs * 16`). 0 for COM.
+ * @param entry_frame  Paragraph frame of @p entry_ip (`cs * 16`). 0 for COM
+ *                      and for an MZ entry whose signed delta is <= 0.
+ *                      May be negative. A negative value passed through
+ *                      listing_run is taken from the one-shot override instead.
  * @return Control-flow graph. Empty when the entry is outside the image.
  */
 static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
@@ -599,18 +730,28 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                                  bool follow_calls,
                                  size_t max_blocks = 20000,
                                  std::span<const RelocEntry> relocs = {},
-                                 CfgLin entry_seg_base = 0)
+                                 int32_t entry_frame = 0)
 {
     CfgGraph g;
     g.cs_seg = cs_seg;
     g.image_file_base = file_base;
     g.image_size = image.size();
 
+    // Consume the override even when this build returns empty, so a negative
+    // frame cannot leak into the next image. listing_run cannot carry it.
+    {
+        const int32_t over = cfg_take_entry_frame_override();
+        if (over < 0)
+        {
+            entry_frame = over;
+        }
+    }
+
     if (image.empty() || !cfg_ip_in_image(entry_ip, image.size()))
     {
         return g;
     }
-    if (entry_ip < entry_seg_base || (entry_ip - entry_seg_base) > 0xFFFFu)
+    if (!cfg_in_frame(entry_ip, entry_frame))
     {
         return g;
     }
@@ -633,12 +774,16 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
     struct CfgSeed
     {
         CfgLin linear = 0;
-        CfgLin seg_base = 0;
+        int32_t frame = 0;
     };
 
     std::set<CfgLin> leaders;
     std::set<CfgLin> table_slots;
-    std::map<CfgLin, CfgLin> leader_seg;
+    std::map<CfgLin, int32_t> leader_seg;
+    // Distinct paragraph frames. seg_covering looks these up; it does not
+    // walk leader_seg.
+    std::set<int32_t> seg_frames;
+    seg_frames.insert(entry_frame);
     // Byte ownership: trusted decode claims [linear, linear+size) before any
     // heuristic leader (INT scan, ip-8/ip-16, jump table) may split a block.
     std::vector<uint32_t> owner(image.size(), kCfgUnowned);
@@ -648,9 +793,9 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
     // int block's AH is unknown. This set is what stops that block.
     std::set<CfgLin> noreturn_ips;
 
-    auto enqueue = [&](CfgLin linear, CfgLin seg_base)
+    auto enqueue = [&](CfgLin linear, int32_t frame)
     {
-        if (linear < seg_base || (linear - seg_base) > 0xFFFFu)
+        if (!cfg_in_frame(linear, frame))
         {
             return;
         }
@@ -666,8 +811,9 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
         }
         if (leaders.insert(linear).second)
         {
-            leader_seg[linear] = seg_base;
-            work.push(CfgSeed{linear, seg_base});
+            leader_seg[linear] = frame;
+            seg_frames.insert(frame);
+            work.push(CfgSeed{linear, frame});
         }
     };
 
@@ -687,20 +833,21 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
         }
     };
 
-    auto note_leader = [&](CfgLin linear, CfgLin seg_base)
+    auto note_leader = [&](CfgLin linear, int32_t frame)
     {
         if (!leader_seg.count(linear))
         {
-            leader_seg[linear] = seg_base;
+            leader_seg[linear] = frame;
+            seg_frames.insert(frame);
         }
         leaders.insert(linear);
     };
 
     // Linear trusted decode. Owns bytes. Does not restart mid-instruction.
-    // Near targets and fall-through wrap inside seg_base.
-    auto decode_from = [&](CfgLin start, CfgLin seg_base)
+    // Near targets and fall-through wrap inside the signed frame.
+    auto decode_from = [&](CfgLin start, int32_t frame)
     {
-        if (start < seg_base || (start - seg_base) > 0xFFFFu)
+        if (!cfg_in_frame(start, frame))
         {
             return;
         }
@@ -722,7 +869,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
         uint16_t flow_ah = 0x100;
         for (int step = 0; step < 4096; ++step)
         {
-            if (linear < seg_base || (linear - seg_base) > 0xFFFFu)
+            if (!cfg_in_frame(linear, frame))
             {
                 break;
             }
@@ -734,7 +881,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             {
                 break; // join an instruction already claimed
             }
-            const uint16_t ip16 = static_cast<uint16_t>(linear - seg_base);
+            const uint16_t ip16 = cfg_ip16(linear, frame);
             const size_t room = static_cast<size_t>(0x10000u - ip16);
             const size_t avail = std::min({
                 image.size() - static_cast<size_t>(linear), room, size_t{16}});
@@ -775,8 +922,9 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             const cs_x86& x86 = insn->detail->x86;
             std::string mnem = insn->mnemonic;
             const uint16_t next16 = static_cast<uint16_t>(ip16 + insn->size);
-            const CfgLin next = cfg_fall_next(linear, seg_base,
-                                              static_cast<uint16_t>(insn->size));
+            CfgLin next = 0;
+            const bool next_ok = cfg_fall_next(linear, frame,
+                                              static_cast<uint16_t>(insn->size), next);
             const bool wrapped = cfg_ip16_wrapped(ip16, next16);
             claim(linear, insn->size);
 
@@ -791,7 +939,12 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                     return false;
                 }
                 const uint64_t imm = static_cast<uint64_t>(x86.operands[op_i].imm);
-                enqueue(cfg_near_target(imm, seg_base), seg_base);
+                CfgLin tgt = 0;
+                if (!cfg_near_target(imm, frame, tgt))
+                {
+                    return false;
+                }
+                enqueue(tgt, frame);
                 return true;
             };
 
@@ -807,7 +960,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                         cfg_far_reloc_site(image, linear, insn->size, reloc_at);
                     if (pin.kind == CfgFarRelocKind::InImage)
                     {
-                        enqueue(pin.ip, pin.seg_base);
+                        enqueue(pin.ip, static_cast<int32_t>(pin.seg_base));
                     }
                     else if (pin.kind == CfgFarRelocKind::NotPinned)
                     {
@@ -831,8 +984,11 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                 // Fall-through first. A forward jcc/loop into the *next*
                 // instruction (74 01 B8 ..) must not claim that interior
                 // byte before the real opcode is owned. The fall-through
-                // wraps inside this segment.
-                enqueue(next, seg_base);
+                // wraps inside this frame. A negative next is not enqueued.
+                if (next_ok)
+                {
+                    enqueue(next, frame);
+                }
                 enqueue_near(0);
                 break;
             }
@@ -845,7 +1001,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                 // call. Only enqueue continuation if it does not look like a
                 // zero/data hole and is not the middle of a jump table.
                 bool looks_data = false;
-                if (cfg_ip_in_image(next, image.size()))
+                if (next_ok && cfg_ip_in_image(next, image.size()))
                 {
                     int z = 0;
                     for (size_t k = 0; k < 8 &&
@@ -873,9 +1029,9 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                         looks_data = true;
                     }
                 }
-                if (!looks_data)
+                if (!looks_data && next_ok)
                 {
-                    enqueue(next, seg_base);
+                    enqueue(next, frame);
                 }
                 // Far lcall/callf still falls through above. A relocated segment
                 // word is followed instead of M1, and only when follow_calls
@@ -886,7 +1042,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                         cfg_far_reloc_site(image, linear, insn->size, reloc_at);
                     if (pin.kind == CfgFarRelocKind::InImage)
                     {
-                        enqueue(pin.ip, pin.seg_base);
+                        enqueue(pin.ip, static_cast<int32_t>(pin.seg_base));
                     }
                     else if (pin.kind == CfgFarRelocKind::NotPinned)
                     {
@@ -932,10 +1088,17 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                     {
                         flow_ah = 0x100;
                     }
-                    note_leader(linear, seg_base);
+                    note_leader(linear, frame);
                     if (wrapped)
                     {
-                        enqueue(next, seg_base);
+                        if (next_ok)
+                        {
+                            enqueue(next, frame);
+                        }
+                        break;
+                    }
+                    if (!next_ok)
+                    {
                         break;
                     }
                     linear = next;
@@ -948,7 +1111,15 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             // inside this straight-line claim, and do not spill past the segment.
             if (wrapped)
             {
-                enqueue(next, seg_base);
+                if (next_ok)
+                {
+                    enqueue(next, frame);
+                }
+                break;
+            }
+
+            if (!next_ok)
+            {
                 break;
             }
 
@@ -968,7 +1139,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
         {
             const CfgSeed seed = work.front();
             work.pop();
-            decode_from(seed.linear, seed.seg_base);
+            decode_from(seed.linear, seed.frame);
         }
     };
 
@@ -988,13 +1159,13 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             {
                 continue;
             }
-            const CfgLin sb = leader_seg.count(L) ? leader_seg[L] : entry_seg_base;
+            const int32_t sb = leader_seg.count(L) ? leader_seg[L] : entry_frame;
             work.push(CfgSeed{L, sb});
         }
     };
 
     // --- Pass 1a: trusted flow from the entry, then call/jmp/jcc targets ---
-    enqueue(entry_ip, entry_seg_base);
+    enqueue(entry_ip, entry_frame);
     drain();
 
     // Jump tables only where the E9 is not an immediate inside owned code.
@@ -1002,7 +1173,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
         std::set<CfgLin> snap = leaders;
         const CfgLin scan_hi = static_cast<CfgLin>(std::min(image.size(), size_t{0x200}));
         cfg_find_near_jmp_tables(image, 0, scan_hi, leaders, table_slots, 4, &owner,
-                                 0, leader_seg);
+                                 0, leader_seg, seg_frames);
         queue_new(snap);
         snap = leaders;
         if (static_cast<size_t>(entry_ip) < image.size())
@@ -1011,7 +1182,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             const size_t entry_plus = static_cast<size_t>(entry_ip) + 0x100u;
             const CfgLin hi = static_cast<CfgLin>(std::min(image.size(), entry_plus));
             cfg_find_near_jmp_tables(image, lo, hi, leaders, table_slots, 6, &owner,
-                                     entry_seg_base, leader_seg);
+                                     entry_frame, leader_seg, seg_frames);
             queue_new(snap);
         }
         drain();
@@ -1020,9 +1191,9 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
     // INT seeds: only an opcode CD. A CD that trusted decode already consumed
     // as an immediate or displacement is not a leader. Uncovered CD bytes are
     // leaders only when a decode that starts there executes `int`.
-    auto decode_is_int = [&](CfgLin at, CfgLin seg_base) -> bool
+    auto decode_is_int = [&](CfgLin at, int32_t frame) -> bool
     {
-        if (at < seg_base || (at - seg_base) > 0xFFFFu)
+        if (!cfg_in_frame(at, frame))
         {
             return false;
         }
@@ -1030,7 +1201,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
         {
             return false;
         }
-        const uint16_t ip16 = static_cast<uint16_t>(at - seg_base);
+        const uint16_t ip16 = cfg_ip16(at, frame);
         const size_t room = static_cast<size_t>(0x10000u - ip16);
         const size_t avail = std::min({
             image.size() - static_cast<size_t>(at), room, size_t{16}});
@@ -1053,29 +1224,37 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                insn->bytes[0] == 0xCD;
     };
 
-    auto seg_covering = [&](CfgLin lin) -> CfgLin
+    // Greatest frame <= lin, then the cover test. Not a scan of leader_seg.
+    auto seg_covering = [&](CfgLin lin, int32_t& frame_out) -> bool
     {
-        // The first 64 KiB keeps the historical flat segment (base 0).
-        if (lin <= 0xFFFFu)
+        if (lin > static_cast<CfgLin>(INT32_MAX))
         {
-            return 0;
+            return false;
         }
-        bool any = false;
-        CfgLin best = 0;
-        auto consider = [&](CfgLin sb)
+        auto it = seg_frames.upper_bound(static_cast<int32_t>(lin));
+        if (it == seg_frames.begin())
         {
-            if (lin >= sb && (lin - sb) <= 0xFFFFu && (!any || sb >= best))
+            return false;
+        }
+        --it;
+        const int32_t frame = *it;
+        if (frame < 0)
+        {
+            const int64_t dist = cfg_frame_dist(lin, frame);
+            if (dist >= 0 && dist <= static_cast<int64_t>(0xFFFF))
             {
-                best = sb;
-                any = true;
+                frame_out = frame;
+                return true;
             }
-        };
-        consider(entry_seg_base);
-        for (const auto& kv : leader_seg)
-        {
-            consider(kv.second);
+            return false;
         }
-        return any ? best : kCfgUnowned;
+        const CfgLin base = static_cast<CfgLin>(frame);
+        if (lin >= base && (lin - base) <= 0xFFFFu)
+        {
+            frame_out = frame;
+            return true;
+        }
+        return false;
     };
 
     for (size_t i = 0; i + 1 < image.size(); ++i)
@@ -1090,8 +1269,8 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             continue;
         }
         const CfgLin ip = static_cast<CfgLin>(i);
-        const CfgLin sb = seg_covering(ip);
-        if (sb == kCfgUnowned)
+        int32_t sb = 0;
+        if (!seg_covering(ip, sb))
         {
             continue;
         }
@@ -1117,10 +1296,16 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
         // so mov ah / mov dx can still open a block ahead of an uncovered INT.
         // Skip 00 bytes: they are padding (and the fake PSP hole), and decoding
         // them plants a block of "add [bx+si], al" ahead of the real entry.
-        // Stay inside this segment: do not subtract across seg_base.
+        // Stay inside this frame: add the IP, do not subtract across it.
         auto enqueue_nearby = [&](uint16_t ip16_at)
         {
-            const CfgLin at = sb + ip16_at;
+            const int64_t at64 =
+                static_cast<int64_t>(sb) + static_cast<int64_t>(ip16_at);
+            if (at64 < 0)
+            {
+                return;
+            }
+            const CfgLin at = static_cast<CfgLin>(at64);
             if (!cfg_ip_in_image(at, image.size()))
             {
                 return;
@@ -1131,7 +1316,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             }
             enqueue(at, sb);
         };
-        const uint16_t ip16 = static_cast<uint16_t>(ip - sb);
+        const uint16_t ip16 = cfg_ip16(ip, sb);
         if (ip16 >= 16)
         {
             enqueue_nearby(static_cast<uint16_t>(ip16 - 16));
@@ -1198,8 +1383,8 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             continue;
         }
 
-        const CfgLin sb = leader_seg.count(L) ? leader_seg[L] : CfgLin{0};
-        if (L < sb || (L - sb) > 0xFFFFu)
+        const int32_t sb = leader_seg.count(L) ? leader_seg[L] : int32_t{0};
+        if (!cfg_in_frame(L, sb))
         {
             continue;
         }
@@ -1220,11 +1405,11 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
 
         while (!stop && linear < limit && cfg_ip_in_image(linear, image.size()))
         {
-            if (linear < sb || (linear - sb) > 0xFFFFu)
+            if (!cfg_in_frame(linear, sb))
             {
                 break;
             }
-            const uint16_t ip16 = static_cast<uint16_t>(linear - sb);
+            const uint16_t ip16 = cfg_ip16(linear, sb);
             const size_t room = static_cast<size_t>(0x10000u - ip16);
             const size_t avail = std::min({
                 image.size() - static_cast<size_t>(linear), room, size_t{16}});
@@ -1290,8 +1475,9 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             const cs_x86& x86 = insn->detail->x86;
             std::string mnem = insn->mnemonic;
             const uint16_t next16 = static_cast<uint16_t>(ip16 + insn->size);
-            const CfgLin next = cfg_fall_next(linear, sb,
-                                              static_cast<uint16_t>(insn->size));
+            CfgLin next = 0;
+            const bool next_ok = cfg_fall_next(linear, sb,
+                                              static_cast<uint16_t>(insn->size), next);
             const bool wrapped = cfg_ip16_wrapped(ip16, next16);
             // A leader strictly inside this insn is not a block boundary.
             if (!wrapped && insn->size > 0 && (linear + insn->size) > limit)
@@ -1352,7 +1538,12 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                 CfgEdge e;
                 e.kind = kind;
                 const uint64_t imm = static_cast<uint64_t>(x86.operands[0].imm);
-                e.to_ip = cfg_near_target(imm, sb);
+                CfgLin tgt = 0;
+                if (!cfg_near_target(imm, sb, tgt))
+                {
+                    return false;
+                }
+                e.to_ip = tgt;
                 e.has_target = cfg_ip_in_image(e.to_ip, image.size());
                 if (!e.has_target)
                 {
@@ -1451,8 +1642,8 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                 edge_imm(CfgEdgeKind::CondTrue);
                 CfgEdge f;
                 f.kind = CfgEdgeKind::CondFalse;
-                f.to_ip = next;
-                f.has_target = cfg_ip_in_image(next, image.size());
+                f.to_ip = next_ok ? next : CfgLin{0};
+                f.has_target = next_ok && cfg_ip_in_image(next, image.size());
                 blk.outs.push_back(f);
                 stop = true;
             }
@@ -1471,7 +1662,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                 }
                 // Fall-through only if continuation looks like code (not data hole
                 // / jump-table / segment-table after Pascal entry call).
-                bool cont_ok = cfg_ip_in_image(next, image.size());
+                bool cont_ok = next_ok && cfg_ip_in_image(next, image.size());
                 if (cont_ok)
                 {
                     int z = 0;
@@ -1517,9 +1708,13 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                 blk.outs.push_back(e);
                 stop = true;
             }
+            else if (!next_ok)
+            {
+                stop = true;
+            }
             else if (wrapped)
             {
-                // Same segment, IP 0. Not seg_base + 0x10000.
+                // Same frame, IP 0. Not frame + 0x10000, and not a negative linear.
                 if (cfg_ip_in_image(next, image.size()) && leaders.count(next))
                 {
                     CfgEdge e;
@@ -1670,7 +1865,7 @@ static inline void cfg_collect_strings(const std::vector<uint8_t>& image,
                 CfgStringLit lit;
                 lit.off = static_cast<CfgLin>(i);
                 lit.text.assign(reinterpret_cast<const char*>(&image[i]), len);
-                // Prefer interesting-looking strings; still keep shorter file names
+                // Classification is filled once, after cfg_string_interesting.
                 out.push_back(std::move(lit));
             }
             i = j + 1;
@@ -1997,22 +2192,63 @@ static inline void cfg_find_pascal_inline_strings(CfgGraph& g,
     }
 }
 
+/**
+ * @brief True when @p text is a branch, call, or jump.
+ *
+ * Those operands are code targets. They are not string immediates.
+ * `mov`, `push`, and memory displacements stay eligible.
+ *
+ * @param text Capstone "mnemonic op_str".
+ * @return true for jmp, jcc, jcxz, loop*, call, and the far forms.
+ */
+static inline bool cfg_text_is_flow(std::string_view text)
+{
+    const size_t sp = text.find(' ');
+    const std::string_view mnem =
+        (sp == std::string_view::npos) ? text : text.substr(0, sp);
+    if (cfg_is_uncond_jmp(mnem) || cfg_is_call(mnem) || cfg_is_jcc(mnem))
+    {
+        return true;
+    }
+    return mnem == "jcxz" || mnem == "jecxz" || mnem == "loop" ||
+           mnem == "loope" || mnem == "loopz" || mnem == "loopne" ||
+           mnem == "loopnz";
+}
+
 /// Annotate blocks with INT sites, string xrefs, pred AH/DX, FCB paths, tags.
 static inline void cfg_annotate(CfgGraph& g, const std::vector<uint8_t>& image) {
     cfg_collect_strings(image, g.strings, 4);
+    // Lowercase and classify each literal once, before any operand lookup.
+    for (CfgStringLit& lit : g.strings)
+    {
+        lit.interesting = cfg_string_interesting(lit.text);
+    }
 
     std::map<CfgLin, const CfgStringLit*> by_off;
     for (const auto& s : g.strings)
         by_off[s.off] = &s;
 
-    auto find_string_at = [&](CfgLin off) -> const CfgStringLit* {
-        auto it = by_off.find(off);
-        if (it != by_off.end()) return it->second;
-        for (const auto& s : g.strings) {
-            if (off >= s.off && off < s.off + s.text.size())
-                return &s;
+    // Greatest literal start <= off, then a covering check. Not a linear scan.
+    auto find_string_at = [&](CfgLin off) -> const CfgStringLit*
+    {
+        auto it = by_off.upper_bound(off);
+        if (it == by_off.begin())
+        {
+            return nullptr;
         }
-        return nullptr;
+        --it;
+        const CfgStringLit* lit = it->second;
+        if (lit == nullptr)
+        {
+            return nullptr;
+        }
+        const size_t begin = static_cast<size_t>(lit->off);
+        const size_t end = begin + lit->text.size();
+        if (static_cast<size_t>(off) < begin || static_cast<size_t>(off) >= end)
+        {
+            return nullptr;
+        }
+        return lit;
     };
 
     auto try_resolve_path = [&](const CfgIntSite& site, uint16_t ptr,
@@ -2049,6 +2285,7 @@ static inline void cfg_annotate(CfgGraph& g, const std::vector<uint8_t>& image) 
     for (auto& [sip, blk] : g.blocks) {
         (void)sip;
         CfgRegHint local{};
+        std::set<CfgLin> seen_str;
 
         for (const auto& in : blk.insns) {
             // Update local regs from this insn alone by reusing full scan pattern
@@ -2096,8 +2333,18 @@ static inline void cfg_annotate(CfgGraph& g, const std::vector<uint8_t>& image) 
                 }
             }
 
-            // String immeds from text
-            std::string ops = in.text;
+            // Branch, call, and jump operands are code targets, not strings.
+            // The mnemonic itself is not an immediate ("add" is 0xADD).
+            if (cfg_text_is_flow(in.text))
+            {
+                continue;
+            }
+            const size_t op_at = in.text.find(' ');
+            if (op_at == std::string::npos)
+            {
+                continue;
+            }
+            std::string ops = in.text.substr(op_at + 1);
             size_t pos = 0;
             while (pos < ops.size()) {
                 while (pos < ops.size() && !std::isxdigit(static_cast<unsigned char>(ops[pos])) &&
@@ -2115,26 +2362,23 @@ static inline void cfg_annotate(CfgGraph& g, const std::vector<uint8_t>& image) 
                 if (tlen >= 2 &&
                     cfg_parse_hex_imm(std::string_view(ops).substr(rest, tlen), imm) &&
                     imm <= 0xFFFF) {
-                    const CfgStringLit* lit = find_string_at(imm);
-                    if (lit && (cfg_string_interesting(lit->text) || lit->text.size() >= 6)) {
-                        bool dup = false;
-                        for (const auto& x : blk.str_xrefs)
-                            if (x.str_ip == lit->off) { dup = true; break; }
-                        if (!dup) {
-                            CfgStringXref xr;
-                            xr.at_ip = in.ip;
-                            xr.str_ip = lit->off;
-                            xr.str = lit->text.size() > 48 ? lit->text.substr(0, 48) + "..."
-                                                           : lit->text;
-                            blk.str_xrefs.push_back(std::move(xr));
-                            g.n_str_xrefs++;
-                            // short name-like → filename tags; else message tags
-                            if (lit->text.size() <= 16 &&
-                                lit->text.find('.') != std::string::npos)
-                                cfg_tag_filename(blk, lit->text);
-                            else
-                                cfg_tag_message(blk, lit->text);
-                        }
+                    const CfgStringLit* lit = find_string_at(static_cast<CfgLin>(imm));
+                    // Dedup before using the precomputed class or tagging.
+                    if (lit != nullptr && seen_str.insert(lit->off).second &&
+                        (lit->interesting || lit->text.size() >= 6))
+                    {
+                        CfgStringXref xr;
+                        xr.at_ip = in.ip;
+                        xr.str_ip = lit->off;
+                        xr.str = lit->text.size() > 48 ? lit->text.substr(0, 48) + "..."
+                                                       : lit->text;
+                        blk.str_xrefs.push_back(std::move(xr));
+                        g.n_str_xrefs++;
+                        if (lit->text.size() <= 16 &&
+                            lit->text.find('.') != std::string::npos)
+                            cfg_tag_filename(blk, lit->text);
+                        else
+                            cfg_tag_message(blk, lit->text);
                     }
                 }
                 pos = rest + (tlen ? tlen : 1);
@@ -2153,14 +2397,9 @@ static inline void cfg_annotate(CfgGraph& g, const std::vector<uint8_t>& image) 
                 }
                 if (!is_imm_load) continue;
                 uint16_t val = static_cast<uint16_t>(image[off] | (image[off + 1] << 8));
-                auto it = by_off.find(val);
-                if (it == by_off.end() || !cfg_string_interesting(it->second->text))
+                const CfgStringLit* lit = find_string_at(val);
+                if (lit == nullptr || !seen_str.insert(lit->off).second || !lit->interesting)
                     continue;
-                const CfgStringLit* lit = it->second;
-                bool dup = false;
-                for (const auto& x : blk.str_xrefs)
-                    if (x.str_ip == lit->off) { dup = true; break; }
-                if (dup) continue;
                 CfgStringXref xr;
                 xr.at_ip = off - 1;
                 xr.str_ip = lit->off;
@@ -2932,8 +3171,9 @@ static inline bool cfg_write_dot(const CfgGraph& g,
  * @param file_cs         MZ header CS for unpinned far transfers.
  * @param opts            Follow-calls and annotation flags.
  * @param relocs          MZ fixups into the image. Empty for COM.
- * @param entry_seg_base  Segment base of @p entry_ip (`cs * 16`). 0 for COM
- *                        and for an entry that is not inside the image.
+ * @param entry_frame  Paragraph frame of @p entry_ip (`cs * 16`). 0 for COM
+ *                      and for an entry that is not inside the image.
+ *                      May be negative.
  * @return Annotated graph. Empty when the slice is outside the file.
  */
 static inline CfgGraph cfg_build_annotated(const std::vector<uint8_t>& fileData,
@@ -2944,7 +3184,7 @@ static inline CfgGraph cfg_build_annotated(const std::vector<uint8_t>& fileData,
                                            uint16_t file_cs,
                                            const Options& opts,
                                            std::span<const RelocEntry> relocs = {},
-                                           CfgLin entry_seg_base = 0)
+                                           int32_t entry_frame = 0)
 {
     CfgGraph empty;
     if (image_file_off >= fileData.size())
@@ -2955,7 +3195,7 @@ static inline CfgGraph cfg_build_annotated(const std::vector<uint8_t>& fileData,
         fileData.begin() + static_cast<std::ptrdiff_t>(image_file_off + len));
 
     CfgGraph g = cfg_build(image, entry_ip, cs_seg, file_cs, image_file_off,
-                           opts.cfgFollowCalls, 20000, relocs, entry_seg_base);
+                           opts.cfgFollowCalls, 20000, relocs, entry_frame);
     cfg_annotate(g, image);
     return g;
 }
@@ -2994,7 +3234,8 @@ static inline void cfg_emit_views(const CfgGraph& g, const Options& opts)
  * @param file_cs         MZ header CS for unpinned far transfers.
  * @param opts            Presentation and follow-calls flags.
  * @param relocs          MZ fixups into the image. Empty for COM.
- * @param entry_seg_base  Segment base of @p entry_ip (`cs * 16`). 0 for COM.
+ * @param entry_frame  Paragraph frame of @p entry_ip (`cs * 16`). 0 for COM.
+ *                      May be negative.
  * @return The annotated graph.
  */
 static inline CfgGraph cfg_analyze_image(const std::vector<uint8_t>& fileData,
@@ -3005,7 +3246,7 @@ static inline CfgGraph cfg_analyze_image(const std::vector<uint8_t>& fileData,
                                          uint16_t file_cs,
                                          const Options& opts,
                                          std::span<const RelocEntry> relocs = {},
-                                         CfgLin entry_seg_base = 0)
+                                         int32_t entry_frame = 0)
 {
     if (image_file_off >= fileData.size())
     {
@@ -3016,7 +3257,7 @@ static inline CfgGraph cfg_analyze_image(const std::vector<uint8_t>& fileData,
 
     CfgGraph g = cfg_build_annotated(fileData, image_file_off, image_len,
                                      entry_ip, cs_seg, file_cs, opts, relocs,
-                                     entry_seg_base);
+                                     entry_frame);
     cfg_emit_views(g, opts);
     return g;
 }

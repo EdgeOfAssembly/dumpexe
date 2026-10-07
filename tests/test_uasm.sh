@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dumpexe --uasm: UASM source assembles back to the load image (v2.19).
+# dumpexe --uasm: UASM source assembles back to the load image (v2.20).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -8,10 +8,9 @@ if [[ ! -x "$BIN" ]]; then
   BIN=$(command -v dumpexe || true)
 fi
 [[ -x "$BIN" ]] || { echo "FAIL: dumpexe binary not found"; exit 1; }
-if [[ ! -x /usr/bin/uasm ]]; then
-  echo "SKIP uasm tests (no /usr/bin/uasm)"
-  exit 0
-fi
+# shellcheck source=lib_uasm.sh
+source "$ROOT/tests/lib_uasm.sh"
+UASM="$(uasm_resolve)" || { echo "SKIP uasm tests (no uasm)"; exit 77; }
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/dumpexe-uasm-XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
@@ -97,12 +96,12 @@ check com_org grep -q 'org 100h' "$tmp/com.asm"
 check com_no_addr bash -c "! grep -E -q '^[[:space:]]*[0-9A-Fa-f]{4}[[:space:]]+[0-9A-Fa-f]{2}' '$tmp/com.asm'"
 check com_no_repack bash -c "! grep -q 'REPACK-V1' '$tmp/com.asm'"
 check com_end grep -qx 'end func_0100' "$tmp/com.asm"
-/usr/bin/uasm -bin -nologo -Fo "$tmp/com.bin" "$tmp/com.asm" >"$tmp/com_uasm.out" 2>"$tmp/com_uasm.err"
+( cd "$tmp" && "$UASM" -bin -nologo -Fo com.bin com.asm >com_uasm.out 2>com_uasm.err )
 check com_cmp cmp_note com "$tmp/com.bin" "$tmp/tiny.com"
 
 # 2. Small MZ: uasm -mz payload equals the load image.
 "$BIN" --uasm -o "$tmp/small.asm" "$tmp/small.exe" >"$tmp/small.out" 2>"$tmp/small.err"
-/usr/bin/uasm -mz -nologo -Fo "$tmp/small.built.exe" "$tmp/small.asm" >"$tmp/small_uasm.out" 2>"$tmp/small_uasm.err"
+( cd "$tmp" && "$UASM" -mz -nologo -Fo small.built.exe small.asm >small_uasm.out 2>small_uasm.err )
 python3 - "$tmp/small.built.exe" "$tmp/small.pay" << 'PY'
 import struct, sys
 p = open(sys.argv[1], "rb").read()
@@ -111,13 +110,13 @@ open(sys.argv[2], "wb").write(p[cpar * 16:])
 print(f"small e_cparhdr={cpar} payload={len(p) - cpar * 16}")
 PY
 check small_cmp cmp_note small "$tmp/small.pay" "$tmp/small.img"
-/usr/bin/uasm -bin -nologo -Fo "$tmp/small.bin" "$tmp/small.asm" >"$tmp/small_bin.out" 2>"$tmp/small_bin.err"
+( cd "$tmp" && "$UASM" -bin -nologo -Fo small.bin small.asm >small_bin.out 2>small_bin.err )
 check small_bin_cmp cmp_note small_bin "$tmp/small.bin" "$tmp/small.img"
 
 # 3. 65540-byte load image, at least two segment directives, full payload.
 "$BIN" --uasm -o "$tmp/big.asm" "$tmp/big.exe" >"$tmp/big.out" 2>"$tmp/big.err"
 check big_segments bash -c 'test "$(grep -c segment "$1")" -ge 2' _ "$tmp/big.asm"
-/usr/bin/uasm -mz -nologo -Fo "$tmp/big.built.exe" "$tmp/big.asm" >"$tmp/big_uasm.out" 2>"$tmp/big_uasm.err"
+( cd "$tmp" && "$UASM" -mz -nologo -Fo big.built.exe big.asm >big_uasm.out 2>big_uasm.err )
 python3 - "$tmp/big.built.exe" "$tmp/big.pay" << 'PY'
 import struct, sys
 p = open(sys.argv[1], "rb").read()
@@ -127,7 +126,7 @@ print(f"big e_cparhdr={cpar} payload={len(p) - cpar * 16}")
 PY
 check big_cmp cmp_note big "$tmp/big.pay" "$tmp/big.img"
 check big_bare_end bash -c 'tail -n 1 "$1" | grep -qx end' _ "$tmp/big.asm"
-/usr/bin/uasm -bin -nologo -Fo "$tmp/big.bin" "$tmp/big.asm" >"$tmp/big_bin.out" 2>"$tmp/big_bin.err"
+( cd "$tmp" && "$UASM" -bin -nologo -Fo big.bin big.asm >big_bin.out 2>big_bin.err )
 check big_bin_cmp cmp_note big_bin "$tmp/big.bin" "$tmp/big.img"
 
 # 7. Stood-behind mov plus a 66h byte that is not itself stood behind.
@@ -154,10 +153,10 @@ if "066h" not in text or "090h" not in text:
     print(text)
     sys.exit(1)
 PY
-/usr/bin/uasm -bin -nologo -Fo "$tmp/wide.bin" "$tmp/wide.asm" >"$tmp/wide_uasm.out" 2>"$tmp/wide_uasm.err"
+( cd "$tmp" && "$UASM" -bin -nologo -Fo wide.bin wide.asm >wide_uasm.out 2>wide_uasm.err )
 check wide_cmp cmp_note wide "$tmp/wide.bin" "$tmp/wide.com"
 "$BIN" --uasm -o "$tmp/wide_mz.asm" "$tmp/wide.exe" >"$tmp/wide_mz.out" 2>"$tmp/wide_mz.err"
-/usr/bin/uasm -mz -nologo -Fo "$tmp/wide_mz.built.exe" "$tmp/wide_mz.asm" >"$tmp/wide_mz_uasm.out" 2>"$tmp/wide_mz_uasm.err"
+( cd "$tmp" && "$UASM" -mz -nologo -Fo wide_mz.built.exe wide_mz.asm >wide_mz_uasm.out 2>wide_mz_uasm.err )
 python3 - "$tmp/wide_mz.built.exe" "$tmp/wide_mz.pay" << 'PY'
 import struct, sys
 p = open(sys.argv[1], "rb").read()
@@ -193,7 +192,7 @@ check aximm_keep_100 grep -E -q '^[[:space:]]*or ax, 100h[[:space:]]*$' "$tmp/ax
 check aximm_keep_ff7f grep -E -q '^[[:space:]]*or ax, 0FF7Fh[[:space:]]*$' "$tmp/aximm.asm"
 check aximm_reject_0a bash -c "! grep -E -q '^[[:space:]]*or ax, 0Ah[[:space:]]*$' '$tmp/aximm.asm'"
 check aximm_reject_ff80 bash -c "! grep -E -q '^[[:space:]]*or ax, 0FF80h[[:space:]]*$' '$tmp/aximm.asm'"
-/usr/bin/uasm -bin -nologo -Fo "$tmp/aximm.bin" "$tmp/aximm.asm" >"$tmp/aximm_uasm.out" 2>"$tmp/aximm_uasm.err"
+( cd "$tmp" && "$UASM" -bin -nologo -Fo aximm.bin aximm.asm >aximm_uasm.out 2>aximm_uasm.err )
 check aximm_cmp cmp_note aximm "$tmp/aximm.bin" "$tmp/aximm.com"
 
 # 6. Help and version.
@@ -201,7 +200,7 @@ check aximm_cmp cmp_note aximm "$tmp/aximm.bin" "$tmp/aximm.com"
 check help_uasm grep -q -- '--uasm' "$tmp/help.txt"
 check help_no_disable bash -c "! grep -q -- '--no-uasm' '$tmp/help.txt'"
 "$BIN" -v >"$tmp/ver.txt"
-check version_219 grep -q '2.19' "$tmp/ver.txt"
+check version_220 grep -q '2.20' "$tmp/ver.txt"
 
 echo "uasm tests: $pass passed, $fail failed"
 if [[ "$fail" -ne 0 ]]; then

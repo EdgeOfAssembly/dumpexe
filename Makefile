@@ -167,24 +167,38 @@ clean:
 		unpack_host.o unpack_host-asan.o \
 		deark_bundle.o deark_bundle-asan.o $(DEARK_OBJS) $(DEARK_ASAN_OBJS)
 
-.PHONY: test tests verify
+# Exit 77 from a suite is a skip (optional tool missing), not a failure.
+run_suite = rc=0; bash $(1) || rc=$$?; \
+	if [ $$rc -eq 77 ]; then echo "SKIP $(1)"; \
+	elif [ $$rc -ne 0 ]; then exit $$rc; fi
+
+.PHONY: test tests verify test-uasm
 test: dumpexe bin2exe tools/bin2exe/test_header
-	@bash tests/test_cli_contracts.sh
-	@bash tests/test_report_bugs.sh
-	@bash tests/test_listing_bugs.sh
-	@bash tests/test_uasm.sh
-	@bash tests/test_v213.sh
-	@bash tests/test_p0_sim.sh
-	@bash tests/test_p0_ne.sh
-	@bash tests/test_p0_uasm.sh
-	@bash tests/test_p0_cfg.sh
-	@bash tests/test_p0_reloc.sh
-	@bash tests/test_p0_stats.sh
-	@bash tests/test_p0_shift.sh
-	@bash tests/test_p0_cfg_once.sh
-	@bash tests/test_p0_linear.sh
+	@$(call run_suite,tests/test_cli_contracts.sh)
+	@$(call run_suite,tests/test_report_bugs.sh)
+	@$(call run_suite,tests/test_listing_bugs.sh)
+	@$(call run_suite,tests/test_uasm.sh)
+	@$(call run_suite,tests/test_v213.sh)
+	@$(call run_suite,tests/test_p0_sim.sh)
+	@$(call run_suite,tests/test_p0_ne.sh)
+	@$(call run_suite,tests/test_p0_uasm.sh)
+	@$(call run_suite,tests/test_p0_cfg.sh)
+	@$(call run_suite,tests/test_p0_reloc.sh)
+	@$(call run_suite,tests/test_p0_stats.sh)
+	@$(call run_suite,tests/test_p0_shift.sh)
+	@$(call run_suite,tests/test_p0_cfg_once.sh)
+	@$(call run_suite,tests/test_p0_linear.sh)
 	@./tools/bin2exe/test_header
-	@bash tools/bin2exe/tests/test_cli.sh
+	@$(call run_suite,tools/bin2exe/tests/test_cli.sh)
+
+# Hard failure when uasm_resolve cannot find an assembler.
+test-uasm: dumpexe
+	@bash -c 'source tests/lib_uasm.sh && uasm_resolve >/dev/null'
+	@bash tests/test_uasm.sh
+	@bash tests/test_p0_uasm.sh
+	@bash tests/test_p0_shift.sh
+	@bash tests/test_p0_stats.sh
+	@bash tests/test_p0_reloc.sh
 
 tests: test
 

@@ -97,10 +97,18 @@ struct Options {
     std::string repackOutputPath; ///< optional override path for repack EXE
     /// --uasm: write UASM source (enable-only; no disable switch).
     /// The file has no address column and no hex-byte column. -d stdout is unchanged.
+    /// Default output does not spawn an assembler.
     bool uasm = false;
     /// --uasm-stats: one stderr coverage line (enable-only). Does not imply
     /// --uasm. There is no disable twin. Parse fails unless --uasm is also set.
+    /// Does not require --uasm-verify.
     bool uasm_stats = false;
+    /// --uasm-verify: assemble candidate lines once per listing (enable-only).
+    /// Default off. There is no disable twin. Parse fails unless --uasm is set.
+    bool uasm_verify = false;
+    /// --uasm-bin PATH: assembler for --uasm-verify. Empty means $DUMPEXE_UASM,
+    /// then PATH. Never a built-in absolute path.
+    std::string uasm_bin;
 
     /**
      * @brief True when --uasm -o - should be the only stdout.
@@ -394,6 +402,25 @@ struct Options {
             } else if (arg == "--uasm-stats") {
                 // Enable-only. Does not imply --uasm. There is no disable twin.
                 uasm_stats = true;
+            } else if (arg == "--uasm-verify") {
+                // Enable-only. Default off. Does not imply --uasm.
+                uasm_verify = true;
+            } else if (arg == "--uasm-bin") {
+                if (i + 1 >= argc) {
+                    std::cerr << "Error: --uasm-bin requires a path\n";
+                    return false;
+                }
+                uasm_bin = argv[++i];
+                if (uasm_bin.empty()) {
+                    std::cerr << "Error: --uasm-bin requires a path\n";
+                    return false;
+                }
+            } else if (arg.starts_with("--uasm-bin=")) {
+                uasm_bin = std::string(arg.substr(11));
+                if (uasm_bin.empty()) {
+                    std::cerr << "Error: --uasm-bin= requires a path\n";
+                    return false;
+                }
             } else if (arg == "--no-asm-file") {
                 // Default ON when disassembling: only provide disable switch
                 writeAsmFile = false;
@@ -619,6 +646,11 @@ struct Options {
             std::cerr << "Error: --uasm-stats requires --uasm\n";
             return false;
         }
+        if (uasm_verify && !uasm)
+        {
+            std::cerr << "Error: --uasm-verify requires --uasm\n";
+            return false;
+        }
 
         // Default instruction budget
         if (!maxInsnsSet) {
@@ -694,18 +726,28 @@ static inline void show_usage(const char* progname) {
         "                      is also set. MZ and COM only. Skips auto-repack (no\n"
         "                      REPACK-V1). Images longer than 65536 bytes are split into\n"
         "                      segments of at most 65536 bytes with no padding.\n"
-        "                      uasm -mz writes the load-image payload only, not the MZ header.\n"
+        "                      uasm -mz writes a 32-byte MZ header (0 relocations, CS:IP\n"
+        "                      and SS:SP 0:0) and warns A4205/A4204. e_cparhdr*16 is the\n"
+        "                      MZ header size, not the load image. Prefer uasm -bin and\n"
+        "                      bin2exe --header to restore the original header.\n"
         "                      A same-segment far call is followed when its segment is the\n"
         "                      file CS (the MZ header), including when --base is not 0.\n"
-        "                      An in-image linear entry is decoded, including past 64 KiB.\n"
-        "                      A relocation-pinned far target is followed when seg*16+off\n"
-        "                      is inside the image, including past 64 KiB. A pinned target\n"
-        "                      outside the image is not followed. An entry outside the\n"
-        "                      image is not labeled func_FFFF.\n"
+        "                      Past 64 KiB is decoded when reached through the entry, near\n"
+        "                      wrap, or a decoded relocation-pinned far call. A pinned\n"
+        "                      target outside the image is not followed. An entry outside\n"
+        "                      the image is not labeled func_FFFF.\n"
+        "  --uasm-verify       With --uasm, assemble candidate lines once and keep a line\n"
+        "                      only when the bytes match. Enable-only. Default off, so\n"
+        "                      --uasm does not run an assembler. Requires --uasm.\n"
+        "                      Does not imply --uasm-stats. The listing header says\n"
+        "                      \"; verified: uasm … at PATH\" or \"; NOT VERIFIED\".\n"
+        "  --uasm-bin PATH     Assembler used by --uasm-verify. Otherwise $DUMPEXE_UASM,\n"
+        "                      otherwise uasm on PATH. No built-in assembler path.\n"
         "  --uasm-stats        With --uasm, print one coverage line on stderr when a\n"
         "                      UASM listing is emitted (image, decoded, text, db,\n"
-        "                      labels). Enable-only. Does not imply --uasm. Requires\n"
-        "                      --uasm. Not a JSON field.\n"
+        "                      labels, whether verification ran). Enable-only. Does not\n"
+        "                      imply --uasm or --uasm-verify. Requires --uasm. Not a\n"
+        "                      JSON field.\n"
         "  --json              Machine-readable JSON report on stdout (default: off).\n"
         "                      Does not unpack\n"
         "  --cfg-dot=FILE      Write Graphviz DOT of CFG to FILE (default: off)\n"
