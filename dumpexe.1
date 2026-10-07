@@ -244,9 +244,15 @@ else
 on
 .BR PATH .
 There is no built-in assembler path.
-One assemble covers every distinct candidate line.
-When that assemble ran, the header says
+A clean batch is one assemble of every distinct candidate line.
+When that assemble accepts every line, the header says
 .B "; verified: uasm … at PATH" .
+A line the assembler rejects is dropped and the rest are assembled
+again (at most 16 runs).
+Those bytes may still be promoted.
+The header then says
+.B "; NOT VERIFIED (assembler rejected N candidates)"
+and does not say verified.
 If verify is on and no assembler can be run, dumpexe writes an error
 on stderr and exits non-zero.
 A relocated

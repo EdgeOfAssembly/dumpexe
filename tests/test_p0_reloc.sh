@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # P0 relocation contracts: Q7 pinned far 9A/EA and Q8 relocated mov r16.
-# M1 (non-relocated far transfer vs file CS) stays. These checks do not skip.
+# M1 (non-relocated far transfer vs file CS) stays. Missing uasm exits 77.
 # Synthetic MZ fixtures only. No --simulate.
 set -euo pipefail
 

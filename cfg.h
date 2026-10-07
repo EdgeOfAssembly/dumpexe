@@ -1231,6 +1231,12 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
         {
             return false;
         }
+        // Flat frame 0: a tighter frame in the first 64 KiB must not win.
+        if (lin <= 0xFFFFu)
+        {
+            frame_out = 0;
+            return true;
+        }
         auto it = seg_frames.upper_bound(static_cast<int32_t>(lin));
         if (it == seg_frames.begin())
         {

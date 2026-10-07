@@ -24,6 +24,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <dirent.h>
 #include <fcntl.h>
 #include <format>
 #include <functional>
@@ -37,6 +38,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
@@ -1607,10 +1609,11 @@ static inline bool listing_uasm_stand_behind(const CfgInsn& in,
 }
 
 /**
- * @brief Scratch .asm/.bin pair for one listing_emit_uasm call.
+ * @brief Scratch directory for one listing_emit_uasm call.
  *
- * The directory is created with mkdtemp under /tmp. Both files are unlinked
- * on every return path, including when verify is never called.
+ * The directory is created with mkdtemp under /tmp. Destruction unlinks every
+ * directory entry except "." and "..", then removes the directory, so an
+ * unexpected assembler .err cannot leak /tmp/dumpexe-uasm-*.
  */
 class ListingUasmScratch
 {
@@ -1642,31 +1645,35 @@ public:
     ListingUasmScratch& operator=(const ListingUasmScratch&) = delete;
 
     /**
-     * @brief Unlink the scratch .asm and .bin, then remove the directory.
+     * @brief Unlink every scratch entry except "." and "..", then rmdir.
      * @return Nothing.
      */
     ~ListingUasmScratch()
     {
-        if (!asm_path_.empty())
+        if (dir_.empty())
         {
-            ::unlink(asm_path_.c_str());
+            return;
         }
-        if (!bin_path_.empty())
+        std::vector<std::string> names;
+        if (DIR* handle = ::opendir(dir_.c_str()))
         {
-            ::unlink(bin_path_.c_str());
+            while (const dirent* ent = ::readdir(handle))
+            {
+                if (std::strcmp(ent->d_name, ".") == 0 ||
+                    std::strcmp(ent->d_name, "..") == 0)
+                {
+                    continue;
+                }
+                names.emplace_back(ent->d_name);
+            }
+            ::closedir(handle);
         }
-        if (!err_path_.empty())
+        for (const std::string& name : names)
         {
-            ::unlink(err_path_.c_str());
+            const std::string path = dir_ + "/" + name;
+            ::unlink(path.c_str());
         }
-        if (!lst_path_.empty())
-        {
-            ::unlink(lst_path_.c_str());
-        }
-        if (!dir_.empty())
-        {
-            ::rmdir(dir_.c_str());
-        }
+        ::rmdir(dir_.c_str());
     }
 
     /**
@@ -1714,6 +1721,15 @@ public:
         return lst_path_;
     }
 
+    /**
+     * @brief Path of the .err UASM writes beside line.asm.
+     * @return Absolute .err path, empty when not ready.
+     */
+    const std::string& err_path() const
+    {
+        return err_path_;
+    }
+
 private:
     std::string dir_;
     std::string asm_path_;
@@ -1758,29 +1774,61 @@ static inline bool listing_uasm_line_batchable(std::string_view line,
 }
 
 /**
+ * @brief Absolute path of one regular executable, or empty.
+ *
+ * A directory can be X_OK and must not win. realpath runs before the child
+ * chdir, so a relative --uasm-bin, $DUMPEXE_UASM, or PATH entry still execs.
+ *
+ * @param path Flag, environment, or PATH entry. May be relative. May be empty.
+ * @return realpath of @p path when it is a regular file and executable.
+ *         Empty for a directory, a missing file, or a path realpath rejects.
+ */
+static inline std::string listing_uasm_usable_bin(const std::string& path)
+{
+    if (path.empty())
+    {
+        return {};
+    }
+    struct stat st;
+    if (::stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+    {
+        return {};
+    }
+    if (::access(path.c_str(), X_OK) != 0)
+    {
+        return {};
+    }
+    char* resolved = ::realpath(path.c_str(), nullptr);
+    if (resolved == nullptr)
+    {
+        return {};
+    }
+    std::string out(resolved);
+    std::free(resolved);
+    return out;
+}
+
+/**
  * @brief Assembler for --uasm-verify. Never a built-in absolute path.
  *
  * Order: --uasm-bin, else $DUMPEXE_UASM when set and non-empty, else PATH.
- * A path the user named that is not executable does not fall through.
+ * A path the user named that is not a regular executable does not fall through.
+ * The returned path is absolute.
  *
  * @param opts Parsed options. uasm_bin may be empty.
  * @return Executable path, or empty when verify cannot run.
  */
 static inline std::string listing_uasm_resolve_bin(const Options& opts)
 {
-    auto usable = [](const std::string& path) -> bool
-    {
-        return !path.empty() && ::access(path.c_str(), X_OK) == 0;
-    };
     if (!opts.uasm_bin.empty())
     {
-        return usable(opts.uasm_bin) ? opts.uasm_bin : std::string{};
+        return listing_uasm_usable_bin(opts.uasm_bin);
     }
     if (const char* env = std::getenv("DUMPEXE_UASM"))
     {
         if (env[0] != '\0')
         {
-            return usable(env) ? std::string(env) : std::string{};
+            return listing_uasm_usable_bin(env);
         }
     }
     const char* path_env = std::getenv("PATH");
@@ -1805,9 +1853,10 @@ static inline std::string listing_uasm_resolve_bin(const Options& opts)
             full.push_back('/');
             full.append("uasm");
         }
-        if (usable(full))
+        const std::string found = listing_uasm_usable_bin(full);
+        if (!found.empty())
         {
-            return full;
+            return found;
         }
         if (colon == std::string_view::npos)
         {
@@ -1911,6 +1960,7 @@ static inline bool listing_uasm_verify_batch(
     }
     ::unlink(scratch.bin_path().c_str());
     ::unlink(scratch.lst_path().c_str());
+    ::unlink(scratch.err_path().c_str());
     FILE* af = std::fopen(scratch.asm_path().c_str(), "w");
     if (af == nullptr)
     {
@@ -1998,9 +2048,33 @@ static inline bool listing_uasm_verify_batch(
         return false;
     }
 
+    // UASM treats $UASM as extra sources and $INCLUDE as search paths.
+    // Either can drop an .err into the scratch directory that rmdir would keep.
     extern char** environ;
+    std::vector<std::string> env_store;
+    if (environ != nullptr)
+    {
+        for (char** it = environ; *it != nullptr; ++it)
+        {
+            const std::string_view row(*it);
+            if (row.starts_with("UASM=") || row.starts_with("INCLUDE="))
+            {
+                continue;
+            }
+            env_store.emplace_back(*it);
+        }
+    }
+    std::vector<char*> envp;
+    envp.reserve(env_store.size() + 1);
+    for (std::string& row : env_store)
+    {
+        envp.push_back(row.data());
+    }
+    envp.push_back(nullptr);
+
     pid_t pid = 0;
-    const int spawned = ::posix_spawn(&pid, asm_bin.c_str(), &actions, nullptr, argv, environ);
+    const int spawned =
+        ::posix_spawn(&pid, asm_bin.c_str(), &actions, nullptr, argv, envp.data());
     ::posix_spawn_file_actions_destroy(&actions);
     if (spawned != 0)
     {
@@ -2177,6 +2251,279 @@ static inline bool listing_uasm_verify_batch(
     }
     out.exit_ok = true;
     return true;
+}
+
+/**
+ * @brief 1-based batch .asm line of one candidate, if that line is a candidate.
+ *
+ * Layout is `.8086` / `.model tiny` / `.code` / `org 0`, then level 0 lines,
+ * then `.186` when any level is positive, then those lines, then `db 0CCh`
+ * and `end`. Directive lines are not candidates.
+ *
+ * @param cands    Lines written into this batch, level 0 then level 1.
+ * @param line_no  1-based source line from a UASM diagnostic.
+ * @param index    Receives the index into @p cands.
+ * @return false when @p line_no is a directive, out of range, or not positive.
+ */
+static inline bool listing_uasm_batch_line_cand(
+    const std::vector<std::pair<int, std::string>>& cands,
+    int line_no,
+    size_t& index)
+{
+    if (line_no <= 0)
+    {
+        return false;
+    }
+    std::vector<size_t> ordered;
+    bool any_186 = false;
+    ordered.reserve(cands.size());
+    for (size_t i = 0; i < cands.size(); ++i)
+    {
+        if (cands[i].first <= 0)
+        {
+            ordered.push_back(i);
+        }
+    }
+    for (size_t i = 0; i < cands.size(); ++i)
+    {
+        if (cands[i].first > 0)
+        {
+            any_186 = true;
+            ordered.push_back(i);
+        }
+    }
+    int line = 5;
+    size_t oi = 0;
+    while (oi < ordered.size() && cands[ordered[oi]].first <= 0)
+    {
+        if (line == line_no)
+        {
+            index = ordered[oi];
+            return true;
+        }
+        ++line;
+        ++oi;
+    }
+    if (any_186)
+    {
+        if (line == line_no)
+        {
+            return false;
+        }
+        ++line;
+    }
+    while (oi < ordered.size())
+    {
+        if (line == line_no)
+        {
+            index = ordered[oi];
+            return true;
+        }
+        ++line;
+        ++oi;
+    }
+    return false;
+}
+
+/**
+ * @brief Source line numbers named by a UASM .err file.
+ *
+ * Each diagnostic looks like `line.asm(12) : Error A2210: ...`. Only the
+ * first `(digits)` on a line is kept. A missing file yields an empty set.
+ *
+ * @param err_path Scratch .err. May not exist when UASM wrote nothing.
+ * @return 1-based line numbers. Empty when none were named.
+ */
+static inline std::set<int> listing_uasm_err_source_lines(const std::string& err_path)
+{
+    std::set<int> lines;
+    std::ifstream in(err_path);
+    if (!in)
+    {
+        return lines;
+    }
+    std::string raw;
+    while (std::getline(in, raw))
+    {
+        if (!raw.empty() && raw.back() == '\r')
+        {
+            raw.pop_back();
+        }
+        for (size_t i = 0; i < raw.size(); ++i)
+        {
+            if (raw[i] != '(')
+            {
+                continue;
+            }
+            size_t j = i + 1;
+            if (j >= raw.size() || raw[j] < '0' || raw[j] > '9')
+            {
+                continue;
+            }
+            int n = 0;
+            bool overflow = false;
+            while (j < raw.size() && raw[j] >= '0' && raw[j] <= '9')
+            {
+                const int digit = raw[j] - '0';
+                if (n > (1000000 - digit) / 10)
+                {
+                    overflow = true;
+                    break;
+                }
+                n = n * 10 + digit;
+                ++j;
+            }
+            if (!overflow && j < raw.size() && raw[j] == ')' && n > 0)
+            {
+                lines.insert(n);
+            }
+            break;
+        }
+    }
+    return lines;
+}
+
+/**
+ * @brief Bytes recovered from one --uasm-verify candidate list.
+ *
+ * `ran` is false when the assembler could not be spawned. `complete` is true
+ * when every remaining group was assembled or dropped. `dropped` counts
+ * candidates that were not assembled. `bytes` holds only lines UASM encoded.
+ */
+struct ListingUasmVerifyOutcome
+{
+    bool ran = false;
+    bool complete = false;
+    size_t dropped = 0;
+    std::string version;
+    std::map<std::string, std::vector<uint8_t>> bytes;
+};
+
+/**
+ * @brief Assemble candidates, dropping lines UASM rejects.
+ *
+ * A clean list is one posix_spawn. On a non-zero exit the scratch .err is
+ * read for batch line numbers. Named candidates are removed and the rest are
+ * assembled again. When the diagnostic names no candidate, the list is split.
+ * A singleton that still fails is dropped. At most 16 spawns run.
+ *
+ * @param scratch Scratch paths. The child cwd is scratch.dir().
+ * @param asm_bin Absolute assembler from listing_uasm_resolve_bin.
+ * @param cands   Unique (level, line) pairs. Not empty.
+ * @return Outcome. `ran` is false when the first spawn cannot start.
+ */
+static inline ListingUasmVerifyOutcome listing_uasm_verify_recover(
+    const ListingUasmScratch& scratch,
+    const std::string& asm_bin,
+    const std::vector<std::pair<int, std::string>>& cands)
+{
+    constexpr int kSpawnCap = 16;
+    ListingUasmVerifyOutcome out;
+    struct Pending
+    {
+        std::vector<size_t> idx;
+    };
+    std::vector<Pending> queue;
+    Pending first;
+    first.idx.reserve(cands.size());
+    for (size_t i = 0; i < cands.size(); ++i)
+    {
+        first.idx.push_back(i);
+    }
+    queue.push_back(std::move(first));
+
+    bool any_spawn = false;
+    int spawns = 0;
+    while (!queue.empty() && spawns < kSpawnCap)
+    {
+        Pending group = std::move(queue.back());
+        queue.pop_back();
+        if (group.idx.empty())
+        {
+            continue;
+        }
+        std::vector<std::pair<int, std::string>> sub;
+        sub.reserve(group.idx.size());
+        for (const size_t id : group.idx)
+        {
+            sub.push_back(cands[id]);
+        }
+        ListingUasmBatch batch;
+        if (!listing_uasm_verify_batch(scratch, asm_bin, sub, batch))
+        {
+            out.ran = any_spawn;
+            out.complete = false;
+            return out;
+        }
+        any_spawn = true;
+        ++spawns;
+        if (out.version.empty() && !batch.version.empty())
+        {
+            out.version = std::move(batch.version);
+        }
+        if (batch.exit_ok)
+        {
+            for (auto& kv : batch.bytes)
+            {
+                out.bytes.insert_or_assign(kv.first, std::move(kv.second));
+            }
+            continue;
+        }
+        const std::set<int> err_lines = listing_uasm_err_source_lines(scratch.err_path());
+        std::set<size_t> bad;
+        for (const int line_no : err_lines)
+        {
+            size_t sub_i = 0;
+            if (listing_uasm_batch_line_cand(sub, line_no, sub_i))
+            {
+                bad.insert(sub_i);
+            }
+        }
+        if (!bad.empty())
+        {
+            Pending keep;
+            for (size_t i = 0; i < group.idx.size(); ++i)
+            {
+                if (bad.count(i) != 0)
+                {
+                    ++out.dropped;
+                }
+                else
+                {
+                    keep.idx.push_back(group.idx[i]);
+                }
+            }
+            if (!keep.idx.empty())
+            {
+                queue.push_back(std::move(keep));
+            }
+            continue;
+        }
+        if (group.idx.size() == 1)
+        {
+            ++out.dropped;
+            continue;
+        }
+        const size_t mid = group.idx.size() / 2;
+        Pending left;
+        Pending right;
+        for (size_t i = 0; i < group.idx.size(); ++i)
+        {
+            if (i < mid)
+            {
+                left.idx.push_back(group.idx[i]);
+            }
+            else
+            {
+                right.idx.push_back(group.idx[i]);
+            }
+        }
+        queue.push_back(std::move(right));
+        queue.push_back(std::move(left));
+    }
+    out.ran = any_spawn;
+    out.complete = queue.empty();
+    return out;
 }
 
 /**
@@ -2542,14 +2889,106 @@ static inline size_t listing_uasm_undefined_labels(std::string_view text)
 }
 
 /**
+ * @brief True when @p tok is an equ literal UASM will read as a symbol.
+ *
+ * The shape is `[A-F][0-9A-F]*h` with no leading digit. `func_A004` and
+ * `loc_A004` do not match. `0A004h` and `0104h` do not match.
+ *
+ * @param tok One identifier token from an equ right-hand side.
+ * @return true when emitting @p tok would be UASM A2102.
+ */
+static inline bool listing_uasm_bad_equ_hex_token(std::string_view tok)
+{
+    if (tok.size() < 2 || tok.back() != 'h')
+    {
+        return false;
+    }
+    if (tok.front() < 'A' || tok.front() > 'F')
+    {
+        return false;
+    }
+    for (size_t i = 1; i + 1 < tok.size(); ++i)
+    {
+        const char c = tok[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F')))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * @brief Count distinct equ RHS tokens that are not numeric literals.
+ *
+ * Only text before ';' is scanned, same as the undefined-label check.
+ * A `func_` or `loc_` name is not this error.
+ *
+ * @param text Emitted UASM listing.
+ * @return Number of distinct bad equ literals.
+ */
+static inline size_t listing_uasm_bad_equ_hex(std::string_view text)
+{
+    std::set<std::string, std::less<>> bad;
+    size_t begin = 0;
+    while (begin < text.size())
+    {
+        const size_t nl = text.find('\n', begin);
+        const size_t stop = (nl == std::string_view::npos) ? text.size() : nl;
+        std::string_view line = text.substr(begin, stop - begin);
+        if (!line.empty() && line.back() == '\r')
+        {
+            line.remove_suffix(1);
+        }
+        const std::string_view code = line.substr(0, line.find(';'));
+        bool seen_equ = false;
+        size_t i = 0;
+        while (i < code.size())
+        {
+            if (!listing_uasm_label_char(code[i]))
+            {
+                ++i;
+                continue;
+            }
+            const size_t start = i;
+            ++i;
+            while (i < code.size() && listing_uasm_label_char(code[i]))
+            {
+                ++i;
+            }
+            const std::string_view tok = code.substr(start, i - start);
+            if (!seen_equ)
+            {
+                if (tok == "equ")
+                {
+                    seen_equ = true;
+                }
+                continue;
+            }
+            if (listing_uasm_bad_equ_hex_token(tok))
+            {
+                bad.emplace(tok);
+            }
+        }
+        if (nl == std::string_view::npos)
+        {
+            break;
+        }
+        begin = nl + 1;
+    }
+    return bad.size();
+}
+
+/**
  * @brief Emit UASM source that assembles back to the load image.
  *
  * No address column and no hex-byte column. Real instructions go through
  * listing_masm_mnem / listing_masm_ops, then UASM spelling. A line is kept
  * when the whitelist matches, when it is a sized near branch to a known
  * symbol, or when --uasm-verify assembles that line back to the same
- * bytes. Default --uasm does not spawn. Anything else, including bytes the
- * CFG did not decode, is `db`
+ * bytes. Default --uasm does not spawn. A candidate the assembler rejects
+ * stays db, and the header then does not say verified. Anything else,
+ * including bytes the CFG did not decode, is `db`
  * (0NNh). An image longer than 65536 bytes is successive `sN segment`
  * / `org 0` / `sN ends` chunks (byte alignment, so uasm -mz does not pad).
  * An instruction is never split across a segment. No .stack and no REPACK-V1.
@@ -2588,7 +3027,8 @@ static inline size_t listing_uasm_undefined_labels(std::string_view text)
  * @param external     Optional symbol map (same names as the human listing).
  * @param entry_in_window False when the MZ entry is outside the load image.
  * @param relocs          MZ fixups into @p image. Empty leaves immediates numeric.
- * @param uasm_status     Optional. Set to 1 when labels stay undefined or
+ * @param uasm_status     Optional. Set to 1 when labels stay undefined, an
+ *                        equ RHS token matches [A-F][0-9A-F]*h, or
  *                        --uasm-verify has no assembler. 0 otherwise.
  * @return UASM source. The last line is `end <entry label>` for COM and a
  *         one-segment image whose entry is inside the image. A multi-segment
@@ -2806,7 +3246,10 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
     };
 
     // Default --uasm does not spawn. --uasm-verify batches every unique line.
+    // One rejected candidate is dropped and retried; it must not mark the
+    // whole listing verified.
     bool verified_ok = false;
+    size_t verify_rejected = 0;
     std::string verified_path;
     std::string verified_ver;
     std::map<std::string, std::vector<uint8_t>> verified_bytes;
@@ -2848,9 +3291,7 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
             else
             {
                 ListingUasmScratch scratch;
-                ListingUasmBatch batch;
-                if (!scratch.ready() ||
-                    !listing_uasm_verify_batch(scratch, verified_path, cands, batch))
+                if (!scratch.ready())
                 {
                     std::cerr << "listing: --uasm-verify: cannot run assembler\n";
                     if (uasm_status != nullptr)
@@ -2860,11 +3301,32 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
                 }
                 else
                 {
-                    verified_ok = true;
-                    verified_ver = batch.version;
-                    if (batch.exit_ok)
+                    const ListingUasmVerifyOutcome got =
+                        listing_uasm_verify_recover(scratch, verified_path, cands);
+                    if (!got.ran)
                     {
-                        verified_bytes = std::move(batch.bytes);
+                        std::cerr << "listing: --uasm-verify: cannot run assembler\n";
+                        if (uasm_status != nullptr)
+                        {
+                            *uasm_status = 1;
+                        }
+                    }
+                    else
+                    {
+                        verified_ver = got.version;
+                        verified_bytes = got.bytes;
+                        if (got.dropped == 0 && got.complete)
+                        {
+                            verified_ok = true;
+                        }
+                        else if (got.dropped > 0)
+                        {
+                            verify_rejected = got.dropped;
+                            std::cerr << std::format(
+                                "listing: --uasm-verify: assembler rejected {} "
+                                "candidates\n",
+                                got.dropped);
+                        }
                     }
                 }
             }
@@ -3200,7 +3662,15 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
         }
         if (value <= 0xFFFFu)
         {
-            return std::format("{:04X}h", value);
+            // UASM reads A004h as a symbol (A2102). Keep four digits when the
+            // first is 0-9; prepend one 0 when it is A-F. Not {:05X}.
+            std::string hex = std::format("{:04X}", value);
+            if (!hex.empty() && hex[0] >= 'A' && hex[0] <= 'F')
+            {
+                hex.insert(hex.begin(), '0');
+            }
+            hex.push_back('h');
+            return hex;
         }
         std::string hex = std::format("{:X}", value);
         if (!hex.empty() && hex[0] >= 'A' && hex[0] <= 'F')
@@ -3248,6 +3718,37 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
             equ_hex(at_equ.addr, false),
             equ_hex(at_equ.org, true)));
     }
+    // A sized branch to a label defined on a slice in another sN segment is
+    // A2170. Equs are already in failed_equ. Defined labels were skipped above.
+    // The loop below is the only demotion, so n_insns drops once.
+    {
+        std::map<std::string, size_t, std::less<>> lab_seg;
+        for (size_t si = 0; si < segs.size(); ++si)
+        {
+            for (const Slice& sl : segs[si].slices)
+            {
+                for (const std::string& lab : sl.labels)
+                {
+                    lab_seg.emplace(lab, si);
+                }
+            }
+        }
+        for (size_t si = 0; si < segs.size(); ++si)
+        {
+            for (const Slice& sl : segs[si].slices)
+            {
+                if (!sl.sized_branch || sl.branch_sym.empty())
+                {
+                    continue;
+                }
+                const auto found = lab_seg.find(sl.branch_sym);
+                if (found != lab_seg.end() && found->second != si)
+                {
+                    failed_equ.insert(sl.branch_sym);
+                }
+            }
+        }
+    }
     if (!failed_equ.empty())
     {
         for (Seg& seg : segs)
@@ -3293,6 +3794,12 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
         {
             out << std::format("; verified: uasm {} at {}\n", verified_ver, verified_path);
         }
+    }
+    else if (verify_rejected > 0)
+    {
+        out << std::format(
+            "; NOT VERIFIED (assembler rejected {} candidates)\n",
+            verify_rejected);
     }
     else
     {
@@ -3500,6 +4007,15 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
     if (undef != 0)
     {
         std::cerr << "listing: " << undef << " undefined labels\n";
+        if (uasm_status != nullptr)
+        {
+            *uasm_status = 1;
+        }
+    }
+    const size_t bad_hex = listing_uasm_bad_equ_hex(listing);
+    if (bad_hex != 0)
+    {
+        std::cerr << "listing: " << bad_hex << " invalid equ hex literals\n";
         if (uasm_status != nullptr)
         {
             *uasm_status = 1;

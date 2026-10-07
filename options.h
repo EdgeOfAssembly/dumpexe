@@ -103,8 +103,10 @@ struct Options {
     /// --uasm. There is no disable twin. Parse fails unless --uasm is also set.
     /// Does not require --uasm-verify.
     bool uasm_stats = false;
-    /// --uasm-verify: assemble candidate lines once per listing (enable-only).
-    /// Default off. There is no disable twin. Parse fails unless --uasm is set.
+    /// --uasm-verify: assemble candidate lines (enable-only). A clean batch is
+    /// one spawn. A rejected line is dropped and the header does not say
+    /// verified. Default off. There is no disable twin. Parse fails unless
+    /// --uasm is set.
     bool uasm_verify = false;
     /// --uasm-bin PATH: assembler for --uasm-verify. Empty means $DUMPEXE_UASM,
     /// then PATH. Never a built-in absolute path.
@@ -736,8 +738,10 @@ static inline void show_usage(const char* progname) {
         "                      wrap, or a decoded relocation-pinned far call. A pinned\n"
         "                      target outside the image is not followed. An entry outside\n"
         "                      the image is not labeled func_FFFF.\n"
-        "  --uasm-verify       With --uasm, assemble candidate lines once and keep a line\n"
-        "                      only when the bytes match. Enable-only. Default off, so\n"
+        "  --uasm-verify       With --uasm, assemble candidate lines and keep a line\n"
+        "                      only when the bytes match. A clean batch is one assemble.\n"
+        "                      A rejected line is dropped and retried; the header then\n"
+        "                      does not say verified. Enable-only. Default off, so\n"
         "                      --uasm does not run an assembler. Requires --uasm.\n"
         "                      Does not imply --uasm-stats. The listing header says\n"
         "                      \"; verified: uasm … at PATH\" or \"; NOT VERIFIED\".\n"

@@ -502,7 +502,303 @@ case_verify_missing() {
   }
 }
 
+lacks_token() {
+  local name=$1
+  local tok=$2
+  python3 - "$TD/$name.asm" "$tok" << 'PY'
+import re
+import sys
+text = open(sys.argv[1], encoding="utf-8").read()
+tok = sys.argv[2]
+pat = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(tok) + r"(?![A-Za-z0-9_])")
+if pat.search(text):
+    print("unexpected token", tok, file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
+round_img() {
+  local name=$1
+  if ! (
+    cd "$TD" || exit 1
+    "$UASM" -bin -nologo -Fo "$name.bin" "$name.asm" \
+      >"$name.uout" 2>"$name.uerr"
+  ); then
+    echo "uasm failed for $name" >&2
+    cat "$TD/$name.uerr" >&2 || true
+    echo "---- $name.asm ----" >&2
+    cat "$TD/$name.asm" >&2 || true
+    return 1
+  fi
+  if ! cmp -s "$TD/$name.bin" "$TD/$name.img"; then
+    echo "load image cmp failed for $name" >&2
+    echo "---- $name.asm ----" >&2
+    cat "$TD/$name.asm" >&2 || true
+    return 1
+  fi
+}
+
+emit_mz() {
+  local name=$1
+  if ! "$BIN" --uasm -o "$TD/$name.asm" "$TD/$name.exe" \
+      >"$TD/$name.stdout" 2>"$TD/$name.stderr"; then
+    echo "dumpexe --uasm failed for $name" >&2
+    cat "$TD/$name.stderr" >&2 || true
+    return 1
+  fi
+}
+
+python3 - "$TD" << 'PY'
+import struct
+import sys
+from pathlib import Path
+
+td = Path(sys.argv[1])
+
+def mz(image, ip=0, cs=0, ss=0, sp=0x200):
+    hdr = 0x20
+    size = hdr + len(image)
+    h = struct.pack(
+        "<2s13H",
+        b"MZ",
+        size % 512,
+        (size + 511) // 512,
+        0,
+        hdr // 16,
+        0x10,
+        0xFFFF,
+        ss,
+        sp,
+        0,
+        ip,
+        cs,
+        0x1C,
+        0,
+    )
+    return h.ljust(hdr, b"\0") + bytes(image)
+
+def put(img, at, hx):
+    raw = bytes.fromhex(hx)
+    img[at : at + len(raw)] = raw
+
+com = bytearray(40720)
+put(com, 0, "e9fd9e")
+put(com, 40704, "e80100b8c3c3cd20")
+(td / "rg5com.com").write_bytes(com)
+
+mz_img = bytearray(49168)
+put(mz_img, 0, "e9fdbf")
+put(mz_img, 49152, "e80100b8c3c3b8004ccd21")
+(td / "rg5mz.exe").write_bytes(mz(mz_img, ip=0, cs=0))
+(td / "rg5mz.img").write_bytes(mz_img)
+
+e2d = bytearray(0x10100)
+put(e2d, 0xFFF0, "e82d00b8004ccd21")
+put(e2d, 0x10010, "c3")
+(td / "e2d.exe").write_bytes(mz(e2d, ip=0, cs=0x0FFF))
+(td / "e2d.img").write_bytes(e2d)
+
+e2e = bytearray(0x10100)
+put(e2e, 0xFFF0, "e82e00eb0c")
+put(e2e, 0x10010, "b8c3c3c3")
+put(e2e, 0xFFFE, "eb10")
+(td / "e2e.exe").write_bytes(mz(e2e, ip=0, cs=0x0FFF))
+(td / "e2e.img").write_bytes(e2e)
+
+e2f = bytearray(0x10100)
+put(e2f, 0x8000, "e9fb7f")
+put(e2f, 0xFFFE, "eb10")
+put(e2f, 0x10010, "b8004ccd21")
+(td / "e2f.exe").write_bytes(mz(e2f, ip=0, cs=0x0800))
+(td / "e2f.img").write_bytes(e2f)
+PY
+
+case_rg5_com() {
+  if ! "$BIN" --uasm -o "$TD/rg5com.asm" "$TD/rg5com.com" \
+      >"$TD/rg5com.stdout" 2>"$TD/rg5com.stderr"; then
+    echo "dumpexe failed rg5 com" >&2
+    cat "$TD/rg5com.stderr" >&2 || true
+    return 1
+  fi
+  lacks_token rg5com "A004h" || return 1
+  has rg5com "0A004h" || return 1
+  # round_bin compares uasm -bin to the .com of the same stem.
+  round_bin rg5com
+}
+
+case_rg5_mz() {
+  emit_mz rg5mz || return 1
+  lacks_token rg5mz "C004h" || return 1
+  has rg5mz "0C004h" || return 1
+  round_img rg5mz
+}
+
+case_c1() {
+  local name=$1
+  emit_mz "$name" || return 1
+  round_img "$name"
+}
+
+UASM_ABS="$(readlink -f "$UASM")"
+cat > "$TD/uasm-count" << EOF
+#!/bin/sh
+printf '.\\n' >> '$TD/uasm-spawns'
+exec '$UASM_ABS' "\$@"
+EOF
+chmod +x "$TD/uasm-count"
+
+spawn_lines() {
+  if [[ ! -f "$TD/uasm-spawns" ]]; then
+    echo 0
+    return 0
+  fi
+  wc -l < "$TD/uasm-spawns" | tr -d ' '
+}
+
+case_v1_partial() {
+  printf '\xd6\x8b\xc3\xc3' > "$TD/poison.com"
+  : > "$TD/uasm-spawns"
+  if ! "$BIN" --uasm --uasm-verify --uasm-bin "$TD/uasm-count" \
+      -o "$TD/poison.asm" "$TD/poison.com" \
+      >"$TD/poison.stdout" 2>"$TD/poison.stderr"; then
+    echo "poison verify failed" >&2
+    cat "$TD/poison.stderr" >&2 || true
+    return 1
+  fi
+  if ! grep -E -q '^[[:space:]]+mov ax, bx' "$TD/poison.asm"; then
+    echo "mov ax, bx was not promoted" >&2
+    cat "$TD/poison.asm" >&2 || true
+    return 1
+  fi
+  no_insn poison "salc" || return 1
+  if grep -F -q '; verified:' "$TD/poison.asm"; then
+    echo "header still claims verified" >&2
+    cat "$TD/poison.asm" >&2 || true
+    return 1
+  fi
+  if ! grep -F -q 'assembler rejected' "$TD/poison.stderr"; then
+    echo "stderr missing rejected count" >&2
+    cat "$TD/poison.stderr" >&2 || true
+    return 1
+  fi
+  local n
+  n="$(spawn_lines)"
+  if [[ "$n" -lt 1 || "$n" -gt 16 ]]; then
+    echo "poison spawn count $n" >&2
+    return 1
+  fi
+}
+
+case_v1_one_spawn() {
+  printf '\x8b\xc3\xc3' > "$TD/okv.com"
+  : > "$TD/uasm-spawns"
+  if ! "$BIN" --uasm --uasm-verify --uasm-bin "$TD/uasm-count" \
+      -o "$TD/okv.asm" "$TD/okv.com" \
+      >"$TD/okv.stdout" 2>"$TD/okv.stderr"; then
+    echo "clean verify failed" >&2
+    cat "$TD/okv.stderr" >&2 || true
+    return 1
+  fi
+  if ! grep -E -q '^[[:space:]]+mov ax, bx' "$TD/okv.asm"; then
+    echo "clean mov ax, bx missing" >&2
+    cat "$TD/okv.asm" >&2 || true
+    return 1
+  fi
+  has okv "; verified: uasm" || return 1
+  local n
+  n="$(spawn_lines)"
+  if [[ "$n" -ne 1 ]]; then
+    echo "clean spawn count $n" >&2
+    return 1
+  fi
+}
+
+case_v2_rel() {
+  mkdir -p "$TD/v2cwd/rel"
+  cp "$UASM_ABS" "$TD/v2cwd/rel/uasm"
+  chmod +x "$TD/v2cwd/rel/uasm"
+  printf '\x8b\xc3\xc3' > "$TD/v2cwd/ok.com"
+  if ! (
+    cd "$TD/v2cwd" || exit 1
+    "$BIN" --uasm --uasm-verify --uasm-bin rel/uasm -o ok.asm ok.com \
+      >ok.stdout 2>ok.stderr
+  ); then
+    echo "relative --uasm-bin failed" >&2
+    cat "$TD/v2cwd/ok.stderr" >&2 || true
+    return 1
+  fi
+  if ! grep -E -q '^[[:space:]]+mov ax, bx' "$TD/v2cwd/ok.asm"; then
+    echo "relative bin did not promote mov ax, bx" >&2
+    cat "$TD/v2cwd/ok.asm" >&2 || true
+    cat "$TD/v2cwd/ok.stderr" >&2 || true
+    return 1
+  fi
+}
+
+case_v3_path_dir() {
+  mkdir -p "$TD/d1/uasm" "$TD/d2"
+  cp "$UASM_ABS" "$TD/d2/uasm"
+  chmod +x "$TD/d2/uasm"
+  printf '\x8b\xc3\xc3' > "$TD/v3.com"
+  if ! env -u DUMPEXE_UASM PATH="$TD/d1:$TD/d2" \
+      "$BIN" --uasm --uasm-verify -o "$TD/v3.asm" "$TD/v3.com" \
+      >"$TD/v3.stdout" 2>"$TD/v3.stderr"; then
+    echo "PATH directory uasm was not skipped" >&2
+    cat "$TD/v3.stderr" >&2 || true
+    return 1
+  fi
+  if ! grep -E -q '^[[:space:]]+mov ax, bx' "$TD/v3.asm"; then
+    echo "PATH search did not promote mov ax, bx" >&2
+    cat "$TD/v3.asm" >&2 || true
+    cat "$TD/v3.stderr" >&2 || true
+    return 1
+  fi
+}
+
+scratch_dirs() {
+  (
+    shopt -s nullglob
+    local d
+    for d in /tmp/dumpexe-uasm-*; do
+      printf '%s\n' "$d"
+    done | sort
+  )
+}
+
+case_v4_env() {
+  printf 'nop\n' > "$TD/extra.asm"
+  printf '\x8b\xc3\xc3' > "$TD/v4.com"
+  local before after new
+  before="$(scratch_dirs)"
+  if ! UASM="$TD/extra.asm" "$BIN" --uasm --uasm-verify --uasm-bin "$UASM_ABS" \
+      -o "$TD/v4.asm" "$TD/v4.com" \
+      >"$TD/v4.stdout" 2>"$TD/v4.stderr"; then
+    echo "v4 verify failed" >&2
+    cat "$TD/v4.stderr" >&2 || true
+    return 1
+  fi
+  after="$(scratch_dirs)"
+  new="$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") || true)"
+  # comm emits a blank line when both sides are empty.
+  new="$(printf '%s\n' "$new" | sed '/^$/d' || true)"
+  if [[ -n "$new" ]]; then
+    echo "scratch dir leaked:" >&2
+    printf '%s\n' "$new" >&2
+    return 1
+  fi
+}
+
 check mov8b_verify case_mov8b_verify
+check rg5_com case_rg5_com
+check rg5_mz case_rg5_mz
+check c1_e2d case_c1 e2d
+check c1_e2e case_c1 e2e
+check c1_e2f case_c1 e2f
+check v1_partial case_v1_partial
+check v1_one_spawn case_v1_one_spawn
+check v2_rel_bin case_v2_rel
+check v3_path_dir case_v3_path_dir
+check v4_env case_v4_env
 check source_name_not_label case_source_name_not_label
 check mid_insn_label case_mid_insn_label
 check ret0 case_ret0
