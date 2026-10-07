@@ -11,7 +11,7 @@ static inline void print_version()
     int cap_major = 0;
     int cap_minor = 0;
     (void)cs_version(&cap_major, &cap_minor);
-    std::cout << "dumpexe 2.19 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
+    std::cout << "dumpexe 2.20 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
                  "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n"
                  "License: GPLv2 | Commercial (contact author)\n";
     std::cout << std::format(
@@ -149,27 +149,29 @@ static inline bool read_entire_file(const std::string& filename,
 /**
  * @brief Load-image linear address of the MZ entry.
  *
- * `delta = int16(cs) * 16 + ip`. com2exe CS=FFF0 IP=0100 has delta <= 0 and
- * stays at linear 0 with segment base 0. An in-image entry keeps that linear,
- * including past 64 KiB. An entry at or past the load image is not inside it.
+ * `frame = int32(int16(cs)) * 16` and `delta = frame + ip`. com2exe
+ * CS=FFF0 IP=0100 has delta <= 0 and stays at linear 0 with frame 0.
+ * CS=FFFF IP=0020 has frame -16 and linear 0x10. An in-image entry keeps
+ * that linear, including past 64 KiB. An entry at or past the load image
+ * is not inside it. A negative frame is not cast to uint32_t.
  *
  * @param header     MZ header. CS is a signed paragraph offset.
  * @param image_size Load image length in bytes.
- * @return Linear entry, its segment base, and whether it is inside the image.
+ * @return Linear entry, its signed frame, and whether it is inside the image.
  */
 struct MzEntryLoc
 {
     uint32_t linear = 0;
-    uint32_t seg_base = 0;
+    int32_t frame = 0; ///< Signed cs*16. 0 when delta <= 0.
     bool in_window = true;
 };
 
 static inline MzEntryLoc mz_entry_image_ip(const MZHeader& header, size_t image_size)
 {
     MzEntryLoc loc{};
-    const int32_t delta =
-        static_cast<int32_t>(static_cast<int16_t>(header.cs)) * 16 +
-        static_cast<int32_t>(header.ip);
+    const int32_t frame =
+        static_cast<int32_t>(static_cast<int16_t>(header.cs)) * 16;
+    const int32_t delta = frame + static_cast<int32_t>(header.ip);
     if (delta <= 0)
     {
         return loc;
@@ -180,7 +182,7 @@ static inline MzEntryLoc mz_entry_image_ip(const MZHeader& header, size_t image_
         return loc;
     }
     loc.linear = static_cast<uint32_t>(delta);
-    loc.seg_base = static_cast<uint32_t>(static_cast<uint16_t>(header.cs)) * 16u;
+    loc.frame = frame;
     loc.in_window = true;
     return loc;
 }
@@ -417,12 +419,14 @@ int main(int argc, char* argv[]) {
                 {
                     cfg_slot = &cfg_g;
                 }
+                const CfgLin entry_base = cfg_listing_entry_base(entry.frame);
                 listing_rc = listing_run(fileData, cfg_file_off, cfg_len,
                                 entry.linear, cs_seg, static_cast<uint16_t>(header.cs), opts, opts.filename,
                                 opts.toolchainDetect ? &tc_rep : nullptr,
                                 opts.toolchainDetect ? &tp_rep : nullptr,
                                 false, false, entry.in_window, relocs, cfg_slot,
-                                entry.seg_base);
+                                entry_base);
+                cfg_set_entry_frame_override(0);
                 if (listing_rc == 0 && cfg_g.image_size != 0)
                 {
                     cfg_shared = true;
@@ -456,7 +460,7 @@ int main(int argc, char* argv[]) {
                                           cfg_entry.in_window ? cfg_entry.linear : CfgLin{0},
                                           cs_seg, static_cast<uint16_t>(header.cs), cfg_opts,
                                           relocs,
-                                          cfg_entry.in_window ? cfg_entry.seg_base : CfgLin{0});
+                                          cfg_entry.in_window ? cfg_entry.frame : int32_t{0});
                 cfg_ran = true;
             }
         }

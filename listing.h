@@ -28,6 +28,7 @@
 #include <format>
 #include <functional>
 #include <fstream>
+#include <iterator>
 #include <iostream>
 #include <map>
 #include <set>
@@ -1422,6 +1423,12 @@ static inline bool listing_uasm_sized_branch(
     }
     const uint16_t ip16 = static_cast<uint16_t>(ip - in.seg_base);
     const int sum = static_cast<int>(ip16) + static_cast<int>(in.size) + disp;
+    // A rel8 that wraps the 64 KiB segment is A2053 if emitted as `short`.
+    // Near E8/E9 stay sized: the wrapped target is still inside the segment.
+    if (rel8 && (sum < 0 || sum > 0xFFFF))
+    {
+        return false;
+    }
     const uint16_t target16 = static_cast<uint16_t>(sum);
     const CfgLin target = in.seg_base + target16;
     const auto it = sym.find(target);
@@ -1569,6 +1576,11 @@ static inline bool listing_uasm_stand_behind(const CfgInsn& in,
     {
         const unsigned imm = static_cast<unsigned>(b[1]) |
                              (static_cast<unsigned>(b[2]) << 8);
+        // ret 0h / retf 0h assemble as the 1-byte C3/CB forms. Keep the bytes.
+        if (imm == 0)
+        {
+            return false;
+        }
         const char* m = (b[0] == 0xC2) ? "ret " : "retf ";
         return eq(std::string(m) + listing_uasm_imm(imm));
     }
@@ -1617,8 +1629,8 @@ public:
         asm_path_ = dir_ + "/line.asm";
         bin_path_ = dir_ + "/line.bin";
         err_path_ = dir_ + "/line.err";
+        lst_path_ = dir_ + "/line.lst";
         ready_ = true;
-        uasm_ok_ = (::access("/usr/bin/uasm", X_OK) == 0);
     }
 
     ListingUasmScratch(const ListingUasmScratch&) = delete;
@@ -1647,6 +1659,10 @@ public:
         {
             ::unlink(err_path_.c_str());
         }
+        if (!lst_path_.empty())
+        {
+            ::unlink(lst_path_.c_str());
+        }
         if (!dir_.empty())
         {
             ::rmdir(dir_.c_str());
@@ -1660,15 +1676,6 @@ public:
     bool ready() const
     {
         return ready_;
-    }
-
-    /**
-     * @brief True when /usr/bin/uasm is executable.
-     * @return false when the assembler is missing.
-     */
-    bool uasm_ok() const
-    {
-        return uasm_ok_;
     }
 
     /**
@@ -1698,67 +1705,257 @@ public:
         return dir_;
     }
 
+    /**
+     * @brief Path of the listing UASM writes for the one batched assemble.
+     * @return Absolute .lst path, empty when not ready.
+     */
+    const std::string& lst_path() const
+    {
+        return lst_path_;
+    }
+
 private:
     std::string dir_;
     std::string asm_path_;
     std::string bin_path_;
     std::string err_path_;
+    std::string lst_path_;
     bool ready_ = false;
-    bool uasm_ok_ = false;
 };
 
 /**
- * @brief Assemble one line with /usr/bin/uasm and compare the bytes.
+ * @brief True when one spelled line may be sent to the batched assembler.
  *
- * Level 0 writes `.8086` before `.model tiny`. Level 1 writes `.186` after
- * `.model tiny`. Level 2 and 3 are not assembled. `org 100h` does not pad, so
- * the output must equal @p in.bytes. The spawn argv is uasm, -bin, -nologo,
- * -Fo, the bin path, and the asm path. No shell.
+ * Level 2 and 3 stay db. A line that could close the batch file, name a
+ * func_/loc_ label, or exceed one instruction is rejected.
  *
- * @param scratch Scratch paths for this listing_emit_uasm call.
- * @param line    One instruction. The caller rejects comments and labels.
- * @param level   listing_uasm_cpu_level of @p in. Must be 0 or 1.
- * @param in      Instruction whose bytes are the expected output.
- * @return true when uasm's output equals @p in.bytes.
+ * @param line   Spelled mnemonic and operands. No newline.
+ * @param level  listing_uasm_cpu_level. 0 or 1 are assembled.
+ * @param nbytes Decoded instruction length.
+ * @return false when the line must stay db without a spawn.
  */
-static inline bool listing_uasm_verify_one(const ListingUasmScratch& scratch,
-                                          const std::string& line,
-                                          int level,
-                                          const CfgInsn& in)
+static inline bool listing_uasm_line_batchable(std::string_view line,
+                                               int level,
+                                               size_t nbytes)
 {
-    if (!scratch.ready() || !scratch.uasm_ok() || level >= 2 || in.size == 0 ||
-        in.size > 16)
+    if (level >= 2 || nbytes == 0 || nbytes > 16 || line.empty() || line.size() > 200)
+    {
+        return false;
+    }
+    if (line.find(';') != std::string_view::npos ||
+        line.find('\n') != std::string_view::npos ||
+        line.find('\r') != std::string_view::npos ||
+        line.find("func_") != std::string_view::npos ||
+        line.find("loc_") != std::string_view::npos)
+    {
+        return false;
+    }
+    if (line.front() == '.' || line.front() == ' ' || line.front() == '\t')
+    {
+        return false;
+    }
+    return true;
+}
+
+/**
+ * @brief Assembler for --uasm-verify. Never a built-in absolute path.
+ *
+ * Order: --uasm-bin, else $DUMPEXE_UASM when set and non-empty, else PATH.
+ * A path the user named that is not executable does not fall through.
+ *
+ * @param opts Parsed options. uasm_bin may be empty.
+ * @return Executable path, or empty when verify cannot run.
+ */
+static inline std::string listing_uasm_resolve_bin(const Options& opts)
+{
+    auto usable = [](const std::string& path) -> bool
+    {
+        return !path.empty() && ::access(path.c_str(), X_OK) == 0;
+    };
+    if (!opts.uasm_bin.empty())
+    {
+        return usable(opts.uasm_bin) ? opts.uasm_bin : std::string{};
+    }
+    if (const char* env = std::getenv("DUMPEXE_UASM"))
+    {
+        if (env[0] != '\0')
+        {
+            return usable(env) ? std::string(env) : std::string{};
+        }
+    }
+    const char* path_env = std::getenv("PATH");
+    if (path_env == nullptr)
+    {
+        return {};
+    }
+    std::string_view rest(path_env);
+    while (!rest.empty())
+    {
+        const size_t colon = rest.find(':');
+        const std::string_view dir =
+            (colon == std::string_view::npos) ? rest : rest.substr(0, colon);
+        std::string full;
+        if (dir.empty())
+        {
+            full = "uasm";
+        }
+        else
+        {
+            full.assign(dir);
+            full.push_back('/');
+            full.append("uasm");
+        }
+        if (usable(full))
+        {
+            return full;
+        }
+        if (colon == std::string_view::npos)
+        {
+            break;
+        }
+        rest.remove_prefix(colon + 1);
+    }
+    return {};
+}
+
+/**
+ * @brief Linear IP encoded in a func_/loc_ name.
+ *
+ * @param name `func_0104` or `loc_00FD`.
+ * @param ip   Receives the hex suffix.
+ * @return false when the suffix is not hex.
+ */
+static inline bool listing_uasm_sym_ip(std::string_view name, CfgLin& ip)
+{
+    const size_t us = name.rfind('_');
+    if (us == std::string_view::npos || us + 1 >= name.size())
+    {
+        return false;
+    }
+    const std::string_view hex = name.substr(us + 1);
+    if (hex.empty() || hex.size() > 8)
+    {
+        return false;
+    }
+    uint32_t value = 0;
+    for (const char c : hex)
+    {
+        value <<= 4;
+        if (c >= '0' && c <= '9')
+        {
+            value += static_cast<uint32_t>(c - '0');
+        }
+        else if (c >= 'A' && c <= 'F')
+        {
+            value += static_cast<uint32_t>(c - 'A' + 10);
+        }
+        else if (c >= 'a' && c <= 'f')
+        {
+            value += static_cast<uint32_t>(c - 'a' + 10);
+        }
+        else
+        {
+            return false;
+        }
+    }
+    ip = value;
+    return true;
+}
+
+/**
+ * @brief One batched assemble of every unique candidate line.
+ *
+ * Level 0 lines are under `.8086`. Level 1 lines follow `.186`. A trailing
+ * `db 0CCh` gives the last instruction a location-counter bound. The child
+ * is one posix_spawn of @p asm_bin. Results are keyed by level and line text.
+ */
+struct ListingUasmBatch
+{
+    bool exit_ok = false;
+    std::string version;
+    std::map<std::string, std::vector<uint8_t>> bytes;
+};
+
+/**
+ * @brief Cache key for one verified spelling at a CPU level.
+ *
+ * @param level 0 or 1.
+ * @param line  Spelled text.
+ * @return Key shared by the batch result map and the slice walk.
+ */
+static inline std::string listing_uasm_vkey(int level, std::string_view line)
+{
+    return std::to_string(level) + "\n" + std::string(line);
+}
+
+/**
+ * @brief Spawn the assembler once and map each candidate back to its bytes.
+ *
+ * @param scratch  Scratch paths. The child cwd is scratch.dir().
+ * @param asm_bin  Executable from listing_uasm_resolve_bin. Not hard-coded.
+ * @param cands    Unique (level, line) pairs, level 0 then level 1.
+ * @param out      Filled on a successful spawn, even when UASM exits non-zero.
+ * @return false when the process could not be spawned or the batch file
+ *         could not be written. UASM's own exit status is out.exit_ok.
+ */
+static inline bool listing_uasm_verify_batch(
+    const ListingUasmScratch& scratch,
+    const std::string& asm_bin,
+    const std::vector<std::pair<int, std::string>>& cands,
+    ListingUasmBatch& out)
+{
+    out = ListingUasmBatch{};
+    if (!scratch.ready() || asm_bin.empty() || cands.empty())
     {
         return false;
     }
     ::unlink(scratch.bin_path().c_str());
+    ::unlink(scratch.lst_path().c_str());
     FILE* af = std::fopen(scratch.asm_path().c_str(), "w");
     if (af == nullptr)
     {
         return false;
     }
-    bool wrote = true;
-    if (level == 0 && std::fputs(".8086\n", af) < 0)
+    bool wrote = std::fputs(".8086\n.model tiny\n.code\norg 0\n", af) >= 0;
+    bool any_186 = false;
+    for (const auto& cand : cands)
+    {
+        if (cand.first <= 0)
+        {
+            if (wrote && std::fputs(cand.second.c_str(), af) < 0)
+            {
+                wrote = false;
+            }
+            if (wrote && std::fputc('\n', af) == EOF)
+            {
+                wrote = false;
+            }
+        }
+        else
+        {
+            any_186 = true;
+        }
+    }
+    if (wrote && any_186 && std::fputs(".186\n", af) < 0)
     {
         wrote = false;
     }
-    if (wrote && std::fputs(".model tiny\n", af) < 0)
+    if (wrote && any_186)
     {
-        wrote = false;
+        for (const auto& cand : cands)
+        {
+            if (cand.first <= 0)
+            {
+                continue;
+            }
+            if (std::fputs(cand.second.c_str(), af) < 0 || std::fputc('\n', af) == EOF)
+            {
+                wrote = false;
+                break;
+            }
+        }
     }
-    if (wrote && level == 1 && std::fputs(".186\n", af) < 0)
-    {
-        wrote = false;
-    }
-    if (wrote && std::fputs(".code\norg 100h\n", af) < 0)
-    {
-        wrote = false;
-    }
-    if (wrote && std::fwrite(line.data(), 1, line.size(), af) != line.size())
-    {
-        wrote = false;
-    }
-    if (wrote && std::fputs("\nend\n", af) < 0)
+    if (wrote && std::fputs("db 0CCh\nend\n", af) < 0)
     {
         wrote = false;
     }
@@ -1773,12 +1970,13 @@ static inline bool listing_uasm_verify_one(const ListingUasmScratch& scratch,
 
     std::string bin_arg = scratch.bin_path();
     std::string asm_arg = scratch.asm_path();
+    std::string fl_arg = "-Fl" + scratch.lst_path();
     char arg0[] = "uasm";
     char arg1[] = "-bin";
     char arg2[] = "-nologo";
     char arg3[] = "-Fo";
     char* argv[] = {
-        arg0, arg1, arg2, arg3, bin_arg.data(), asm_arg.data(), nullptr};
+        arg0, arg1, arg2, fl_arg.data(), arg3, bin_arg.data(), asm_arg.data(), nullptr};
 
     posix_spawn_file_actions_t actions;
     if (::posix_spawn_file_actions_init(&actions) != 0)
@@ -1802,8 +2000,7 @@ static inline bool listing_uasm_verify_one(const ListingUasmScratch& scratch,
 
     extern char** environ;
     pid_t pid = 0;
-    const int spawned = ::posix_spawn(&pid, "/usr/bin/uasm", &actions, nullptr,
-                                      argv, environ);
+    const int spawned = ::posix_spawn(&pid, asm_bin.c_str(), &actions, nullptr, argv, environ);
     ::posix_spawn_file_actions_destroy(&actions);
     if (spawned != 0)
     {
@@ -1823,25 +2020,163 @@ static inline bool listing_uasm_verify_one(const ListingUasmScratch& scratch,
         }
         break;
     }
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
-    {
-        return false;
-    }
+    const bool exited = WIFEXITED(status) != 0 && WEXITSTATUS(status) == 0;
 
-    FILE* bf = std::fopen(scratch.bin_path().c_str(), "rb");
-    if (bf == nullptr)
+    std::ifstream lst(scratch.lst_path());
+    if (!lst)
     {
-        return false;
+        return true;
     }
-    uint8_t got[16];
-    const size_t nread = std::fread(got, 1, sizeof(got), bf);
-    const int extra = std::fgetc(bf);
-    std::fclose(bf);
-    if (extra != EOF || nread != in.size)
+    std::vector<std::pair<uint32_t, std::string>> rows;
+    std::string raw;
+    while (std::getline(lst, raw))
     {
-        return false;
+        if (!raw.empty() && raw.back() == '\r')
+        {
+            raw.pop_back();
+        }
+        if (raw.starts_with("Binary Map:") || raw.starts_with("Macros:"))
+        {
+            break;
+        }
+        if (out.version.empty())
+        {
+            const size_t at = raw.find("UASM v");
+            if (at != std::string::npos)
+            {
+                const size_t begin = at + 6;
+                size_t end = begin;
+                while (end < raw.size() && raw[end] != ',' && raw[end] != ' ')
+                {
+                    ++end;
+                }
+                if (end > begin)
+                {
+                    out.version = raw.substr(begin, end - begin);
+                }
+            }
+        }
+        if (raw.size() < 8)
+        {
+            continue;
+        }
+        bool addr = true;
+        for (size_t i = 0; i < 8; ++i)
+        {
+            const char c = raw[i];
+            if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F')))
+            {
+                addr = false;
+                break;
+            }
+        }
+        if (!addr)
+        {
+            continue;
+        }
+        uint32_t lc = 0;
+        for (size_t i = 0; i < 8; ++i)
+        {
+            const char c = raw[i];
+            lc <<= 4;
+            lc += (c >= '0' && c <= '9') ? static_cast<uint32_t>(c - '0')
+                                         : static_cast<uint32_t>(c - 'A' + 10);
+        }
+        std::string_view rest(raw);
+        rest.remove_prefix(8);
+        rest.remove_prefix(std::min(rest.find_first_not_of(' '), rest.size()));
+        size_t hex_n = 0;
+        while (hex_n < rest.size())
+        {
+            const char c = rest[hex_n];
+            if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F'))
+            {
+                ++hex_n;
+                continue;
+            }
+            break;
+        }
+        std::string_view source = rest;
+        if (hex_n >= 2 && (hex_n % 2) == 0 && hex_n < rest.size() && rest[hex_n] == ' ')
+        {
+            size_t sp = hex_n;
+            while (sp < rest.size() && rest[sp] == ' ')
+            {
+                ++sp;
+            }
+            if (sp >= hex_n + 2 && sp < rest.size())
+            {
+                source = rest.substr(sp);
+            }
+        }
+        rows.emplace_back(lc, std::string(source));
     }
-    return std::memcmp(got, in.bytes, nread) == 0;
+    if (!exited)
+    {
+        return true;
+    }
+    std::ifstream bin(scratch.bin_path(), std::ios::binary);
+    if (!bin)
+    {
+        return true;
+    }
+    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(bin)),
+                               std::istreambuf_iterator<char>());
+    std::vector<std::pair<int, std::string>> ordered;
+    ordered.reserve(cands.size());
+    for (const auto& cand : cands)
+    {
+        if (cand.first <= 0)
+        {
+            ordered.push_back(cand);
+        }
+    }
+    for (const auto& cand : cands)
+    {
+        if (cand.first > 0)
+        {
+            ordered.push_back(cand);
+        }
+    }
+    size_t ci = 0;
+    for (size_t i = 0; i < rows.size() && ci < ordered.size(); ++i)
+    {
+        if (rows[i].second == "db 0CCh")
+        {
+            continue;
+        }
+        if (rows[i].second != ordered[ci].second)
+        {
+            break;
+        }
+        bool have_next = false;
+        uint32_t next_lc = 0;
+        for (size_t j = i + 1; j < rows.size(); ++j)
+        {
+            next_lc = rows[j].first;
+            have_next = true;
+            break;
+        }
+        if (!have_next || next_lc < rows[i].first)
+        {
+            break;
+        }
+        const uint32_t sz = next_lc - rows[i].first;
+        if (sz == 0 || sz > 16 ||
+            static_cast<size_t>(rows[i].first) + static_cast<size_t>(sz) > bytes.size())
+        {
+            ++ci;
+            continue;
+        }
+        const size_t at = static_cast<size_t>(rows[i].first);
+        out.bytes.emplace(
+            listing_uasm_vkey(ordered[ci].first, ordered[ci].second),
+            std::vector<uint8_t>(bytes.begin() + static_cast<std::ptrdiff_t>(at),
+                                 bytes.begin() + static_cast<std::ptrdiff_t>(at + sz)));
+        ++ci;
+    }
+    out.exit_ok = true;
+    return true;
 }
 
 /**
@@ -1925,7 +2260,7 @@ static inline bool listing_uasm_reloc_frame(const std::vector<uint8_t>& image,
 /**
  * @brief UASM text of one relocated mov r16, imm16.
  *
- * Not assembled by listing_uasm_verify_one. The scratch file has no frame
+ * Not assembled by --uasm-verify. The scratch file has no frame
  * label, so verify would demote a correct line to db.
  *
  * @param opcode Opcode B8+r. The low three bits select ax..di.
@@ -2087,11 +2422,13 @@ static inline std::string listing_uasm_stats_percent(size_t part, size_t whole)
  * @param image     Walked byte count (`emit_lo` through `image.size()`).
  * @param decoded   Sum of in-window CFG instruction sizes.
  * @param text_n    Sum of lengths of slices emitted as instructions.
+ * @param verified  True when --uasm-verify ran with an assembler.
  */
 static inline void listing_uasm_print_stats(std::string_view listing,
                                            size_t image,
                                            size_t decoded,
-                                           size_t text_n)
+                                           size_t text_n,
+                                           bool verified)
 {
     const size_t db = image - text_n;
     size_t defined = 0;
@@ -2099,7 +2436,7 @@ static inline void listing_uasm_print_stats(std::string_view listing,
     listing_uasm_count_labels(listing, defined, referenced);
     std::cerr << std::format(
         "uasm-stats: image={} decoded={} ({}%) text={} ({}%) db={} ({}%) "
-        "labels_defined={} labels_referenced={}\n",
+        "labels_defined={} labels_referenced={} verified={}\n",
         image,
         decoded,
         listing_uasm_stats_percent(decoded, image),
@@ -2108,7 +2445,100 @@ static inline void listing_uasm_print_stats(std::string_view listing,
         db,
         listing_uasm_stats_percent(db, image),
         defined,
-        referenced);
+        referenced,
+        verified ? "yes" : "no");
+}
+
+/**
+ * @brief How many func_/loc_ tokens are neither a label nor an equ.
+ *
+ * @param text Emitted UASM listing.
+ * @return Number of distinct undefined func_/loc_ names.
+ */
+static inline size_t listing_uasm_undefined_labels(std::string_view text)
+{
+    std::set<std::string, std::less<>> defined;
+    std::vector<std::string_view> lines;
+    size_t begin = 0;
+    while (begin < text.size())
+    {
+        const size_t nl = text.find('\n', begin);
+        const size_t stop = (nl == std::string_view::npos) ? text.size() : nl;
+        std::string_view line = text.substr(begin, stop - begin);
+        if (!line.empty() && line.back() == '\r')
+        {
+            line.remove_suffix(1);
+        }
+        lines.push_back(line);
+        std::string name;
+        if (listing_uasm_label_def_line(line, name))
+        {
+            defined.insert(std::move(name));
+        }
+        else
+        {
+            size_t i = 0;
+            while (i < line.size() && (line[i] == ' ' || line[i] == '\t'))
+            {
+                ++i;
+            }
+            size_t j = i;
+            while (j < line.size() && listing_uasm_label_char(line[j]))
+            {
+                ++j;
+            }
+            if (j > i)
+            {
+                size_t k = j;
+                while (k < line.size() && (line[k] == ' ' || line[k] == '\t'))
+                {
+                    ++k;
+                }
+                const std::string_view tail = line.substr(k);
+                if (tail == "equ" || tail.starts_with("equ ") || tail.starts_with("equ\t"))
+                {
+                    defined.emplace(line.substr(i, j - i));
+                }
+            }
+        }
+        if (nl == std::string_view::npos)
+        {
+            break;
+        }
+        begin = nl + 1;
+    }
+
+    std::set<std::string, std::less<>> undef;
+    for (const std::string_view line : lines)
+    {
+        // `; source: func_BEEF.com` is a comment, not a label reference.
+        const std::string_view code = line.substr(0, line.find(';'));
+        size_t i = 0;
+        while (i < code.size())
+        {
+            if (!listing_uasm_label_char(code[i]))
+            {
+                ++i;
+                continue;
+            }
+            const size_t start = i;
+            ++i;
+            while (i < code.size() && listing_uasm_label_char(code[i]))
+            {
+                ++i;
+            }
+            const std::string_view tok = code.substr(start, i - start);
+            if (!tok.starts_with("func_") && !tok.starts_with("loc_"))
+            {
+                continue;
+            }
+            if (defined.find(tok) == defined.end())
+            {
+                undef.emplace(tok);
+            }
+        }
+    }
+    return undef.size();
 }
 
 /**
@@ -2117,8 +2547,9 @@ static inline void listing_uasm_print_stats(std::string_view listing,
  * No address column and no hex-byte column. Real instructions go through
  * listing_masm_mnem / listing_masm_ops, then UASM spelling. A line is kept
  * when the whitelist matches, when it is a sized near branch to a known
- * symbol, or when /usr/bin/uasm assembles that one line back to the same
- * bytes. Anything else, including bytes the CFG did not decode, is `db`
+ * symbol, or when --uasm-verify assembles that line back to the same
+ * bytes. Default --uasm does not spawn. Anything else, including bytes the
+ * CFG did not decode, is `db`
  * (0NNh). An image longer than 65536 bytes is successive `sN segment`
  * / `org 0` / `sN ends` chunks (byte alignment, so uasm -mz does not pad).
  * An instruction is never split across a segment. No .stack and no REPACK-V1.
@@ -2138,7 +2569,7 @@ static inline void listing_uasm_print_stats(std::string_view listing,
  * is a fixup, and whose paragraph lands in this image and not strictly inside
  * another decoded instruction, is printed as
  * `mov rx, (dxfrm_XXXX - dximg0) SHR 4`. That line is not passed to
- * listing_uasm_verify_one and does not raise the CPU level. It is emitted
+ * --uasm-verify and does not raise the CPU level. It is emitted
  * only for one org-0 segment (image size <= 65536, not COM). dximg0 and
  * dxfrm_ labels are registered before the slice walk, and only when at least
  * one such line is emitted.
@@ -2157,6 +2588,8 @@ static inline void listing_uasm_print_stats(std::string_view listing,
  * @param external     Optional symbol map (same names as the human listing).
  * @param entry_in_window False when the MZ entry is outside the load image.
  * @param relocs          MZ fixups into @p image. Empty leaves immediates numeric.
+ * @param uasm_status     Optional. Set to 1 when labels stay undefined or
+ *                        --uasm-verify has no assembler. 0 otherwise.
  * @return UASM source. The last line is `end <entry label>` for COM and a
  *         one-segment image whose entry is inside the image. A multi-segment
  *         image, or an entry outside the image, ends with a bare `end`.
@@ -2175,8 +2608,13 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
                                             size_t& n_insns,
                                             const SymbolMap* external,
                                             bool entry_in_window = true,
-                                            std::span<const RelocEntry> relocs = {})
+                                            std::span<const RelocEntry> relocs = {},
+                                            int* uasm_status = nullptr)
 {
+    if (uasm_status != nullptr)
+    {
+        *uasm_status = 0;
+    }
     std::map<CfgLin, std::string> sym;
     std::set<CfgLin> proc_starts;
     listing_collect_symbols(g, entry_ip, sym, proc_starts, external);
@@ -2213,6 +2651,10 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
         bool insn = false;
         std::string text;
         std::vector<std::string> labels;
+        bool sized_branch = false;
+        bool branch_ip_ok = false;
+        std::string branch_sym;
+        CfgLin branch_ip = 0;
     };
 
     const size_t emit_lo = (uasm_com && !uasm_com_psp)
@@ -2262,72 +2704,53 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
         return labs;
     };
 
-    // Local to this emit. Not a process-lifetime static.
-    ListingUasmScratch scratch;
-    std::map<std::string, bool> verify_cache;
-    auto verify_cached = [&](const std::string& line, const CfgInsn& insn) -> bool
+    struct Classified
     {
-        if (line.empty() ||
-            line.find(';') != std::string::npos ||
-            line.find('\n') != std::string::npos ||
-            line.find("func_") != std::string::npos ||
-            line.find("loc_") != std::string::npos)
-        {
-            return false;
-        }
-        const int level = listing_uasm_cpu_level(insn);
-        if (level >= 2)
-        {
-            return false;
-        }
-        std::string key;
-        key.reserve(line.size() + 1 + insn.size);
-        key.append(line);
-        key.push_back('\0');
-        key.append(reinterpret_cast<const char*>(insn.bytes), insn.size);
-        const auto found = verify_cache.find(key);
-        if (found != verify_cache.end())
-        {
-            return found->second;
-        }
-        const bool ok = listing_uasm_verify_one(scratch, line, level, insn);
-        verify_cache.emplace(std::move(key), ok);
-        return ok;
+        size_t n = 0;
+        std::string text;
+        bool whitelist = false;
+        bool branch = false;
+        bool branch_ip_ok = false;
+        std::string branch_sym;
+        CfgLin branch_ip = 0;
+        int level = 0;
+        std::string candidate;
     };
 
-    auto stood = [&](size_t at_off, std::string& text_out) -> size_t
+    auto analyze = [&](size_t at_off) -> Classified
     {
-        text_out.clear();
+        Classified c;
         const CfgLin ip = static_cast<CfgLin>(at_off);
         const auto it = at.find(ip);
         if (it == at.end() || it->second.size == 0)
         {
-            return 0;
+            return c;
         }
         const CfgInsn& in = it->second;
         if (at_off + in.size > image.size())
         {
-            return 0;
+            return c;
         }
         for (uint8_t k = 0; k < in.size; ++k)
         {
             if (image[at_off + k] != in.bytes[k])
             {
-                return 0;
+                return c;
             }
         }
         uint32_t q8_frame = 0;
         if (listing_uasm_reloc_frame(image, at, reloc_at, uasm_com, ip, in, q8_frame))
         {
-            // Skip the whitelist and listing_uasm_verify_one. Do not raise cpu.
-            text_out = listing_uasm_reloc_mov_text(image[at_off], q8_frame);
-            return in.size;
+            // Skip the whitelist and the verifier. Do not raise cpu.
+            c.n = in.size;
+            c.text = listing_uasm_reloc_mov_text(image[at_off], q8_frame);
+            return c;
         }
         bool blocked = false;
         const size_t opi = listing_uasm_opcode_index(in, blocked);
         if (blocked || opi >= in.size)
         {
-            return 0;
+            return c;
         }
         const uint8_t opcode = in.bytes[opi];
         std::string mnem = in.text;
@@ -2342,8 +2765,21 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
         std::string branch;
         if (listing_uasm_sized_branch(in, ip, opcode, mlow, sym, branch))
         {
-            text_out = std::move(branch);
-            return in.size;
+            c.n = in.size;
+            c.branch = true;
+            c.text = std::move(branch);
+            const size_t bsp = c.text.rfind(' ');
+            if (bsp != std::string::npos && bsp + 1 < c.text.size())
+            {
+                c.branch_sym = c.text.substr(bsp + 1);
+                CfgLin tip = 0;
+                if (listing_uasm_sym_ip(c.branch_sym, tip))
+                {
+                    c.branch_ip = tip;
+                    c.branch_ip_ok = true;
+                }
+            }
+            return c;
         }
         std::string rops = ops;
         const CfgBlock* bp = blk_at.count(ip) ? blk_at[ip] : nullptr;
@@ -2354,26 +2790,123 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
         rops = listing_masm_ops(rops);
         rops = listing_uasm_decimal_imms(rops);
         listing_uasm_spell(in, mlow, rops);
+        const std::string line = rops.empty() ? mlow : (mlow + " " + rops);
+        const int level = listing_uasm_cpu_level(in);
         if (listing_uasm_stand_behind(in, mlow, rops))
         {
-            cpu = std::max(cpu, listing_uasm_cpu_level(in));
-            text_out = rops.empty() ? mlow : (mlow + " " + rops);
-            return in.size;
+            c.n = in.size;
+            c.whitelist = true;
+            c.level = level;
+            c.text = line;
+            return c;
         }
-        const std::string line = rops.empty() ? mlow : (mlow + " " + rops);
-        if (verify_cached(line, in))
+        c.level = level;
+        c.candidate = line;
+        return c;
+    };
+
+    // Default --uasm does not spawn. --uasm-verify batches every unique line.
+    bool verified_ok = false;
+    std::string verified_path;
+    std::string verified_ver;
+    std::map<std::string, std::vector<uint8_t>> verified_bytes;
+    if (opts.uasm_verify)
+    {
+        verified_path = listing_uasm_resolve_bin(opts);
+        if (verified_path.empty())
         {
-            cpu = std::max(cpu, listing_uasm_cpu_level(in));
-            text_out = line;
-            return in.size;
+            std::cerr << "listing: --uasm-verify: assembler not found\n";
+            if (uasm_status != nullptr)
+            {
+                *uasm_status = 1;
+            }
         }
-        return 0;
+        else
+        {
+            std::vector<std::pair<int, std::string>> cands;
+            std::set<std::string> seen;
+            for (const auto& kv : at)
+            {
+                const Classified seen_c = analyze(kv.first);
+                if (seen_c.candidate.empty() ||
+                    !listing_uasm_line_batchable(seen_c.candidate, seen_c.level,
+                                                 kv.second.size))
+                {
+                    continue;
+                }
+                const std::string key = listing_uasm_vkey(seen_c.level, seen_c.candidate);
+                if (!seen.insert(key).second)
+                {
+                    continue;
+                }
+                cands.emplace_back(seen_c.level, seen_c.candidate);
+            }
+            if (cands.empty())
+            {
+                verified_ok = true;
+            }
+            else
+            {
+                ListingUasmScratch scratch;
+                ListingUasmBatch batch;
+                if (!scratch.ready() ||
+                    !listing_uasm_verify_batch(scratch, verified_path, cands, batch))
+                {
+                    std::cerr << "listing: --uasm-verify: cannot run assembler\n";
+                    if (uasm_status != nullptr)
+                    {
+                        *uasm_status = 1;
+                    }
+                }
+                else
+                {
+                    verified_ok = true;
+                    verified_ver = batch.version;
+                    if (batch.exit_ok)
+                    {
+                        verified_bytes = std::move(batch.bytes);
+                    }
+                }
+            }
+        }
+    }
+
+    auto commit = [&](size_t at_off, Classified& outc) -> size_t
+    {
+        outc = analyze(at_off);
+        if (outc.n > 0)
+        {
+            if (outc.whitelist)
+            {
+                cpu = std::max(cpu, outc.level);
+            }
+            return outc.n;
+        }
+        if (outc.candidate.empty() || !opts.uasm_verify)
+        {
+            return 0;
+        }
+        const auto found = verified_bytes.find(listing_uasm_vkey(outc.level, outc.candidate));
+        if (found == verified_bytes.end())
+        {
+            return 0;
+        }
+        const auto it = at.find(static_cast<CfgLin>(at_off));
+        if (it == at.end() || found->second.size() != it->second.size ||
+            std::memcmp(found->second.data(), it->second.bytes, it->second.size) != 0)
+        {
+            return 0;
+        }
+        cpu = std::max(cpu, outc.level);
+        outc.n = it->second.size;
+        outc.text = outc.candidate;
+        return outc.n;
     };
 
     while (off < image.size())
     {
-        std::string insn_text;
-        const size_t n = stood(off, insn_text);
+        Classified got;
+        const size_t n = commit(off, got);
         Slice sl;
         sl.off = off;
         sl.labels = labels_at(off);
@@ -2381,7 +2914,11 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
         {
             sl.len = n;
             sl.insn = true;
-            sl.text = std::move(insn_text);
+            sl.text = std::move(got.text);
+            sl.sized_branch = got.branch;
+            sl.branch_ip_ok = got.branch_ip_ok;
+            sl.branch_sym = std::move(got.branch_sym);
+            sl.branch_ip = got.branch_ip;
             ++n_insns;
             off += n;
         }
@@ -2394,8 +2931,8 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
                 {
                     break;
                 }
-                std::string ignore;
-                if (stood(run, ignore) > 0)
+                Classified ignore;
+                if (commit(run, ignore) > 0)
                 {
                     break;
                 }
@@ -2446,6 +2983,10 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
             part.off = sl.off + done;
             part.len = take;
             part.insn = sl.insn;
+            part.sized_branch = sl.sized_branch;
+            part.branch_ip_ok = sl.branch_ip_ok;
+            part.branch_sym = sl.branch_sym;
+            part.branch_ip = sl.branch_ip;
             if (sl.insn)
             {
                 part.text = sl.text;
@@ -2510,6 +3051,225 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
     // labeled func_FFFF.
     const bool use_segments = multi && !uasm_com;
 
+    struct SegSpan
+    {
+        bool has_org = false;
+        uint32_t org = 0;
+        size_t start = 0;
+        size_t end = 0;
+    };
+    std::vector<SegSpan> spans(segs.size());
+    for (size_t si = 0; si < segs.size(); ++si)
+    {
+        if (segs[si].slices.empty())
+        {
+            continue;
+        }
+        spans[si].start = segs[si].slices.front().off;
+        spans[si].end = segs[si].slices.back().off + segs[si].slices.back().len;
+        if (!(use_segments || si == 0))
+        {
+            continue;
+        }
+        spans[si].has_org = true;
+        spans[si].org = (uasm_com && !uasm_com_psp) ? 0x100u : 0u;
+    }
+
+    std::set<std::string, std::less<>> defined_labs;
+    bool entry_labeled = false;
+    for (const Seg& seg : segs)
+    {
+        for (const Slice& sl : seg.slices)
+        {
+            for (const std::string& lab : sl.labels)
+            {
+                defined_labs.insert(lab);
+                if (lab == entry_name)
+                {
+                    entry_labeled = true;
+                }
+            }
+        }
+    }
+    if (!entry_labeled && entry_in_window && !use_segments)
+    {
+        defined_labs.insert(entry_name);
+    }
+
+    std::map<std::string, CfgLin, std::less<>> needed;
+    std::map<std::string, std::set<size_t>, std::less<>> ref_segs;
+    std::set<std::string, std::less<>> failed_equ;
+    for (size_t si = 0; si < segs.size(); ++si)
+    {
+        for (const Slice& sl : segs[si].slices)
+        {
+            if (!sl.sized_branch || sl.branch_sym.empty())
+            {
+                continue;
+            }
+            if (defined_labs.count(sl.branch_sym) != 0)
+            {
+                continue;
+            }
+            if (!sl.branch_ip_ok)
+            {
+                failed_equ.insert(sl.branch_sym);
+                continue;
+            }
+            needed.emplace(sl.branch_sym, sl.branch_ip);
+            ref_segs[sl.branch_sym].insert(si);
+        }
+    }
+
+    struct EquAt
+    {
+        bool ok = false;
+        size_t seg = 0;
+        uint32_t org = 0;
+        uint32_t addr = 0;
+    };
+    auto express = [&](CfgLin target) -> EquAt
+    {
+        EquAt equ;
+        for (size_t si = 0; si < spans.size(); ++si)
+        {
+            if (segs[si].slices.empty())
+            {
+                continue;
+            }
+            if (target < spans[si].start || target >= spans[si].end)
+            {
+                continue;
+            }
+            if (!spans[si].has_org)
+            {
+                return equ;
+            }
+            const uint64_t addr = static_cast<uint64_t>(spans[si].org) +
+                                  (static_cast<uint64_t>(target) - spans[si].start);
+            if (addr > 0xFFFFu)
+            {
+                return equ;
+            }
+            equ.ok = true;
+            equ.seg = si;
+            equ.org = spans[si].org;
+            equ.addr = static_cast<uint32_t>(addr);
+            return equ;
+        }
+        for (size_t si = 0; si < spans.size(); ++si)
+        {
+            if (!spans[si].has_org || segs[si].slices.empty())
+            {
+                continue;
+            }
+            if (target < spans[si].start)
+            {
+                if (si != 0 || target > 0xFFFFu)
+                {
+                    continue;
+                }
+                equ.ok = true;
+                equ.seg = 0;
+                equ.org = spans[0].org;
+                equ.addr = static_cast<uint32_t>(target);
+                return equ;
+            }
+            if (target < spans[si].start + kUasmSegBytes)
+            {
+                const uint64_t addr = static_cast<uint64_t>(spans[si].org) +
+                                      (static_cast<uint64_t>(target) - spans[si].start);
+                if (addr > 0xFFFFu)
+                {
+                    continue;
+                }
+                equ.ok = true;
+                equ.seg = si;
+                equ.org = spans[si].org;
+                equ.addr = static_cast<uint32_t>(addr);
+                return equ;
+            }
+        }
+        return equ;
+    };
+    auto equ_hex = [](uint32_t value, bool org_term) -> std::string
+    {
+        if (org_term)
+        {
+            return value == 0 ? std::string("0") : listing_uasm_imm(value);
+        }
+        if (value <= 0xFFFFu)
+        {
+            return std::format("{:04X}h", value);
+        }
+        std::string hex = std::format("{:X}", value);
+        if (!hex.empty() && hex[0] >= 'A' && hex[0] <= 'F')
+        {
+            hex.insert(hex.begin(), '0');
+        }
+        hex.push_back('h');
+        return hex;
+    };
+
+    std::map<size_t, std::vector<std::string>> equ_by_seg;
+    for (const auto& kv : needed)
+    {
+        const std::string& name = kv.first;
+        const bool flabel = name.starts_with("func_") || name.starts_with("loc_");
+        const EquAt at_equ = flabel ? express(kv.second) : EquAt{};
+        if (!flabel || !at_equ.ok)
+        {
+            failed_equ.insert(name);
+            continue;
+        }
+        // A near call cannot name a symbol in another UASM segment (A2170).
+        bool cross = false;
+        const auto refs = ref_segs.find(name);
+        if (refs != ref_segs.end())
+        {
+            for (const size_t si : refs->second)
+            {
+                if (si != at_equ.seg)
+                {
+                    cross = true;
+                    break;
+                }
+            }
+        }
+        if (cross)
+        {
+            failed_equ.insert(name);
+            continue;
+        }
+        equ_by_seg[at_equ.seg].push_back(std::format(
+            "{} equ s{}_base+({}-{})",
+            name,
+            at_equ.seg,
+            equ_hex(at_equ.addr, false),
+            equ_hex(at_equ.org, true)));
+    }
+    if (!failed_equ.empty())
+    {
+        for (Seg& seg : segs)
+        {
+            for (Slice& sl : seg.slices)
+            {
+                if (!sl.sized_branch || failed_equ.count(sl.branch_sym) == 0)
+                {
+                    continue;
+                }
+                sl.insn = false;
+                sl.sized_branch = false;
+                sl.text.clear();
+                sl.branch_sym.clear();
+                if (n_insns > 0)
+                {
+                    --n_insns;
+                }
+            }
+        }
+    }
+
     std::ostringstream out;
     // .386 before .model is USE32 in UASM and widens imm16 mov. .8086 is safe
     // above .model; .186/.286/.386 stay below it so the segment remains USE16.
@@ -2522,6 +3282,21 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
     if (!entry_in_window)
     {
         out << "; entry is past the 64 KiB decode window\n";
+    }
+    if (verified_ok)
+    {
+        if (verified_ver.empty())
+        {
+            out << std::format("; verified: uasm at {}\n", verified_path);
+        }
+        else
+        {
+            out << std::format("; verified: uasm {} at {}\n", verified_ver, verified_path);
+        }
+    }
+    else
+    {
+        out << "; NOT VERIFIED\n";
     }
     out << std::format(".model {}\n", model);
     if (cpu != 0)
@@ -2594,13 +3369,28 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
         emit_db(sl.off, sl.len);
     };
 
-    auto emit_seg_body = [&](const Seg& seg, bool first_code)
+    auto emit_base = [&](size_t seg_index)
+    {
+        const auto it = equ_by_seg.find(seg_index);
+        if (it == equ_by_seg.end())
+        {
+            return;
+        }
+        out << "s" << seg_index << "_base:\n";
+        for (const std::string& eq : it->second)
+        {
+            out << eq << "\n";
+        }
+    };
+
+    auto emit_seg_body = [&](const Seg& seg, bool first_code, size_t seg_index)
     {
         if (!uasm_com)
         {
             if (first_code || use_segments)
             {
                 out << "org 0\n";
+                emit_base(seg_index);
             }
             for (const Slice& sl : seg.slices)
             {
@@ -2613,6 +3403,7 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
             if (first_code)
             {
                 out << "org 0\n";
+                emit_base(seg_index);
             }
             bool org100 = false;
             for (const Slice& sl : seg.slices)
@@ -2633,6 +3424,7 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
         if (first_code)
         {
             out << "org 100h\n";
+            emit_base(seg_index);
         }
         for (const Slice& sl : seg.slices)
         {
@@ -2643,11 +3435,13 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
     if (!use_segments)
     {
         bool first = true;
+        size_t n = 0;
         for (const Seg& seg : segs)
         {
             out << ".code\n";
-            emit_seg_body(seg, first);
+            emit_seg_body(seg, first, n);
             first = false;
+            ++n;
         }
     }
     else
@@ -2656,7 +3450,7 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
         for (const Seg& seg : segs)
         {
             out << "s" << n << " segment byte public 'CODE'\n";
-            emit_seg_body(seg, n == 0);
+            emit_seg_body(seg, n == 0, n);
             out << "s" << n << " ends\n";
             ++n;
         }
@@ -2690,14 +3484,26 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
             }
         }
         size_t text_n = 0;
-        for (const Slice& sl : slices)
+        for (const Seg& seg : segs)
         {
-            if (sl.insn)
+            for (const Slice& sl : seg.slices)
             {
-                text_n += sl.len;
+                if (sl.insn)
+                {
+                    text_n += sl.len;
+                }
             }
         }
-        listing_uasm_print_stats(listing, image_n, decoded_n, text_n);
+        listing_uasm_print_stats(listing, image_n, decoded_n, text_n, verified_ok);
+    }
+    const size_t undef = listing_uasm_undefined_labels(listing);
+    if (undef != 0)
+    {
+        std::cerr << "listing: " << undef << " undefined labels\n";
+        if (uasm_status != nullptr)
+        {
+            *uasm_status = 1;
+        }
     }
     return listing;
 }
@@ -2732,7 +3538,8 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
                                     bool entry_in_window = true,
                                     std::span<const RelocEntry> relocs = {},
                                     CfgGraph* cfg_out = nullptr,
-                                    CfgLin entry_seg_base = 0)
+                                    CfgLin entry_seg_base = 0,
+                                    int* uasm_status = nullptr)
 {
     out_text.clear();
     n_procs = 0;
@@ -2780,7 +3587,7 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
         kind_out = ListingExportKind::Uasm;
         out_text = listing_emit_uasm(g, image, entry_ip, opts, source_name, tc,
                                      uasm_com, uasm_com_psp, n_procs, n_insns, ext,
-                                     entry_in_window, relocs);
+                                     entry_in_window, relocs, uasm_status);
         if (human_stdout && opts.showDisasm && !opts.jsonOut)
         {
             if (g.blocks.empty())
@@ -3032,12 +3839,13 @@ static inline int listing_run(const std::vector<uint8_t>& fileData,
     std::string human;
     size_t n_procs = 0, n_insns = 0;
     ListingExportKind kind = ListingExportKind::Human;
+    int uasm_status = 0;
     std::string* human_ptr =
         (opts.uasm && opts.showDisasm && !opts.jsonOut) ? &human : nullptr;
     if (!listing_generate(fileData, image_file_off, image_len, entry_ip, cs_seg, file_cs,
                           opts, input_path, text, n_procs, n_insns, kind, tc, tp, uasm_com,
                           uasm_com_psp, human_ptr, entry_in_window, relocs, cfg_out,
-                          entry_seg_base))
+                          entry_seg_base, &uasm_status))
     {
         if (!opts.jsonOut && !opts.uasm_stdout_only())
             std::cout << "\nListing: image offset outside file or empty.\n";
@@ -3058,7 +3866,11 @@ static inline int listing_run(const std::vector<uint8_t>& fileData,
             std::cerr << "repack: failed\n";
         }
     }
-    return delivered;
+    if (delivered != 0)
+    {
+        return delivered;
+    }
+    return uasm_status;
 }
 
 /**

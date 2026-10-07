@@ -147,11 +147,14 @@ static inline void dx_list_unpacked(const Options& opts,
             const MzEntryLoc entry = mz_entry_image_ip(header, cfg_len);
             std::vector<RelocEntry> unpacked_relocs;
             load_relocations(header, image, unpacked_relocs);
-            if (listing_run(image, cfg_file_off, cfg_len, entry.linear, cs_seg,
+            const CfgLin entry_base = cfg_listing_entry_base(entry.frame);
+            const int listing_rc = listing_run(image, cfg_file_off, cfg_len, entry.linear, cs_seg,
                             static_cast<uint16_t>(header.cs),
                             uopts, bin_path, nullptr, nullptr, false, false,
                             entry.in_window, unpacked_relocs, nullptr,
-                            entry.seg_base) != 0)
+                            entry_base);
+            cfg_set_entry_frame_override(0);
+            if (listing_rc != 0)
             {
                 return;
             }

@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 # P0 Q5: image-linear MZ CFG. Near flow wraps inside the real-mode segment.
-# These checks do not skip. Synthetic MZ only. No --simulate.
+# Skips (exit 77) only when uasm is absent. Synthetic MZ only. No --simulate.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="${DUMPEXE_BIN:-$ROOT/dumpexe}"
 [[ -x "$BIN" ]] || { echo "FAIL: dumpexe binary not found"; exit 1; }
-[[ -x /usr/bin/uasm ]] || { echo "FAIL: /usr/bin/uasm not found"; exit 1; }
+# shellcheck source=lib_uasm.sh
+source "$ROOT/tests/lib_uasm.sh"
+UASM_BIN="$(uasm_resolve)" || {
+  echo "SKIP test_p0_linear: uasm not found"
+  exit 77
+}
 
 TD="$(mktemp -d "${TMPDIR:-/tmp}/dumpexe-p0-linear-XXXXXX")"
 trap 'rm -rf "$TD"' EXIT
@@ -107,6 +112,24 @@ past = bytearray(65537)
 past[0] = 0xC3
 past[65536] = 0xC3
 save("past64", past, ip=0, cs=0x1000)
+
+# 12. CS=FFFFh IP=0020h. delta = 0x10, frame = -16.
+# eb 02 90 90 b8 00 4c cd 21 at linear 0x10: jmp, mov ax,4C00h, int 21h.
+neg = bytearray(0x40)
+neg[0x10:0x1A] = bytes.fromhex("eb029090b8004ccd21")
+save("negcs", neg, ip=0x20, cs=0xFFFF)
+
+# 13. CS=FFF0h IP=0110h. delta = 0x10, frame = -256. EB 00 C3 stays in-image.
+fff0 = bytearray(0x20)
+fff0[0x10:0x13] = bytes([0xEB, 0x00, 0xC3])
+save("negcs_fff0", fff0, ip=0x110, cs=0xFFF0)
+
+# 14. X6: CS=1000h, 0x10000 zeros + C3 + 32767 x CD 21.
+x6 = bytearray(0x10000) + bytes([0xC3]) + bytes([0xCD, 0x21]) * 32767
+save("x6", x6, ip=0, cs=0x1000)
+
+# 15. X10: 64 KiB COM of byte 0x73. Branch targets are not string immediates.
+(td / "x10.com").write_bytes(bytes([0x73]) * 65536)
 print("fixtures", td)
 PY
 
@@ -291,7 +314,7 @@ case_uasm_bin_len() {
     >"$TD/past64_bin.out" 2>"$TD/past64_bin.err" || return 1
   (
     cd "$TD" || exit 1
-    /usr/bin/uasm -bin -nologo -Fo past64.bin past64_bin.asm \
+    "$UASM_BIN" -bin -nologo -Fo past64.bin past64_bin.asm \
       >past64.uasm 2>past64.uasmerr
   ) || {
     echo "uasm -bin failed" >&2
@@ -310,6 +333,90 @@ print("uasm bin", len(built))
 PY
 }
 
+case_negcs() {
+  json_of negcs || return 1
+  "$BIN" -d --no-asm-file --no-repack "$TD/negcs.exe" \
+    >"$TD/negcs.d" 2>"$TD/negcs.derr" || return 1
+  py_edges negcs << 'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+cfg = d["cfg"]
+if cfg["blocks"] < 2:
+    sys.exit("blocks " + str(cfg["blocks"]))
+edges = cfg["edges"]
+jmp = [e for e in edges if e["from"] == "0010" and e["kind"] == "jmp" and e["has_target"] and e["to"] == "0014"]
+if not jmp:
+    sys.exit("negcs jmp " + str(edges))
+ints = []
+for b in cfg["interesting"]:
+    ints.extend(b.get("ints") or [])
+hit = [s for s in ints if s.get("ip") == "0017" and s.get("int") == 33]
+if not hit:
+    sys.exit("negcs int " + str(ints))
+print("negcs blocks", cfg["blocks"])
+PY
+  grep -F -q '0014' "$TD/negcs.d" || { echo "missing mov site 0014"; return 1; }
+  grep -E -q '0014[[:space:]].*mov' "$TD/negcs.d" || { echo "missing mov at 0014"; cat "$TD/negcs.d"; return 1; }
+  grep -E -q '0017[[:space:]].*int' "$TD/negcs.d" || { echo "missing int at 0017"; cat "$TD/negcs.d"; return 1; }
+}
+
+case_negcs_fff0() {
+  json_of negcs_fff0 || return 1
+  py_edges negcs_fff0 << 'PY'
+import json, sys
+cfg = json.load(open(sys.argv[1]))["cfg"]
+if cfg["blocks"] < 2:
+    sys.exit("blocks " + str(cfg["blocks"]))
+edges = cfg["edges"]
+jmp = [e for e in edges if e["from"] == "0010" and e["to"] == "0012" and e["kind"] == "jmp" and e["has_target"]]
+bad = [e for e in edges if e["to"] not in ("0012", "0000") and e["has_target"]]
+if not jmp or bad:
+    sys.exit("fff0 jmp " + str(edges))
+print("negcs fff0 ok", cfg["blocks"])
+PY
+}
+
+case_x6_int_past64() {
+  local start end ms
+  start=$(date +%s%N)
+  "$BIN" -d --no-asm-file --no-repack "$TD/x6.exe" >"$TD/x6.out" 2>"$TD/x6.err" || {
+    echo "x6 dumpexe failed" >&2
+    cat "$TD/x6.err" >&2
+    return 1
+  }
+  end=$(date +%s%N)
+  ms=$(( (end - start) / 1000000 ))
+  if (( ms >= 2000 )); then
+    echo "x6 took ${ms} ms (budget 2000)" >&2
+    return 1
+  fi
+  echo "x6 ${ms} ms"
+}
+
+case_x10_printrun() {
+  local start end ms
+  start=$(date +%s%N)
+  "$BIN" -d --cfg --no-asm-file --no-repack "$TD/x10.com" >"$TD/x10.out" 2>"$TD/x10.err" || {
+    echo "x10 dumpexe failed" >&2
+    cat "$TD/x10.err" >&2
+    return 1
+  }
+  end=$(date +%s%N)
+  ms=$(( (end - start) / 1000000 ))
+  if (( ms >= 1000 )); then
+    echo "x10 took ${ms} ms (budget 1000)" >&2
+    return 1
+  fi
+  python3 - "$TD/x10.out" "$ms" << 'PY'
+import re, sys
+text = open(sys.argv[1], errors="replace").read()
+m = re.search(r"String xrefs:\s*(\d+)", text)
+if not m or m.group(1) != "0":
+    sys.exit("string xrefs " + (m.group(0) if m else "missing"))
+print("x10", sys.argv[2], "ms xrefs 0")
+PY
+}
+
 check entry_10010 case_entry_10010
 check near_stay case_near_stay
 check near_wrap case_near_wrap
@@ -321,6 +428,10 @@ check unalign case_unalign
 check com2exe case_com2exe
 check q11_past64 case_q11_past64
 check uasm_bin_len case_uasm_bin_len
+check negcs case_negcs
+check negcs_fff0 case_negcs_fff0
+check x6_int_past64 case_x6_int_past64
+check x10_printrun case_x10_printrun
 
 echo "linear tests: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]

@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # P0 Q10: --uasm-stats is enable-only and prints one stderr coverage line.
-# Synthetic COM fixtures only. No --simulate. Does not skip.
+# Synthetic COM fixtures only. No --simulate.
+# Exits 77 when uasm is not on PATH. make test-uasm does not skip.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="${DUMPEXE_BIN:-$ROOT/dumpexe}"
 [[ -x "$BIN" ]] || { echo "FAIL: dumpexe binary not found"; exit 1; }
-[[ -x /usr/bin/uasm ]] || { echo "FAIL: /usr/bin/uasm not found"; exit 1; }
+# shellcheck source=lib_uasm.sh
+source "$ROOT/tests/lib_uasm.sh"
+UASM="$(uasm_resolve)" || { echo "SKIP test_p0_stats (no uasm)"; exit 77; }
 
 TD="$(mktemp -d "${TMPDIR:-/tmp}/dumpexe-p0-stats-XXXXXX")"
 trap 'rm -rf "$TD"' EXIT
@@ -28,7 +31,7 @@ check() {
 printf '\xC3' >"$TD/c3.com"
 printf '\xCD\x03\xC3' >"$TD/cd03.com"
 
-EXACT_C3='uasm-stats: image=1 decoded=1 (100.0%) text=1 (100.0%) db=0 (0.0%) labels_defined=1 labels_referenced=1'
+EXACT_C3='uasm-stats: image=1 decoded=1 (100.0%) text=1 (100.0%) db=0 (0.0%) labels_defined=1 labels_referenced=1 verified=no'
 
 stats_count() {
   local file=$1
@@ -95,7 +98,7 @@ case_cd03() {
   "$BIN" "$TD/cd03.com" --uasm-stats --uasm -o "$TD/cd03.asm" >"$TD/cd03.out" 2>"$TD/cd03.err" || return 1
   [[ "$(stats_count "$TD/cd03.err")" -eq 1 ]] || { echo "stderr:"; cat "$TD/cd03.err"; return 1; }
   [[ "$(stats_count "$TD/cd03.out")" -eq 0 ]] || return 1
-  grep -E -q -- '^uasm-stats: image=3 decoded=3 \(100\.0%\) text=1 \([0-9]+\.[0-9]%\) db=2 \([0-9]+\.[0-9]%\) labels_defined=[0-9]+ labels_referenced=[0-9]+$' "$TD/cd03.err" || {
+  grep -E -q -- '^uasm-stats: image=3 decoded=3 \(100\.0%\) text=1 \([0-9]+\.[0-9]%\) db=2 \([0-9]+\.[0-9]%\) labels_defined=[0-9]+ labels_referenced=[0-9]+ verified=(yes|no)$' "$TD/cd03.err" || {
     echo "cd03 line mismatch" >&2
     cat "$TD/cd03.err" >&2
     return 1

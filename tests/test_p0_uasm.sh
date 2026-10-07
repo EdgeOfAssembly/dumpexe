@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # P0 UASM spelling and bounded verify-by-assembly.
-# These checks do not skip. A missing /usr/bin/uasm is a failure.
+# Missing assembler: exit 77 (skip). make test-uasm fails instead.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="${DUMPEXE_BIN:-$ROOT/dumpexe}"
 [[ -x "$BIN" ]] || { echo "FAIL: dumpexe binary not found"; exit 1; }
-[[ -x /usr/bin/uasm ]] || { echo "FAIL: /usr/bin/uasm missing"; exit 1; }
+# shellcheck source=lib_uasm.sh
+source "$ROOT/tests/lib_uasm.sh"
+UASM="$(uasm_resolve)" || { echo "SKIP test_p0_uasm (no uasm)"; exit 77; }
 
 TD="$(mktemp -d "${TMPDIR:-/tmp}/dumpexe-p0-uasm-XXXXXX")"
 trap 'rm -rf "$TD"' EXIT
@@ -32,16 +34,25 @@ write_com() {
     "$TD/$name.com" "$hex"
 }
 
-emit() {
+emit_u() {
   local name=$1
   local hex=$2
+  shift 2
   write_com "$name" "$hex" || return 1
-  if ! "$BIN" --uasm -o "$TD/$name.asm" "$TD/$name.com" \
+  if ! "$BIN" "$@" --uasm -o "$TD/$name.asm" "$TD/$name.com" \
       >"$TD/$name.stdout" 2>"$TD/$name.stderr"; then
     echo "dumpexe --uasm failed for $name" >&2
     cat "$TD/$name.stderr" >&2 || true
     return 1
   fi
+}
+
+emit() {
+  emit_u "$1" "$2"
+}
+
+emit_verify() {
+  emit_u "$1" "$2" --uasm-verify --uasm-bin "$UASM"
 }
 
 disasm() {
@@ -56,8 +67,11 @@ disasm() {
 
 round_bin() {
   local name=$1
-  if ! /usr/bin/uasm -bin -nologo -Fo "$TD/$name.bin" "$TD/$name.asm" \
-      >"$TD/$name.uout" 2>"$TD/$name.uerr"; then
+  if ! (
+    cd "$TD" || exit 1
+    "$UASM" -bin -nologo -Fo "$name.bin" "$name.asm" \
+      >"$name.uout" 2>"$name.uerr"
+  ); then
     echo "uasm failed for $name" >&2
     cat "$TD/$name.uerr" >&2 || true
     echo "---- $name.asm ----" >&2
@@ -253,8 +267,18 @@ case_mov89() {
 
 case_mov8b() {
   emit mov8b 8BC3C3 || return 1
-  exact_insn mov8b "mov ax, bx" || return 1
+  has mov8b "08Bh" || return 1
+  has mov8b "0C3h" || return 1
+  no_insn mov8b "mov ax, bx" || return 1
+  has mov8b "; NOT VERIFIED" || return 1
   round_bin mov8b
+}
+
+case_mov8b_verify() {
+  emit_verify mov8bv 8BC3C3 || return 1
+  exact_insn mov8bv "mov ax, bx" || return 1
+  has mov8bv "; verified: uasm" || return 1
+  round_bin mov8bv
 }
 
 case_int3() {
@@ -289,21 +313,21 @@ case_aximm() {
 }
 
 case_movsb() {
-  emit movsb A4C3 || return 1
+  emit_verify movsb A4C3 || return 1
   exact_insn movsb "movsb" || return 1
   lacks movsb "byte ptr" || return 1
   round_bin movsb
 }
 
 case_repmovsb() {
-  emit rep F3A4C3 || return 1
+  emit_verify rep F3A4C3 || return 1
   exact_insn rep "rep movsb" || return 1
   lacks rep "repne" || return 1
   round_bin rep
 }
 
 case_lds() {
-  emit lds C507C3 || return 1
+  emit_verify lds C507C3 || return 1
   has lds "dword ptr" || return 1
   round_bin lds
 }
@@ -315,7 +339,7 @@ case_xchg() {
 }
 
 case_pusha() {
-  emit pusha 60C3 || return 1
+  emit_verify pusha 60C3 || return 1
   exact_insn pusha "pusha" || return 1
   python3 - "$TD/pusha.asm" << 'PY' || return 1
 import sys
@@ -349,6 +373,145 @@ check rep_movsb case_repmovsb
 check lds case_lds
 check xchg case_xchg
 check pusha case_pusha
+
+labels_closed() {
+  local name=$1
+  python3 - "$TD/$name.asm" << 'PY'
+import re
+import sys
+text = open(sys.argv[1], encoding="utf-8").read()
+defined = set()
+for line in text.splitlines():
+    s = line.strip()
+    m = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*):", s)
+    if m:
+        defined.add(m.group(1))
+        continue
+    m = re.match(r"([A-Za-z_][A-Za-z0-9_]*)\s+equ\b", s)
+    if m:
+        defined.add(m.group(1))
+refs = set(re.findall(r"\b(?:func|loc)_[0-9A-Fa-f]+\b", text))
+missing = sorted(r for r in refs if r not in defined)
+if missing:
+    sys.stderr.write("undefined " + " ".join(missing) + "\n")
+    sys.stderr.write(text)
+    sys.exit(1)
+PY
+}
+
+case_source_name_not_label() {
+  printf '\xc3' > "$TD/func_BEEF.com"
+  if ! "$BIN" --uasm -o "$TD/func_BEEF.asm" "$TD/func_BEEF.com" \
+      >"$TD/func_BEEF.out" 2>"$TD/func_BEEF.err"; then
+    echo "source name func_BEEF.com was treated as a label" >&2
+    cat "$TD/func_BEEF.err" >&2 || true
+    return 1
+  fi
+  if grep -q 'undefined labels' "$TD/func_BEEF.err"; then
+    echo "comment path counted as a reference" >&2
+    cat "$TD/func_BEEF.err" >&2
+    return 1
+  fi
+}
+
+case_mid_insn_label() {
+  emit mid E80100B8C3C3CD20 || return 1
+  has mid "s0_base:" || return 1
+  has mid "func_0104 equ s0_base+(0104h-100h)" || return 1
+  has mid "call near ptr func_0104" || return 1
+  labels_closed mid || return 1
+  round_bin mid
+}
+
+case_ret0() {
+  emit ret0 C20000 || return 1
+  has ret0 "0C2h" || return 1
+  no_insn ret0 "ret" || return 1
+  round_bin ret0
+}
+
+case_retf0() {
+  emit retf0 CA0000 || return 1
+  has retf0 "0CAh" || return 1
+  no_insn retf0 "retf" || return 1
+  round_bin retf0
+}
+
+case_ret4() {
+  emit ret4 C20400 || return 1
+  exact_insn ret4 "ret 4h" || return 1
+  round_bin ret4
+}
+
+case_x9_call() {
+  emit x9call E80100B8C3C3 || return 1
+  has x9call "func_0104 equ s0_base+(0104h-100h)" || return 1
+  labels_closed x9call || return 1
+  round_bin x9call
+}
+
+case_x9_psp() {
+  emit x9psp E9FAFFC3 || return 1
+  has x9psp "func_00FD equ s0_base+(00FDh-100h)" || return 1
+  labels_closed x9psp || return 1
+  round_bin x9psp
+}
+
+case_batch64() {
+  python3 - "$TD/b64.com" << 'PY'
+import pathlib
+import sys
+body = bytearray()
+for modrm in range(0xC0, 0x100):
+    body += bytes((0x8B, modrm))
+pathlib.Path(sys.argv[1]).write_bytes(body)
+PY
+  local start end ms n
+  start=$(date +%s%N)
+  if ! "$BIN" --uasm --uasm-verify --uasm-bin "$UASM" -o "$TD/b64.asm" "$TD/b64.com" \
+      >"$TD/b64.stdout" 2>"$TD/b64.stderr"; then
+    echo "batch verify failed" >&2
+    cat "$TD/b64.stderr" >&2 || true
+    return 1
+  fi
+  end=$(date +%s%N)
+  ms=$(( (end - start) / 1000000 ))
+  if [[ "$ms" -ge 3000 ]]; then
+    echo "batch verify took ${ms} ms" >&2
+    return 1
+  fi
+  n=$(grep -c '^    mov ' "$TD/b64.asm" || true)
+  if [[ "$n" -lt 64 ]]; then
+    echo "promoted mov lines: $n (${ms} ms)" >&2
+    cat "$TD/b64.asm" >&2 || true
+    return 1
+  fi
+  has b64 "; verified: uasm" || return 1
+  echo "batch64 ${ms} ms"
+}
+
+case_verify_missing() {
+  write_com miss C3 || return 1
+  local rc=0
+  "$BIN" --uasm --uasm-verify --uasm-bin /no/such/uasm -o "$TD/miss.asm" "$TD/miss.com" \
+    >"$TD/miss.stdout" 2>"$TD/miss.stderr" || rc=$?
+  [[ "$rc" -ne 0 ]] || { echo "missing assembler exited 0"; return 1; }
+  grep -F -q "assembler not found" "$TD/miss.stderr" || {
+    cat "$TD/miss.stderr" >&2 || true
+    return 1
+  }
+}
+
+check mov8b_verify case_mov8b_verify
+check source_name_not_label case_source_name_not_label
+check mid_insn_label case_mid_insn_label
+check ret0 case_ret0
+check retf0 case_retf0
+check ret4 case_ret4
+check x9_call case_x9_call
+check x9_psp case_x9_psp
+check batch64 case_batch64
+check verify_missing case_verify_missing
 
 echo "---"
 echo "p0_uasm passed=$pass failed=$fail"

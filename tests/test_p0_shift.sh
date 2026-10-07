@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # P0 Q10: a symbolic near displacement follows an inserted nop.
 # The db form keeps the original displacement and must miss C3.
-# Synthetic COM only. /usr/bin/uasm is required. Does not skip.
+# Synthetic COM only. Missing uasm exits 77.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="${DUMPEXE_BIN:-$ROOT/dumpexe}"
 [[ -x "$BIN" ]] || { echo "FAIL: dumpexe binary not found"; exit 1; }
-[[ -x /usr/bin/uasm ]] || { echo "FAIL: /usr/bin/uasm not found"; exit 1; }
+# shellcheck source=lib_uasm.sh
+source "$ROOT/tests/lib_uasm.sh"
+UASM="$(uasm_resolve)" || { echo "SKIP test_p0_shift (no uasm)"; exit 77; }
 
 TD="$(mktemp -d "${TMPDIR:-/tmp}/dumpexe-p0-shift-XXXXXX")"
 trap 'rm -rf "$TD"' EXIT
@@ -102,7 +104,7 @@ Path(dst_path).write_text(text, encoding="utf-8")
 PY
   (
     cd "$TD"
-    /usr/bin/uasm -bin -nologo -Fo "$name.bin" "$name.shifted.asm" \
+    "$UASM" -bin -nologo -Fo "$name.bin" "$name.shifted.asm" \
       >"$name.uasm" 2>"$name.uasmerr"
   ) || {
     echo "uasm -bin failed for $name" >&2

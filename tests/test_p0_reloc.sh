@@ -7,7 +7,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="${DUMPEXE_BIN:-$ROOT/dumpexe}"
 [[ -x "$BIN" ]] || { echo "FAIL: dumpexe binary not found"; exit 1; }
-[[ -x /usr/bin/uasm ]] || { echo "FAIL: /usr/bin/uasm not found"; exit 1; }
+# shellcheck source=lib_uasm.sh
+source "$ROOT/tests/lib_uasm.sh"
+UASM="$(uasm_resolve)" || { echo "SKIP test_p0_reloc (no uasm)"; exit 77; }
 
 TD="$(mktemp -d "${TMPDIR:-/tmp}/dumpexe-p0-reloc-XXXXXX")"
 trap 'rm -rf "$TD"' EXIT
@@ -206,7 +208,7 @@ uasm_bin_eq() {
   # uasm writes <basename>.err in cwd. Stay in the temp dir.
   (
     cd "$TD" || exit 1
-    /usr/bin/uasm -bin -nologo -Fo "$name.bin" "$name.asm" \
+    "$UASM" -bin -nologo -Fo "$name.bin" "$name.asm" \
       >"$name.uasm" 2>"$name.uasmerr"
   ) || {
     echo "uasm -bin failed for $name" >&2
@@ -235,7 +237,7 @@ case_uasm_bx() {
   uasm_bin_eq uasm_bx || return 1
   (
     cd "$TD" || exit 1
-    /usr/bin/uasm -mz -nologo -Fo "uasm_bx.built.exe" "uasm_bx.asm" \
+    "$UASM" -mz -nologo -Fo "uasm_bx.built.exe" "uasm_bx.asm" \
       >"uasm_bx.mzout" 2>"uasm_bx.mzerr"
   ) || {
     echo "uasm -mz failed" >&2

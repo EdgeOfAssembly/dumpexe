@@ -216,9 +216,39 @@ A relative branch is
 or a conditional
 .B short
 when the target is a label.
-Any other non-branch line is kept only when
+Any other non-branch line stays
+.B db
+unless
+.B \-\-uasm-verify
+is set and
 .BR uasm (1)
-assembles it back to those bytes.
+assembles that line back to those bytes.
+The default
+.B \-\-uasm
+listing does not run an assembler.
+Its header says
+.BR "; NOT VERIFIED" .
+.B \-\-uasm-verify
+is enable-only (there is no
+.BR \-\-no-uasm-verify ).
+It requires
+.B \-\-uasm
+and does not imply
+.BR \-\-uasm-stats .
+The assembler is
+.BR \-\-uasm-bin ,
+else
+.BR $DUMPEXE_UASM ,
+else
+.B uasm
+on
+.BR PATH .
+There is no built-in assembler path.
+One assemble covers every distinct candidate line.
+When that assemble ran, the header says
+.B "; verified: uasm … at PATH" .
+If verify is on and no assembler can be run, dumpexe writes an error
+on stderr and exits non-zero.
 A relocated
 .B "mov r16, imm16"
 (opcodes B8 through BF) whose paragraph frame lies in this image is printed as
@@ -266,16 +296,18 @@ so
 .B uasm -bin
 matches the COM bytes.
 An EXE load image uses
-.B org 0
-so the
+.B org 0 .
 .B uasm -mz
-output is that load-image payload only.
-It does not rebuild the MZ header.
-Restore the header with
-.BR bin2exe .
-The payload length
+writes a 32-byte MZ header (0 relocations, CS:IP and SS:SP 0:0)
+and warns A4205 and A4204.
+Prefer
+.B uasm -bin
+and
+.B bin2exe \-\-header
+to restore the original header.
 .RI ( "e_cparhdr * 16" )
-is the full load image.
+is the header size, not the load image.
+The load image begins after that header.
 An image longer than 65536 bytes is split into byte-aligned
 .B sN segment
 /
@@ -290,6 +322,8 @@ A multi-segment listing ends with a bare
 so
 .B uasm \-bin
 accepts it.
+Past 64 KiB is decoded when reached through the entry, near wrap,
+or a decoded relocation-pinned far call.
 An in-image linear entry is decoded, including past 64 KiB.
 Its label stays inside its
 .B sN
@@ -330,7 +364,8 @@ When both are set and a UASM listing was emitted, one coverage line is
 written to stderr (walked image bytes, decoded CFG bytes, bytes emitted as
 instructions,
 .B db
-bytes, and label definitions and whole-token references).
+bytes, label definitions and whole-token references, and whether
+verification ran).
 stdout stays the product.
 The line is not a JSON field.
 There is no disable form.
