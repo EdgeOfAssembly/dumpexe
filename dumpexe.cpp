@@ -11,7 +11,7 @@ static inline void print_version()
     int cap_major = 0;
     int cap_minor = 0;
     (void)cs_version(&cap_major, &cap_minor);
-    std::cout << "dumpexe 2.24 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
+    std::cout << "dumpexe 2.25 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
                  "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n"
                  "License: GPLv2 | Commercial (contact author)\n";
     std::cout << std::format(
@@ -36,6 +36,30 @@ static int dx_mz_json_reject(const Options& opts)
         rep.file = opts.filename;
         rep.format = "mz";
         rep.error = "rejected MZ header";
+        rep.print(std::cout);
+    }
+    return 1;
+}
+
+/**
+ * @brief One JSON object when the load image is over the cap, then exit status 1.
+ *
+ * Stderr already has the line from @c load_image_within_cap. With
+ * @c --json, stdout is that object and nothing else. Without @c --json
+ * this only returns 1. @c error is exactly "load image over cap".
+ *
+ * @param opts Parsed options. @c filename is copied into the object.
+ * @param report_format Report format: @c mz or @c com.
+ * @return Always 1.
+ */
+static int dx_json_reject_over_cap(const Options& opts, const char* report_format)
+{
+    if (opts.jsonOut)
+    {
+        JsonReport rep;
+        rep.file = opts.filename;
+        rep.format = report_format;
+        rep.error = "load image over cap";
         rep.print(std::cout);
     }
     return 1;
@@ -315,7 +339,7 @@ int main(int argc, char* argv[]) {
             : 0ull;
         if (!load_image_within_cap(mz_image_bytes, opts.maxImageBytes))
         {
-            return 1;
+            return dx_json_reject_over_cap(opts, "mz");
         }
         if (mz_entry_image_ip(header, static_cast<size_t>(mz_image_bytes)).before_image)
         {
@@ -603,7 +627,7 @@ int main(int argc, char* argv[]) {
             : com_file_bytes + static_cast<uint64_t>(COM_PSP_SIZE);
         if (!load_image_within_cap(com_image_bytes, opts.maxImageBytes))
         {
-            return 1;
+            return dx_json_reject_over_cap(opts, "com");
         }
 
         ToolchainReport tc_rep{};

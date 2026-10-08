@@ -779,6 +779,9 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
     };
 
     std::set<CfgLin> leaders;
+    // Created only by an INT-nearby seed (site-8 / site-16). A non-nearby
+    // enqueue promotes the address. A second nearby seed does not.
+    std::set<CfgLin> spec_leaders;
     std::set<CfgLin> table_slots;
     std::map<CfgLin, int32_t> leader_seg;
     // Distinct paragraph frames. seg_covering looks these up; it does not
@@ -794,27 +797,59 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
     // int block's AH is unknown. This set is what stops that block.
     std::set<CfgLin> noreturn_ips;
 
-    auto enqueue = [&](CfgLin linear, int32_t frame)
+    // Rejected: not a leader. Present: already one. Created: just inserted.
+    // Does not touch spec_leaders. Nearby must not promote, so the erase
+    // stays in enqueue and not on this path.
+    enum class CfgPlace
+    {
+        Rejected,
+        Present,
+        Created
+    };
+    auto place_leader = [&](CfgLin linear, int32_t frame) -> CfgPlace
     {
         if (!cfg_in_frame(linear, frame))
         {
-            return;
+            return CfgPlace::Rejected;
         }
         if (!cfg_ip_in_image(linear, image.size()))
         {
             g.unresolved.insert(linear);
-            return;
+            return CfgPlace::Rejected;
         }
         // A leader strictly inside an owned instruction is not a block start.
         if (cfg_ip_inside_owned(owner, linear))
         {
+            return CfgPlace::Rejected;
+        }
+        if (!leaders.insert(linear).second)
+        {
+            return CfgPlace::Present;
+        }
+        leader_seg[linear] = frame;
+        seg_frames.insert(frame);
+        work.push(CfgSeed{linear, frame});
+        return CfgPlace::Created;
+    };
+
+    // Non-nearby source. Promotes even when the address was already a leader.
+    // Nearby does not call this; a second nearby seed must keep the mark.
+    auto enqueue = [&](CfgLin linear, int32_t frame)
+    {
+        if (place_leader(linear, frame) == CfgPlace::Rejected)
+        {
             return;
         }
-        if (leaders.insert(linear).second)
+        spec_leaders.erase(linear);
+    };
+
+    // Only enqueue_nearby calls this. Creating the leader records it as
+    // speculative. An address that is already a leader is left alone.
+    auto enqueue_spec = [&](CfgLin linear, int32_t frame)
+    {
+        if (place_leader(linear, frame) == CfgPlace::Created)
         {
-            leader_seg[linear] = frame;
-            seg_frames.insert(frame);
-            work.push(CfgSeed{linear, frame});
+            spec_leaders.insert(linear);
         }
     };
 
@@ -921,17 +956,21 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             }
 
             // The first instruction of this walk may cover an interior
-            // target. Only a later opcode-00 instruction stops: opcode 00
-            // is a 2-byte add that would swallow the next leader. Other
-            // opcodes do not stop. Stopping on every overlap drops real
-            // instructions that merely cover a speculative INT-nearby
-            // seed (RG6).
-            if (linear != start && insn->size > 1 && insn->bytes[0] == 0x00)
+            // target (linear != start). Only a later instruction stops,
+            // and only when the opcode after prefixes is 00
+            // (detail->x86.opcode[0], not bytes[0], so 2E 00 still stops).
+            // The covered address must be in leaders and not in
+            // spec_leaders. An INT-nearby seed does not end the walk
+            // (RG6). Other opcodes do not stop.
+            if (linear != start && insn->size > 1 &&
+                insn->detail != nullptr &&
+                insn->detail->x86.opcode[0] == 0x00)
             {
                 bool covers_leader = false;
                 for (uint16_t k = 1; k < insn->size; ++k)
                 {
-                    if (leaders.count(static_cast<CfgLin>(linear + k)) != 0)
+                    const CfgLin at = static_cast<CfgLin>(linear + k);
+                    if (leaders.count(at) != 0 && spec_leaders.count(at) == 0)
                     {
                         covers_leader = true;
                         break;
@@ -1330,7 +1369,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             {
                 return;
             }
-            enqueue(at, sb);
+            enqueue_spec(at, sb);
         };
         const uint16_t ip16 = cfg_ip16(ip, sb);
         if (ip16 >= 16)
@@ -1450,17 +1489,21 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             }
 
             // Same as the trusted walk. The block's first instruction may
-            // cover an interior target. Only a later opcode-00 instruction
-            // stops: opcode 00 is a 2-byte add that would swallow the next
-            // leader. Other opcodes do not stop. Stopping on every overlap
-            // drops real instructions that merely cover a speculative
-            // INT-nearby seed (RG6).
-            if (linear != L && insn->size > 1 && insn->bytes[0] == 0x00)
+            // cover an interior target (linear != L). Only a later
+            // instruction stops, and only when the opcode after prefixes
+            // is 00 (detail->x86.opcode[0], not bytes[0], so 2E 00 still
+            // stops). The covered address must be in leaders and not in
+            // spec_leaders. An INT-nearby seed does not end the walk
+            // (RG6). Other opcodes do not stop.
+            if (linear != L && insn->size > 1 &&
+                insn->detail != nullptr &&
+                insn->detail->x86.opcode[0] == 0x00)
             {
                 bool covers_leader = false;
                 for (uint16_t k = 1; k < insn->size; ++k)
                 {
-                    if (leaders.count(static_cast<CfgLin>(linear + k)) != 0)
+                    const CfgLin at = static_cast<CfgLin>(linear + k);
+                    if (leaders.count(at) != 0 && spec_leaders.count(at) == 0)
                     {
                         covers_leader = true;
                         break;

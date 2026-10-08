@@ -345,6 +345,8 @@ lha_mid_member = lha_member(b"-lh5-", 0, 22)
 # Tiny real MZ (ret). Not a packer.
 tiny = build_mz(b"\xc3", crlc=0, paras=2, ip=0, cs=0, lfarlc=0x1C, ovno=0)
 (td / "tiny_mz.exe").write_bytes(tiny)
+# L11-J: 32-byte header and a 32-byte load image. --max-image=31 refuses.
+(td / "cap32.exe").write_bytes(build_mz(b"\xc3" + (b"\x00" * 31)))
 print("fixtures ok", td)
 PY
 
@@ -596,7 +598,7 @@ json_mz_22() {
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["tool"] == "dumpexe", d.get("tool")
-assert d["version"] == "2.24", d.get("version")
+assert d["version"] == "2.25", d.get("version")
 mz = d["mz"]
 assert mz["extra_bytes"] == 10, mz.get("extra_bytes")
 assert mz["min_alloc"] == 14, mz.get("min_alloc")
@@ -634,7 +636,7 @@ json_com_entry() {
   python3 - "$TD/com.json" "$TD/com_psp_flag.json" << 'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert d["version"] == "2.24"
+assert d["version"] == "2.25"
 assert d["format"] == "com"
 assert d["com"]["file_size"] == 1
 assert d["com"]["entry_ip"] == "0100"
@@ -668,9 +670,90 @@ check json_com_psp json_com_psp
 check version_capstone bash -c "
   set -euo pipefail
   '$BIN' -v >'$TD/ver.txt'
-  grep -q 'dumpexe 2.24' '$TD/ver.txt'
+  grep -q 'dumpexe 2.25' '$TD/ver.txt'
   grep -Eq 'Capstone[[:space:]]+[0-9]+\\.[0-9]+' '$TD/ver.txt'
 "
+
+# L11-J: over-cap MZ/COM with --json is one object. tiny.com is 1-byte C3, no PSP.
+l11j_one_object() {
+  python3 - "$1" "$2" "$3" "$4" << 'PY'
+import json, sys
+path, fmt, version, expect_file = sys.argv[1:]
+raw = open(path, encoding="utf-8").read()
+d = json.loads(raw)
+assert set(d) == {"tool", "version", "file", "format", "error"}, sorted(d)
+assert d["tool"] == "dumpexe", d["tool"]
+assert d["version"] == version, d["version"]
+assert d["format"] == fmt, d["format"]
+assert d["error"] == "load image over cap", d["error"]
+assert d["file"] == expect_file, d["file"]
+PY
+}
+
+l11j_mz_json_over() {
+  local out="$TD/l11j_mz_over.json" err="$TD/l11j_mz_over.err" rc=0 line n
+  line='Error: load image is 32 bytes, over the 31 cap (use --max-image=N)'
+  "$BIN" --json --max-image=31 "$TD/cap32.exe" >"$out" 2>"$err" || rc=$?
+  [[ "$rc" -eq 1 ]] &&
+    n=$(grep -F -c -- "$line" "$err") &&
+    [[ "$n" -eq 1 ]] &&
+    l11j_one_object "$out" mz 2.25 "$TD/cap32.exe"
+}
+
+l11j_mz_text_over() {
+  local out="$TD/l11j_mz_text.out" err="$TD/l11j_mz_text.err" rc=0 line n
+  line='Error: load image is 32 bytes, over the 31 cap (use --max-image=N)'
+  "$BIN" --max-image=31 "$TD/cap32.exe" >"$out" 2>"$err" || rc=$?
+  [[ "$rc" -eq 1 ]] &&
+    [[ ! -s "$out" ]] &&
+    n=$(grep -F -c -- "$line" "$err") &&
+    [[ "$n" -eq 1 ]]
+}
+
+l11j_mz_json_ok() {
+  local out="$TD/l11j_mz_ok.json" err="$TD/l11j_mz_ok.err" rc=0
+  "$BIN" --json --max-image=32 "$TD/cap32.exe" >"$out" 2>"$err" || rc=$?
+  [[ "$rc" -eq 0 ]] &&
+    python3 - "$out" << 'PY'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+assert d["format"] == "mz", d.get("format")
+assert d["version"] == "2.25", d.get("version")
+assert "error" not in d, d.get("error")
+assert d["mz"]["load_image_size"] == 32, d["mz"]
+PY
+}
+
+l11j_com_json_over() {
+  local out="$TD/l11j_com_over.json" err="$TD/l11j_com_over.err" rc=0 line n
+  line='Error: load image is 257 bytes, over the 256 cap (use --max-image=N)'
+  "$BIN" --json --max-image=256 "$TD/tiny.com" >"$out" 2>"$err" || rc=$?
+  [[ "$rc" -eq 1 ]] &&
+    n=$(grep -F -c -- "$line" "$err") &&
+    [[ "$n" -eq 1 ]] &&
+    l11j_one_object "$out" com 2.25 "$TD/tiny.com"
+}
+
+l11j_com_json_ok() {
+  local out="$TD/l11j_com_ok.json" err="$TD/l11j_com_ok.err" rc=0
+  "$BIN" --json --max-image=257 "$TD/tiny.com" >"$out" 2>"$err" || rc=$?
+  [[ "$rc" -eq 0 ]] &&
+    python3 - "$out" << 'PY'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+assert d["format"] == "com", d.get("format")
+assert d["version"] == "2.25", d.get("version")
+assert "error" not in d, d.get("error")
+assert d["com"]["load_model"] == "org100", d["com"]
+assert d["com"]["file_size"] == 1, d["com"]
+PY
+}
+
+check l11j_mz_json_over l11j_mz_json_over
+check l11j_mz_text_over l11j_mz_text_over
+check l11j_mz_json_ok l11j_mz_json_ok
+check l11j_com_json_over l11j_com_json_over
+check l11j_com_json_ok l11j_com_json_ok
 
 check pklite_fingerprint bash -c "
   set -euo pipefail

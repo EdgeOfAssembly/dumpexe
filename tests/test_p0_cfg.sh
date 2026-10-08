@@ -89,6 +89,16 @@ def write_sparse(path, size, prefix):
 # RG6: call to 0105. The fall-through walk starts on nop. A later
 # opcode 00 at 0104 must not swallow the ret leader.
 (td / "zhole.com").write_bytes(bytes.fromhex("e802009000c3"))
+# RG6-r: real opcode 00 at 0117 covers a speculative site-8 seed (0118).
+(td / "rg6r.com").write_bytes(bytes.fromhex(
+    "cd20" + ("00" * 14) +
+    "0655b825038ed80006900090750433c0cd20833e900001750633c0b401cd21c3"))
+# RG6-t: opcode 00 at 011C covers speculative site-8 (011F) over jmp target 0120.
+(td / "rg6t.com").write_bytes(bytes.fromhex(
+    "cd20" + ("00" * 21) +
+    "90909090900093eb2ab8024233c933d2cd21c3061e5590ebf0b44ccd21c3"))
+# N5-pfx: call 0106, nop, then 2E 00 C3. The prefix must not hide opcode 00.
+(td / "n5_pfx.com").write_bytes(bytes.fromhex("e80300902e00c3"))
 
 # N-test RG4: CS=0100h IP=0, header 32 bytes, minalloc 0x10.
 # INT 21h at linear 0x200 sits under the entry frame. Frame 0 must cover it.
@@ -355,6 +365,67 @@ print("rg6 zero hole", " ".join(hit[0]))
 PY
 }
 
+# RG6-r: a real opcode-00 add that covers a speculative INT-nearby seed
+# stays one instruction, and the later mov ah,1 is still decoded.
+case_rg6r() {
+  dump rg6r || return 1
+  local out="$TD/rg6r.out"
+  has_f "$out" B401 || return 1
+  python3 - "$out" << 'PY'
+import re, sys
+text = open(sys.argv[1], errors="replace").read()
+rows = re.findall(r"^\s+([0-9A-Fa-f]+)\s+([0-9A-F]+)\s+(\S+)", text, re.M)
+if not rows:
+    sys.exit("no decoded rows:\n" + text)
+hit = [r for r in rows if r[0].upper() == "0117" and r[1] == "00069000"]
+if not hit:
+    sys.exit("no row 0117 00069000:\n" + text)
+print("rg6r", " ".join(hit[0]))
+PY
+}
+
+# RG6-t: a speculative site-8 seed must not let opcode 00 swallow the
+# jmp target. The target keeps its label and the INT 21h AH=42 note.
+case_rg6t() {
+  dump rg6t || return 1
+  local out="$TD/rg6t.out"
+  has_f "$out" func_0120 || return 1
+  has_f "$out" LSEEK || return 1
+  python3 - "$out" << 'PY'
+import re, sys
+text = open(sys.argv[1], errors="replace").read()
+rows = re.findall(r"^\s+([0-9A-Fa-f]+)\s+([0-9A-F]+)\s+(\S+)", text, re.M)
+if not rows:
+    sys.exit("no decoded rows:\n" + text)
+hit = [r for r in rows if r[0].upper() == "0120" and r[1] == "B80242"]
+if not hit:
+    sys.exit("no row 0120 B80242:\n" + text)
+print("rg6t", " ".join(hit[0]))
+PY
+}
+
+# N5-pfx: opcode 00 after a CS prefix stops. ret at 0106 stays.
+# A decoded row whose bytes are 2E00C3 swallowed that leader.
+case_n5_pfx() {
+  dump n5_pfx || return 1
+  local out="$TD/n5_pfx.out"
+  lacks_f "$out" 2E00C3 || return 1
+  python3 - "$out" << 'PY'
+import re, sys
+text = open(sys.argv[1], errors="replace").read()
+rows = re.findall(r"^\s+([0-9A-Fa-f]+)\s+([0-9A-F]+)\s+(\S+)", text, re.M)
+if not rows:
+    sys.exit("no decoded rows:\n" + text)
+bad = [r for r in rows if r[1] == "2E00C3"]
+if bad:
+    sys.exit("decoded row bytes 2E00C3: " + " ".join(bad[0]) + "\n" + text)
+hit = [r for r in rows if r[0].upper() == "0106" and r[2].lower() == "ret"]
+if not hit:
+    sys.exit("no ret at 0106:\n" + text)
+print("n5 pfx", " ".join(hit[0]))
+PY
+}
+
 # Moved from test_p0_linear.sh. Same assertion. Does not need uasm.
 case_rg4_int_below_frame() {
   "$BIN" --json --no-asm-file --no-repack "$TD/rg4.exe" \
@@ -439,6 +510,9 @@ check nop_after_four_zeros case_nop_after_four_zeros
 check ret_zero_hole case_ret_zero_hole
 check rg6_intseed_cover case_rg6_intseed_cover
 check rg6_zero_hole case_rg6_zero_hole
+check rg6r case_rg6r
+check rg6t case_rg6t
+check n5_pfx case_n5_pfx
 check rg4_int_below_frame case_rg4_int_below_frame
 check max_image case_max_image
 
