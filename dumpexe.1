@@ -36,7 +36,13 @@ The file format is detected automatically from the file content:
 .B MZ EXE
 \(em first two bytes are
 .B 4Dh 5Ah
-('MZ'); pure DOS load image (no NE at e_lfanew)
+('MZ') or
+.B 5Ah 4Dh
+('ZM'); pure DOS load image (no NE at e_lfanew).
+The computed load image is capped at 1114112 bytes (1 MiB + 64 KiB).
+.B \-\-max-image=N
+raises that cap.
+An empty load image is an error.
 .IP \(bu 2
 .B NE EXE (Windows 3.x / Win16)
 \(em MZ stub with
@@ -780,7 +786,7 @@ Main implementation file
 .SH TECHNICAL DETAILS
 .SS MZ EXE Format
 .IP \(bu 2
-Signature: 'MZ' (0x5A4D little-endian)
+Signature: 'MZ' (0x5A4D little-endian) or 'ZM' (0x4D5A little-endian)
 .IP \(bu 2
 28-byte minimum header
 .IP \(bu 2

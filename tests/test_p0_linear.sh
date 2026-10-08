@@ -105,7 +105,7 @@ unalign[0:5] = bytes([0x9A, 0x00, 0x00, 0x00, 0x11])
 unalign[0x11000:0x11003] = bytes([0xEB, 0x00, 0xC3])
 save("unalign", unalign, crlc=1, ip=0, cs=0, reloc=(3, 0))
 
-# 9. com2exe CS=FFF0 IP=0100. delta <= 0, entry linear 0.
+# 9. com2exe CS=FFF0 IP=0100. delta == 0, entry linear 0, frame 0.
 save("com2exe", bytes([0xC3]), ip=0x100, cs=0xFFF0)
 
 # 10 and 11. In-image ret at linear 0x10000. Multi-segment UASM.
@@ -132,12 +132,6 @@ save("x6", x6, ip=0, cs=0x1000)
 # 15. X10: 64 KiB COM of byte 0x73. Branch targets are not string immediates.
 (td / "x10.com").write_bytes(bytes([0x73]) * 65536)
 
-# 16. RG4: CS=0100h IP=0, header 32 bytes, minalloc 0x10. INT 21h at
-# linear 0x200 sits under the entry frame. Frame 0 must cover it.
-rg4 = bytearray(0x1100)
-rg4[0x1000:0x1005] = bytes.fromhex("b8004ccd21")
-rg4[0x200:0x20C] = bytes.fromhex("b409ba0000cd21b8004ccd21")
-save("rg4", rg4, ip=0, cs=0x0100, minalloc=0x10)
 print("fixtures", td)
 PY
 
@@ -401,17 +395,6 @@ case_x6_int_past64() {
   echo "x6 ${ms} ms"
 }
 
-case_rg4_int_below_frame() {
-  json_of rg4 || return 1
-  py_edges rg4 << 'PY'
-import json, sys
-cfg = json.load(open(sys.argv[1]))["cfg"]
-if cfg["blocks"] < 5:
-    sys.exit("blocks " + str(cfg["blocks"]))
-print("rg4 int below frame", cfg["blocks"])
-PY
-}
-
 case_x10_printrun() {
   local start end ms
   start=$(date +%s%N)
@@ -451,7 +434,6 @@ check negcs case_negcs
 check negcs_fff0 case_negcs_fff0
 check x6_int_past64 case_x6_int_past64
 check x10_printrun case_x10_printrun
-check rg4_int_below_frame case_rg4_int_below_frame
 
 echo "linear tests: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]

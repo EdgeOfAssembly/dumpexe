@@ -233,4 +233,45 @@ set -e
 [[ "$(cat "$WORK/sentinel")" == "SENTINEL" ]] || fail "symlink target changed"
 [[ "$(cat "$WORK/link.err")" == *"symlink"* ]] || fail "symlink text"
 
+# B4: 16-byte MZ (e_cparhdr == 1, e_crlc == 0) plus a few payload bytes.
+python3 - "$WORK" <<'PY'
+import pathlib, sys
+work = pathlib.Path(sys.argv[1])
+hdr = bytearray(16)
+hdr[0] = ord("M")
+hdr[1] = ord("Z")
+hdr[8] = 1
+payload = b"\x90\x90\x90\xc3"
+(work / "h16.exe").write_bytes(bytes(hdr) + payload)
+(work / "h16.bin").write_bytes(payload)
+bad = bytearray(28)
+bad[0] = ord("M")
+bad[1] = ord("Z")
+bad[6] = 1
+bad[8] = 1
+bad[24] = 0x1C
+(work / "h16bad.exe").write_bytes(bytes(bad) + b"\x90\x90")
+(work / "h16bad.bin").write_bytes(b"\x90\x90")
+PY
+"$BIN" --header "$WORK/h16.exe" "$WORK/h16.bin" -o "$WORK/h16-out.exe" \
+    2>"$WORK/h16.err"
+[[ ! -s "$WORK/h16.err" ]] || fail "16-byte header warned: $(cat "$WORK/h16.err")"
+cmp -s "$WORK/h16.exe" "$WORK/h16-out.exe" || fail "16-byte header copy"
+python3 - "$WORK/flat.exe" <<'PY'
+import struct, sys
+magic, _cblp, _cp, _crlc, cpar = struct.unpack_from("<5H", open(sys.argv[1], "rb").read(10), 0)
+if magic != 0x5A4D or cpar != 2:
+    raise SystemExit(f"COM wrap header magic={magic:#x} e_cparhdr={cpar}")
+PY
+set +e
+"$BIN" --header "$WORK/h16bad.exe" "$WORK/h16bad.bin" -o "$WORK/h16bad-out.exe" \
+    >/dev/null 2>"$WORK/h16bad.err"
+h16bad_rc=$?
+set -e
+[[ "$h16bad_rc" -eq 1 ]] || fail "reloc past 16 exit $h16bad_rc"
+[[ "$(cat "$WORK/h16bad.err")" == *"relocation table does not fit"* ]] \
+    || fail "reloc text: $(cat "$WORK/h16bad.err")"
+[[ "$(cat "$WORK/h16bad.err")" != *"shorter than 32"* ]] || fail "old 32-byte status"
+[[ ! -e "$WORK/h16bad-out.exe" ]] || fail "bad reloc wrote output"
+
 printf 'ok\n'

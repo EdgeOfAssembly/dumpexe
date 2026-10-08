@@ -733,6 +733,10 @@ void dbuf_copy(dbuf *inf, i64 input_offset, i64 input_len, dbuf *outf)
 {
 	u8 tmpbuf[256];
 
+	/* A zero-length copy must not form a pointer from a NULL membuf; UBSan reports NULL+0; empty PKLITE/LZEXE reloc tables hit this. */
+	if (input_len == 0)
+		return;
+
 	// Fast paths, if the data to copy is all in memory
 
 	if(inf->rcache &&

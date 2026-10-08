@@ -24,6 +24,12 @@ minalloc is 0 and maxalloc is
 DOS adds those segments to the load segment, which wraps them to the PSP,
 so the first image byte is PSP:0100 and the stack is the COM stack.
 An image larger than 65280 bytes is refused in this mode.
+A 16-byte header
+.RI ( e_cparhdr
+1) is accepted when
+.I e_crlc
+is 0 or the relocation table fits in those 16 bytes.
+The COM wrap above stays 32 bytes.
 .PP
 .B \-\-header
 copies the MZ header of an existing EXE in front of the flat image and

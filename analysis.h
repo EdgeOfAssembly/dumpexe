@@ -85,7 +85,7 @@ static inline std::vector<uint8_t> read_exe_file(const std::string& filename, in
 /// @param header The already-read MZ header
 /// @param dosFileSize Actual file size in bytes
 static inline bool validate_header(const MZHeader& header, int64_t dosFileSize) {
-    if (header.signature != MZ_SIGNATURE) {   // 'MZ'
+    if (!mz_signature_ok(header.signature)) {   // 'MZ' or 'ZM'
         std::cerr << "Error: Not a valid MZ EXE file\n";
         return false;
     }

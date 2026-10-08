@@ -11,7 +11,7 @@ static inline void print_version()
     int cap_major = 0;
     int cap_minor = 0;
     (void)cs_version(&cap_major, &cap_minor);
-    std::cout << "dumpexe 2.22 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
+    std::cout << "dumpexe 2.23 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
                  "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n"
                  "License: GPLv2 | Commercial (contact author)\n";
     std::cout << std::format(
@@ -150,10 +150,13 @@ static inline bool read_entire_file(const std::string& filename,
  * @brief Load-image linear address of the MZ entry.
  *
  * `frame = int32(int16(cs)) * 16` and `delta = frame + ip`. com2exe
- * CS=FFF0 IP=0100 has delta <= 0 and stays at linear 0 with frame 0.
- * CS=FFFF IP=0020 has frame -16 and linear 0x10. An in-image entry keeps
- * that linear, including past 64 KiB. An entry at or past the load image
- * is not inside it. A negative frame is not cast to uint32_t.
+ * CS=FFF0 IP=0100 has delta == 0 and stays at linear 0 with frame 0 and
+ * @c in_window true. delta < 0 is before the load image (in the PSP):
+ * @c in_window is false, @c before_image is true, and the entry is not
+ * seeded at linear 0. CS=FFFF IP=0020 has frame -16 and linear 0x10.
+ * An in-image entry keeps that linear, including past 64 KiB. An entry at
+ * or past the load image is not inside it (@c before_image stays false).
+ * A negative frame is not cast to uint32_t.
  *
  * @param header     MZ header. CS is a signed paragraph offset.
  * @param image_size Load image length in bytes.
@@ -162,8 +165,11 @@ static inline bool read_entire_file(const std::string& filename,
 struct MzEntryLoc
 {
     uint32_t linear = 0;
-    int32_t frame = 0; ///< Signed cs*16. 0 when delta <= 0.
+    int32_t frame = 0; ///< Signed cs*16. 0 when the entry is not inside the image.
     bool in_window = true;
+    /// True when delta < 0. The entry is in the PSP, before the load image.
+    /// An entry past the image leaves this false.
+    bool before_image = false;
 };
 
 static inline MzEntryLoc mz_entry_image_ip(const MZHeader& header, size_t image_size)
@@ -172,8 +178,14 @@ static inline MzEntryLoc mz_entry_image_ip(const MZHeader& header, size_t image_
     const int32_t frame =
         static_cast<int32_t>(static_cast<int16_t>(header.cs)) * 16;
     const int32_t delta = frame + static_cast<int32_t>(header.ip);
-    if (delta <= 0)
+    if (delta == 0)
     {
+        return loc;
+    }
+    if (delta < 0)
+    {
+        loc.in_window = false;
+        loc.before_image = true;
         return loc;
     }
     if (static_cast<uint32_t>(delta) >= image_size)
@@ -185,6 +197,27 @@ static inline MzEntryLoc mz_entry_image_ip(const MZHeader& header, size_t image_
     loc.frame = frame;
     loc.in_window = true;
     return loc;
+}
+
+/**
+ * @brief Refuse a computed MZ or COM load image over the CLI cap.
+ *
+ * Size 0 is under the cap. A successful NE analysis never calls this.
+ *
+ * @param image_bytes Computed image length about to be listed or disassembled.
+ * @param cap         Options::maxImageBytes. At least 1.
+ * @return false after one stderr line when @p image_bytes is over @p cap.
+ */
+static bool load_image_within_cap(uint64_t image_bytes, uint64_t cap)
+{
+    if (image_bytes <= cap)
+    {
+        return true;
+    }
+    std::cerr << std::format(
+        "Error: load image is {} bytes, over the {} cap (use --max-image=N)\n",
+        image_bytes, cap);
+    return false;
 }
 
 /// Shared MZ image window for CFG (CS-relative).
@@ -241,7 +274,7 @@ int main(int argc, char* argv[]) {
                                 ? static_cast<uint16_t>(fileData[1]) << 8
                                 : uint16_t{0});
 
-    if (sig16 == MZ_SIGNATURE) {
+    if (mz_signature_ok(sig16)) {
         if (fileData.size() < sizeof(MZHeader)) {
             std::cerr << "Error: File is too small to contain a valid MZ header\n";
             return dx_mz_json_reject(opts);
@@ -277,6 +310,17 @@ int main(int argc, char* argv[]) {
             return dx_mz_json_reject(opts);
 
         ExeSizes sizes = calculate_sizes(header, fileSize);
+        const uint64_t mz_image_bytes = (sizes.loadImageSize > 0)
+            ? static_cast<uint64_t>(sizes.loadImageSize)
+            : 0ull;
+        if (!load_image_within_cap(mz_image_bytes, opts.maxImageBytes))
+        {
+            return 1;
+        }
+        if (mz_entry_image_ip(header, static_cast<size_t>(mz_image_bytes)).before_image)
+        {
+            std::cerr << "Warning: MZ entry is before the load image (in the PSP)\n";
+        }
         const bool human = !opts.jsonOut && !opts.uasm_stdout_only();
 
         if (human)
@@ -412,8 +456,9 @@ int main(int argc, char* argv[]) {
                 uint16_t cs_seg = 0;
                 mz_cfg_window(header, sizes, cfg_file_off, cfg_len, cs_seg, opts);
                 const MzEntryLoc entry = mz_entry_image_ip(header, cfg_len);
-                // Share only for an in-image entry. An entry outside the image
-                // still seeds linear 0 in cfg_analyze_image below.
+                // Share only for an in-image entry. An entry past the image
+                // still seeds linear 0 in cfg_analyze_image below. An entry
+                // before the image (delta < 0) does not.
                 CfgGraph* cfg_slot = nullptr;
                 if (want_cfg_view && entry.in_window)
                 {
@@ -434,7 +479,12 @@ int main(int argc, char* argv[]) {
             }
             // A refused packed listing must not hide the unpack report.
             if (want_human_listing || (opts.uasm && !opts.jsonOut))
-                dx_after_packed_listing(opts, fileData, tc_rep.packer);
+            {
+                if (!dx_after_packed_listing(opts, fileData, tc_rep.packer))
+                {
+                    return 1;
+                }
+            }
             if (listing_rc != 0)
                 return 1;
         }
@@ -456,12 +506,15 @@ int main(int argc, char* argv[]) {
                 uint16_t cs_seg = 0;
                 mz_cfg_window(header, sizes, cfg_file_off, cfg_len, cs_seg, opts);
                 const MzEntryLoc cfg_entry = mz_entry_image_ip(header, cfg_len);
-                cfg_g = cfg_analyze_image(fileData, cfg_file_off, cfg_len,
-                                          cfg_entry.in_window ? cfg_entry.linear : CfgLin{0},
-                                          cs_seg, static_cast<uint16_t>(header.cs), cfg_opts,
-                                          relocs,
-                                          cfg_entry.in_window ? cfg_entry.frame : int32_t{0});
-                cfg_ran = true;
+                if (!cfg_entry.before_image)
+                {
+                    cfg_g = cfg_analyze_image(fileData, cfg_file_off, cfg_len,
+                                              cfg_entry.in_window ? cfg_entry.linear : CfgLin{0},
+                                              cs_seg, static_cast<uint16_t>(header.cs), cfg_opts,
+                                              relocs,
+                                              cfg_entry.in_window ? cfg_entry.frame : int32_t{0});
+                    cfg_ran = true;
+                }
             }
         }
 
@@ -528,7 +581,10 @@ int main(int argc, char* argv[]) {
             analyze_sys(opts, fileData, fileSize);
             if (opts.toolchainDetect)
                 toolchain_print_report(tc_rep);
-            dx_after_packed_listing(opts, fileData, tc_rep.packer);
+            if (!dx_after_packed_listing(opts, fileData, tc_rep.packer))
+            {
+                return 1;
+            }
         }
 
     } else {
@@ -541,6 +597,14 @@ int main(int argc, char* argv[]) {
         else
             has_psp = detect_psp(fileData);
         const size_t entry_offset = has_psp ? static_cast<size_t>(COM_PSP_SIZE) : 0;
+        const uint64_t com_file_bytes = static_cast<uint64_t>(fileData.size());
+        const uint64_t com_image_bytes = has_psp
+            ? com_file_bytes
+            : com_file_bytes + static_cast<uint64_t>(COM_PSP_SIZE);
+        if (!load_image_within_cap(com_image_bytes, opts.maxImageBytes))
+        {
+            return 1;
+        }
 
         ToolchainReport tc_rep{};
         if (opts.toolchainDetect)
@@ -581,7 +645,10 @@ int main(int argc, char* argv[]) {
             const int com_rc = analyze_com(opts, fileData, fileSize);
             if (opts.toolchainDetect && !opts.uasm_stdout_only())
                 toolchain_print_report(tc_rep);
-            dx_after_packed_listing(opts, fileData, tc_rep.packer);
+            if (!dx_after_packed_listing(opts, fileData, tc_rep.packer))
+            {
+                return 1;
+            }
             if (com_rc != 0)
                 return 1;
         }

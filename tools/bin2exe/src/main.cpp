@@ -696,7 +696,7 @@ const char *status_label(bin2exe::status code)
     case bin2exe::status::not_mz:
         return "header is not an MZ executable";
     case bin2exe::status::header_too_small:
-        return "EXE header is shorter than 32 bytes";
+        return "EXE header is shorter than 16 bytes or its relocation table does not fit";
     case bin2exe::status::header_truncated:
         return "EXE header does not fit in the file";
     case bin2exe::status::header_too_large:

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Regression tests for dumpexe listing/CFG bugs 2, 5, and 11.
-# Not wired into `make test` yet (Makefile is owned by another agent).
+# Invoked by `make test`.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -544,6 +544,155 @@ if "repack: wrote" not in err:
 print("repack named overwrite ok", len(named))
 PY
 fi
+
+# X3: an MZ whose declared load image is empty fails. No listing file.
+mkdir -p "$TD/x3"
+python3 - "$TD/x3/empty.exe" "$TD/x3/tiny.exe" << 'PY'
+import struct, sys
+empty_p, tiny_p = sys.argv[1:]
+# header is 2 paragraphs (32 bytes). Declared file size equals the header,
+# so the load image length is 0. CS:IP 0000:0000 sits on the header end,
+# which validate_header still accepts.
+empty = struct.pack(
+    "<2s13H",
+    b"MZ",
+    32, 1, 0, 2, 0, 0xFFFF, 0, 0, 0, 0, 0, 0x1C, 0,
+)
+open(empty_p, "wb").write(empty.ljust(32, b"\0"))
+image = b"\xC3"
+size = 32 + len(image)
+tiny = struct.pack(
+    "<2s13H",
+    b"MZ",
+    size % 512,
+    (size + 511) // 512,
+    0, 2, 0x10, 0xFFFF, 0, 0x200, 0, 0, 0, 0x1C, 0,
+)
+open(tiny_p, "wb").write(tiny.ljust(32, b"\0") + image)
+PY
+printf '\xc3' >"$TD/x3/tiny.com"
+set +e
+"$BIN" -d "$TD/x3/empty.exe" >"$TD/x3/empty.out" 2>"$TD/x3/empty.err"
+echo $? >"$TD/x3/empty.rc"
+"$BIN" -d --no-asm-file "$TD/x3/tiny.com" >"$TD/x3/tinycom.out" 2>"$TD/x3/tinycom.err"
+echo $? >"$TD/x3/tinycom.rc"
+"$BIN" -d --no-asm-file "$TD/x3/tiny.exe" >"$TD/x3/tinymz.out" 2>"$TD/x3/tinymz.err"
+echo $? >"$TD/x3/tinymz.rc"
+set -e
+check x3_empty_image python3 - "$TD/x3" << 'PY'
+import pathlib, sys
+d = pathlib.Path(sys.argv[1])
+rc = int((d / "empty.rc").read_text().strip())
+out = (d / "empty.out").read_text(encoding="utf-8", errors="replace")
+err = (d / "empty.err").read_text(encoding="utf-8", errors="replace")
+if rc != 1:
+    print("empty image exit", rc)
+    print(out)
+    print(err)
+    sys.exit(1)
+if "listing: empty load image" not in err:
+    print("stderr missing listing: empty load image")
+    print(err)
+    sys.exit(1)
+if "Listing: image offset outside file or empty." in out:
+    print("stdout still has the old success sentence")
+    print(out)
+    sys.exit(1)
+asms = list(d.glob("*.asm"))
+if asms:
+    print("listing file created:", asms)
+    sys.exit(1)
+print("empty image ok")
+PY
+check x3_tiny_ok python3 - "$TD/x3" << 'PY'
+import pathlib, sys
+d = pathlib.Path(sys.argv[1])
+for name in ("tinycom", "tinymz"):
+    rc = int((d / f"{name}.rc").read_text().strip())
+    if rc != 0:
+        err = (d / f"{name}.err").read_text(encoding="utf-8", errors="replace")
+        out = (d / f"{name}.out").read_text(encoding="utf-8", errors="replace")
+        print(name, "exit", rc)
+        print(out[-400:])
+        print(err[-400:])
+        sys.exit(1)
+print("tiny listings ok")
+PY
+
+# X12: a whitelist-only program has nothing to verify and must not spawn.
+mkdir -p "$TD/x12"
+printf '\xb8\x00\x4c\xcd\x21' >"$TD/x12/wl.com"
+cat >"$TD/x12/uasm-wrap" << 'EOF'
+#!/bin/sh
+echo SPAWNED >&2
+exit 99
+EOF
+chmod +x "$TD/x12/uasm-wrap"
+set +e
+"$BIN" --uasm --uasm-verify --uasm-bin "$TD/x12/uasm-wrap" \
+  -o "$TD/x12/wl.asm" "$TD/x12/wl.com" \
+  >"$TD/x12/wl.out" 2>"$TD/x12/wl.err"
+echo $? >"$TD/x12/rc"
+set -e
+check x12_zero_candidates python3 - "$TD/x12" << 'PY'
+import pathlib, sys
+d = pathlib.Path(sys.argv[1])
+rc = int((d / "rc").read_text().strip())
+err = (d / "wl.err").read_text(encoding="utf-8", errors="replace")
+asm = (d / "wl.asm").read_text(encoding="utf-8", errors="replace")
+if rc != 0:
+    print("exit", rc)
+    print(err)
+    print(asm)
+    sys.exit(1)
+if "SPAWNED" in err:
+    print("assembler was spawned")
+    print(err)
+    sys.exit(1)
+if "; NOT VERIFIED (0 candidates)" not in asm:
+    print("missing zero-candidate header")
+    print(asm)
+    sys.exit(1)
+if "; verified:" in asm:
+    print("header claims verified")
+    print(asm)
+    sys.exit(1)
+print("zero candidates ok")
+PY
+
+# N4: near jbe whose 16-bit target is FFFE is outside the image.
+# 0F 86 FA FE is jbe rel16; EB 00 is an in-image short jump; C3 is ret.
+mkdir -p "$TD/n4"
+printf '\x0f\x86\xfa\xfe\xeb\x00\xc3' >"$TD/n4/out.com"
+"$BIN" -d --no-asm-file --base=0500 "$TD/n4/out.com" >"$TD/n4/out.txt" 2>"$TD/n4/out.err"
+check n4_outside_near python3 - "$TD/n4/out.txt" << 'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+if "0500:FFFE (outside image)" not in text:
+    print("missing 0500:FFFE (outside image)")
+    print(text)
+    sys.exit(1)
+if "jbe 0x4ffe" in text.lower():
+    print("still printing Capstone linear jbe 0x4ffe")
+    print(text)
+    sys.exit(1)
+short = []
+for line in text.splitlines():
+    if not re.match(r"\s+[0-9A-Fa-f]{4}\s+", line):
+        continue
+    if re.search(r"\bjbe\b", line, re.I):
+        continue
+    if re.search(r"\bjmp\b", line, re.I):
+        short.append(line)
+if len(short) != 1:
+    print("expected one in-image short jump, got", short)
+    print(text)
+    sys.exit(1)
+if "(outside image)" in short[0]:
+    print("in-image short jump marked outside:", short[0])
+    sys.exit(1)
+print("outside near ok")
+PY
 
 echo "---"
 echo "passed=$pass failed=$fail"

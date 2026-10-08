@@ -221,7 +221,7 @@ static inline void dext_set_payload_from_nested_mz(const std::vector<uint8_t>& d
         return;
     MZHeader nh{};
     std::memcpy(&nh, data.data() + nested_off, sizeof(nh));
-    if (nh.signature != MZ_SIGNATURE)
+    if (!mz_signature_ok(nh.signature))
         return;
     const size_t hdr = static_cast<size_t>(nh.header_size) * 16u;
     if (hdr == 0 || nested_off + hdr > data.size())
@@ -252,7 +252,7 @@ static inline DosExtenderReport dos_extender_analyze(const std::vector<uint8_t>&
                                                      const MZHeader& header)
 {
     DosExtenderReport rep;
-    if (data.size() < sizeof(MZHeader) || header.signature != MZ_SIGNATURE)
+    if (data.size() < sizeof(MZHeader) || !mz_signature_ok(header.signature))
         return rep;
 
     const size_t declared = dext_mz_declared_size(header);

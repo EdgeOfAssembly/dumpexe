@@ -112,13 +112,19 @@ static inline DxWriteResult dx_write_unpacked_file(const std::string& path,
 /**
  * @brief Multi-pass listing of an unpacked image.
  *
+ * The `_UNPACKED` file is written by the caller. This function only lists.
+ * An MZ load image over @c opts.maxImageBytes, or a COM image that
+ * @c com_listing_image would build over that cap, prints the load-image
+ * error and does not disassemble. @c listing_run failure is not a cap failure.
+ *
  * @param opts Options for the packed run. @c outputPath is not used.
  *             Repack stays off so the unpacked image is not rewritten.
  * @param bin_path Path passed as the listing source name. Its stem selects
  *                 `<stem>_UNPACKED.asm`.
  * @param image Unpacked file bytes.
+ * @return false when the computed listing image is over the cap.
  */
-static inline void dx_list_unpacked(const Options& opts,
+static inline bool dx_list_unpacked(const Options& opts,
                                     const std::string& bin_path,
                                     const std::vector<uint8_t>& image)
 {
@@ -127,19 +133,30 @@ static inline void dx_list_unpacked(const Options& opts,
     uopts.writeRepack = false;
     uopts.jsonOut = false;
 
-    if (opts.showDisasm || opts.showAll)
+    auto banner = [&]()
     {
-        std::cout << "=== UNPACKED ===\n";
-    }
+        if (opts.showDisasm || opts.showAll)
+        {
+            std::cout << "=== UNPACKED ===\n";
+        }
+    };
 
     if (image.size() >= sizeof(MZHeader))
     {
         MZHeader header{};
         std::memcpy(&header, image.data(), sizeof(header));
-        if (header.signature == MZ_SIGNATURE &&
+        if (mz_signature_ok(header.signature) &&
             validate_header(header, static_cast<int64_t>(image.size())))
         {
             const ExeSizes sizes = calculate_sizes(header, static_cast<int64_t>(image.size()));
+            const uint64_t mz_image_bytes = (sizes.loadImageSize > 0)
+                ? static_cast<uint64_t>(sizes.loadImageSize)
+                : 0ull;
+            if (!load_image_within_cap(mz_image_bytes, opts.maxImageBytes))
+            {
+                return false;
+            }
+            banner();
             size_t cfg_file_off = 0;
             size_t cfg_len = 0;
             uint16_t cs_seg = 0;
@@ -156,43 +173,57 @@ static inline void dx_list_unpacked(const Options& opts,
             cfg_set_entry_frame_override(0);
             if (listing_rc != 0)
             {
-                return;
+                return true;
             }
-            return;
+            return true;
         }
     }
 
+    // Unpacked COM listings have always been built with has_psp false, which
+    // prefixes 0x100. Cap that length before the vector is allocated.
+    const uint64_t com_image_bytes =
+        static_cast<uint64_t>(image.size()) + 0x100ull;
+    if (!load_image_within_cap(com_image_bytes, opts.maxImageBytes))
+    {
+        return false;
+    }
+    banner();
     std::vector<uint8_t> com_image;
     com_listing_image(image, false, com_image);
     if (listing_run(com_image, 0, com_image.size(), COM_ENTRY_IP, uopts.loadBase,
-                    uopts.loadBase, uopts, bin_path, nullptr, nullptr, true, false) != 0)
+                    uopts.loadBase, uopts, bin_path, nullptr, nullptr, true,
+                    false) != 0)
     {
-        return;
+        return true;
     }
+    return true;
 }
 
 /**
  * @brief After a packed -d/-a listing, unpack and list when the packer is known.
  *
- * Failure prints one stderr line and leaves any packed listing in place.
- * `--json` and an empty packer name do nothing.
+ * Failure to unpack prints one stderr line and leaves any packed listing
+ * in place. That path, `--json`, and an empty packer name are not fatal.
+ * A load-image cap failure while listing the unpacked bytes is fatal.
+ * Writing the `_UNPACKED` file is not capped.
  *
  * @param opts Parsed options.
  * @param fileData Original file bytes.
  * @param packer Structural name. Empty means do not unpack.
+ * @return false only when the unpacked listing image is over the cap.
  */
-static inline void dx_after_packed_listing(const Options& opts,
+static inline bool dx_after_packed_listing(const Options& opts,
                                            const std::vector<uint8_t>& fileData,
                                            const std::string& packer)
 {
     // --uasm may decode in memory. Side files need -d or -a as well.
     if (opts.jsonOut || !(opts.showDisasm || opts.showAll))
     {
-        return;
+        return true;
     }
     if (!opts.toolchainDetect || !dx_packer_supported(packer))
     {
-        return;
+        return true;
     }
 
     dx_unpack_out unpacked{};
@@ -201,7 +232,7 @@ static inline void dx_after_packed_listing(const Options& opts,
     {
         std::cerr << "dumpexe: unpack failed (" << packer << ")\n";
         dx_unpack_free(&unpacked);
-        return;
+        return true;
     }
 
     const bool mz = unpacked.size >= 2 &&
@@ -215,11 +246,11 @@ static inline void dx_after_packed_listing(const Options& opts,
     // -o - is stdout only: no .asm and no _UNPACKED image. Both listings
     // still go to stdout (the packed one already did), then one separator.
     const bool stdout_only = (opts.outputPath == "-");
-    auto list_unpacked = [&](bool write_asm)
+    auto list_unpacked = [&](bool write_asm) -> bool
     {
         Options u = opts;
         u.writeAsmFile = write_asm;
-        dx_list_unpacked(u, bin_path, image);
+        return dx_list_unpacked(u, bin_path, image);
     };
     if (stdout_only)
     {
@@ -227,9 +258,9 @@ static inline void dx_after_packed_listing(const Options& opts,
         // stdout when -d/-a asked for one. --uasm -o - is UASM source only.
         if (!opts.uasm && (opts.showDisasm || opts.showAll))
         {
-            list_unpacked(false);
+            return list_unpacked(false);
         }
-        return;
+        return true;
     }
 
     const DxWriteResult wrote = dx_write_unpacked_file(bin_path, image.data(), image.size());
@@ -237,8 +268,7 @@ static inline void dx_after_packed_listing(const Options& opts,
     {
         // The unpack buffer is complete. A create error is not an unpack failure.
         std::cerr << "dumpexe: cannot write '" << bin_path << "'\n";
-        list_unpacked(false);
-        return;
+        return list_unpacked(false);
     }
     if (wrote == DxWriteResult::Kept)
     {
@@ -248,11 +278,10 @@ static inline void dx_after_packed_listing(const Options& opts,
         {
             std::cerr << "listing: refuse to overwrite '" << asm_path << "' (kept)\n";
         }
-        list_unpacked(false);
-        return;
+        return list_unpacked(false);
     }
 
-    list_unpacked(opts.writeAsmFile);
+    return list_unpacked(opts.writeAsmFile);
 }
 
 #endif

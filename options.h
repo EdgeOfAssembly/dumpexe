@@ -154,6 +154,9 @@ struct Options {
     size_t cfgInterestingMax = 80;  ///< max interesting blocks to expand
     size_t cfgLoadDepth = 6;        ///< reverse-pred walk depth for load graph
     size_t cfgLoadMaxSeeds = 40;    ///< max I/O seeds to expand in load graph
+    /// Computed MZ/COM load-image cap in bytes (--max-image=N).
+    /// Default is 1 MiB + 64 KiB. The parser rejects 0.
+    uint64_t maxImageBytes = 1114112;
 
     /// Parse a hex number (optional 0x / h suffix) into u16.
     static bool parse_u16_hex(std::string_view s, uint16_t& out) {
@@ -173,6 +176,43 @@ struct Options {
             out = static_cast<uint16_t>(v);
             return true;
         } catch (...) {
+            return false;
+        }
+    }
+
+    /**
+     * @brief Parse a decimal --max-image byte count.
+     *
+     * @param text Digits only. Empty, non-decimal, and 0 fail.
+     * @param out  Set when @p text is an integer >= 1.
+     * @return false when std::stoull rejects @p text or the value is 0.
+     */
+    static bool parse_max_image_bytes(std::string_view text, uint64_t& out)
+    {
+        if (text.empty())
+        {
+            return false;
+        }
+        for (unsigned char c : text)
+        {
+            if (c < '0' || c > '9')
+            {
+                return false;
+            }
+        }
+        try
+        {
+            std::size_t idx = 0;
+            const unsigned long long v = std::stoull(std::string(text), &idx, 10);
+            if (idx != text.size() || v < 1ull)
+            {
+                return false;
+            }
+            out = static_cast<uint64_t>(v);
+            return true;
+        }
+        catch (...)
+        {
             return false;
         }
     }
@@ -624,6 +664,28 @@ struct Options {
                     return false;
                 }
                 simulate = true;
+            } else if (arg == "--max-image" || arg.starts_with("--max-image=")) {
+                std::string_view num;
+                if (arg.starts_with("--max-image="))
+                {
+                    num = arg.substr(std::string_view("--max-image=").size());
+                }
+                else
+                {
+                    if (i + 1 >= argc)
+                    {
+                        std::cerr << "Error: Invalid --max-image value\n";
+                        return false;
+                    }
+                    num = argv[++i];
+                }
+                uint64_t parsed = 0;
+                if (!parse_max_image_bytes(num, parsed))
+                {
+                    std::cerr << "Error: Invalid --max-image value\n";
+                    return false;
+                }
+                maxImageBytes = parsed;
             } else if (arg[0] != '-' && filename.empty()) {
                 filename = std::string(arg);
             } else {
@@ -787,7 +849,9 @@ static inline void show_usage(const char* progname) {
         "  --dump=seg:off:len  Hex-dump memory on each breakpoint hit\n"
         "                        seg = hex or cs|ds|es|ss  (len hex, default 40h)\n\n"
         "Supported file formats (detected from file content):\n"
-        "  MZ EXE   — first two bytes are 'MZ' (0x5A4D); pure DOS image\n"
+        "  MZ EXE   — first two bytes are 'MZ' (0x5A4D) or 'ZM' (0x4D5A); pure DOS image\n"
+        "             Load image cap is 1114112 bytes (1 MiB + 64 KiB); --max-image=N raises it.\n"
+        "             An empty load image is an error.\n"
         "  NE EXE   — MZ stub with e_lfanew → 'NE' (Windows 3.x / Win16)\n"
         "  .SYS     — DOS device driver (last-in-chain FFFFFFFFh, or a chained header)\n"
         "  .COM     — all other files (fallback); PSP presence auto-detected\n\n"

@@ -6,7 +6,7 @@ A comprehensive command-line utility for analyzing MS-DOS 16-bit binary files: M
 
 ## Features
 
-- **MZ EXE / COM / SYS**: Header decode, relocations, entry, memory requirements
+- **MZ EXE / COM / SYS**: Header decode, relocations, entry, memory requirements. `MZ` and `ZM` are both EXE. An empty load image is an error. The computed MZ/COM load image, including an unpacked listing, is capped at 1114112 bytes (1 MiB + 64 KiB); `--max-image=N` raises it. NE `-a` disassembles each distinct CODE segment once and stops at min(16 MiB, twice the file size).
 - **Multi-pass listing** (`-d` and `-a`): `func_*` labels, INT notes, call/jmp rewrite; default write `<stem>.asm`
 - **UASM source** (`--uasm`, enable-only): no address column. COM round-trips with `uasm -bin`. An EXE load image round-trips with `uasm -mz`, which writes a 32-byte MZ header (0 relocations, CS:IP and SS:SP 0:0) plus warnings A4205/A4204 and then the payload only. `e_cparhdr * 16` is that header size, not the load image. Prefer `uasm -bin` and `bin2exe --header` to restore the original header. A multi-segment listing ends with a bare `end`. Past 64 KiB is decoded when reached through the entry, near wrap, or a decoded relocation-pinned far call. `--uasm` does not spawn an assembler (header `; NOT VERIFIED`). `--uasm-verify` (enable-only, requires `--uasm`) assembles distinct candidate lines with `--uasm-bin`, else `$DUMPEXE_UASM`, else `uasm` on `PATH`. PATH search ignores an empty or relative directory. A branch whose operand is a number is left as `db` and is not offered. A clean batch is one assemble and the header says `; verified: uasm … at PATH`. A line the assembler rejects is dropped, the rest are assembled again, and the header says `; NOT VERIFIED (assembler rejected N candidates)`. When recovery stops with candidates still queued, the header says rejected K, unverified M. `--uasm` does not write `_UNPACKED` files unless `-d` or `-a` is also set.
 - **Unpack** on `-d` and `-a` for Microsoft EXEPACK, LZEXE 0.91, LZEXE 0.90, PKLITE, DIET, and LHarc. Writes `<stem>_UNPACKED.EXE` (or `.COM` when the image is not MZ) and `<stem>_UNPACKED.asm`. An existing `.asm`, `.repack.exe`, or `_UNPACKED` output is kept. `-o -` writes none of those files. `--json` and `--no-toolchain` skip unpack. There is no `--unpack` switch.
@@ -82,7 +82,7 @@ File format is detected automatically from content:
 
 | Format | Signature | Detection rule |
 |--------|-----------|----------------|
-| MZ EXE | `MZ` | First two bytes are `4Dh 5Ah` |
+| MZ EXE | `MZ` or `ZM` | First two bytes are `4Dh 5Ah` or `5Ah 4Dh` |
 | `.SYS`  | `FFFFFFFF` | First four bytes are `FFh FFh FFh FFh` |
 | `.COM`  | *(any)* | Fallback — all other DOS binaries |
 
@@ -221,7 +221,7 @@ Dynamic execution trace:
 ## Technical Details
 
 ### MZ EXE Format
-- Signature: `MZ` (0x5A4D little-endian)
+- Signature: `MZ` (0x5A4D little-endian) or `ZM` (0x4D5A little-endian)
 - 28-byte minimum header
 - Header sizes in paragraphs (16-byte units)
 - File size: `num_blocks × 512` when `final_len == 0` (last page full); otherwise `((num_blocks-1) × 512) + final_len`

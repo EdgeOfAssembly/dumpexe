@@ -141,7 +141,7 @@ TEST_CASE("header copy rejects a bad EXE", "[header]")
     std::vector<std::uint8_t> tiny(32u, 0);
     tiny[0] = static_cast<std::uint8_t>('M');
     tiny[1] = static_cast<std::uint8_t>('Z');
-    tiny[8] = 1;
+    /* e_cparhdr == 0 is not a header. */
     REQUIRE(bin2exe::copy_mz_header(tiny, tiny.size(), image, true).code ==
             bin2exe::status::header_too_small);
 
@@ -170,6 +170,68 @@ TEST_CASE("header copy rejects a bad EXE", "[header]")
             bin2exe::status::header_too_large);
 
     REQUIRE(bin2exe::copy_mz_header(zm, zm.size(), {}, true).code == bin2exe::status::empty_image);
+}
+
+TEST_CASE("16-byte MZ header is accepted only when relocations fit", "[header]")
+{
+    const std::uint8_t image[] = {0x90, 0x90, 0xC3};
+
+    std::vector<std::uint8_t> hdr(16u, 0);
+    hdr[0] = static_cast<std::uint8_t>('M');
+    hdr[1] = static_cast<std::uint8_t>('Z');
+    hdr[8] = 1; /* e_cparhdr == 1, e_crlc stays 0 */
+    hdr.insert(hdr.end(), image, image + sizeof(image));
+    const bin2exe::build_result built =
+        bin2exe::copy_mz_header(hdr, hdr.size(), image, true);
+    REQUIRE(built.code == bin2exe::status::ok);
+    REQUIRE(built.bytes.size() == hdr.size());
+    REQUIRE(built.bytes[8] == 1);
+    REQUIRE(built.bytes[16] == 0x90);
+    REQUIRE(built.bytes[18] == 0xC3);
+
+    /* e_crlc == 1 and e_lfarlc such that the 4-byte reloc does not fit. */
+    std::vector<std::uint8_t> past(28u, 0);
+    past[0] = static_cast<std::uint8_t>('M');
+    past[1] = static_cast<std::uint8_t>('Z');
+    past[6] = 1;     /* e_crlc */
+    past[8] = 1;     /* e_cparhdr */
+    past[24] = 0x1C; /* e_lfarlc = 28; 28 + 4 > 16 */
+    REQUIRE(bin2exe::copy_mz_header(past, past.size(), image, true).code ==
+            bin2exe::status::header_too_small);
+
+    /* Same claim, but the table ends on byte 16. */
+    std::vector<std::uint8_t> fits(28u, 0);
+    fits[0] = static_cast<std::uint8_t>('M');
+    fits[1] = static_cast<std::uint8_t>('Z');
+    fits[6] = 1;
+    fits[8] = 1;
+    fits[24] = 12; /* 12 + 4 == 16 */
+    const bin2exe::build_result fitted =
+        bin2exe::copy_mz_header(fits, fits.size(), image, false);
+    REQUIRE(fitted.code == bin2exe::status::ok);
+    REQUIRE(fitted.bytes.size() == 19u);
+
+    /* A 32-byte header still ignores relocation fit. */
+    std::vector<std::uint8_t> wide(32u, 0);
+    wide[0] = static_cast<std::uint8_t>('M');
+    wide[1] = static_cast<std::uint8_t>('Z');
+    wide[6] = 1;
+    wide[8] = 2;
+    wide[24] = 0x40; /* e_lfarlc past the header; today's rule accepts it */
+    REQUIRE(bin2exe::copy_mz_header(wide, wide.size(), image, false).code ==
+            bin2exe::status::ok);
+
+    /* Claimed 16-byte header, file shorter than that: truncated, not too-small. */
+    std::vector<std::uint8_t> short_file(12u, 0);
+    short_file[0] = static_cast<std::uint8_t>('M');
+    short_file[1] = static_cast<std::uint8_t>('Z');
+    short_file[8] = 1;
+    REQUIRE(bin2exe::copy_mz_header(short_file, short_file.size(), image, true).code ==
+            bin2exe::status::header_truncated);
+
+    const bin2exe::build_result wrapped = bin2exe::wrap_com(image);
+    REQUIRE(wrapped.code == bin2exe::status::ok);
+    REQUIRE(le16(wrapped.bytes, 8) == 2);
 }
 
 TEST_CASE("header copy appends a matching tail and skips a non-prefix", "[header]")

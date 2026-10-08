@@ -215,15 +215,39 @@ static inline void listing_collect_symbols(const CfgGraph& g,
 // Operand rewrite (pass 4 at emit)
 //=============================================================================
 
+/**
+ * @brief Human-listing operand for a near target outside the load image.
+ *
+ * @param load_cs  Load segment (`--base` / graph CS). Not a paragraph frame.
+ * @param seg_base Paragraph frame of the branch (`cs * 16`). May be negative.
+ * @param linear   Wrapped target `frame + uint16 offset`. Not an in-image IP.
+ * @return `SSSS:OOOO (outside image)`, four uppercase hex digits each.
+ */
+static inline std::string listing_outside_near_op(uint16_t load_cs,
+                                                  int32_t seg_base,
+                                                  CfgLin linear)
+{
+    const uint16_t off = cfg_ip16(linear, seg_base);
+    // Frames are paragraph-aligned, including a negative CS*16.
+    const int32_t seg = static_cast<int32_t>(load_cs) + (seg_base / 16);
+    return std::format("{:04X}:{:04X} (outside image)",
+                       static_cast<uint16_t>(seg),
+                       off);
+}
+
 /// Replace immediate near targets in Capstone op text with symbol when possible.
 /// @param ip_numeric When true (human listing), a branch with no label is printed
 ///        as the segment IP (`0x14d`), the same base as the address column — not
-///        Capstone's CS*16+IP linear form. JWASM/TP export leaves this false.
+///        Capstone's CS*16+IP linear form. A near target outside the load image
+///        is `SSSS:OOOO (outside image)`. JWASM/TP export leaves this false.
+/// @param load_cs Load segment recorded on the CFG (`--base`). Used only for the
+///        outside-image form. Callers that are not a human listing pass 0.
 static inline std::string listing_rewrite_ops(std::string_view mnem,
                                               std::string_view op_str,
                                               const CfgBlock& blk,
                                               const std::map<CfgLin, std::string>& sym,
-                                              bool ip_numeric = false)
+                                              bool ip_numeric = false,
+                                              uint16_t load_cs = 0)
 {
     // Prefer CFG edge targets for call / uncond jmp / table
     CfgLin edge_tgt = 0;
@@ -257,6 +281,26 @@ static inline std::string listing_rewrite_ops(std::string_view mnem,
     std::string op(op_str);
     if (op.find('[') != std::string::npos)
         return op;
+
+    // Near target whose linear is outside the image. has_target is false and
+    // to_ip is the wrapped linear (0 means the edge was synthetic, not a
+    // computed near immediate). Far text and in-image labels stay below.
+    if (ip_numeric && listing_is_near_xfer(m) && op.find(':') == std::string::npos)
+    {
+        for (const CfgEdge& e : blk.outs)
+        {
+            if (e.has_target || e.to_ip == 0)
+            {
+                continue;
+            }
+            if (e.kind != CfgEdgeKind::Call && e.kind != CfgEdgeKind::Jump &&
+                e.kind != CfgEdgeKind::Table && e.kind != CfgEdgeKind::CondTrue)
+            {
+                continue;
+            }
+            return listing_outside_near_op(load_cs, blk.seg_base, e.to_ip);
+        }
+    }
 
     // Human listing: labels when the target is known, else the IP itself.
     if (ip_numeric && have_edge && listing_is_near_xfer(m) &&
@@ -503,7 +547,7 @@ static inline std::string listing_emit_text(const CfgGraph& g,
                 }
             }
 
-            std::string rops = listing_rewrite_ops(mlow, ops, b, sym, true);
+            std::string rops = listing_rewrite_ops(mlow, ops, b, sym, true, g.cs_seg);
             std::string far_note;
             if (cfg_is_far_xfer(mlow))
             {
@@ -2943,7 +2987,8 @@ static inline std::string listing_uasm_stats_percent(size_t part, size_t whole)
  * @param image     Walked byte count (`emit_lo` through `image.size()`).
  * @param decoded   Sum of in-window CFG instruction sizes.
  * @param text_n    Sum of lengths of slices emitted as instructions.
- * @param verified  True when --uasm-verify ran with an assembler.
+ * @param verified  True only when --uasm-verify accepted every offered
+ *                  candidate. Zero candidates is not verified.
  */
 static inline void listing_uasm_print_stats(std::string_view listing,
                                            size_t image,
@@ -3425,7 +3470,10 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
     // Default --uasm does not spawn. --uasm-verify batches every unique line.
     // One rejected candidate is dropped and retried; it must not mark the
     // whole listing verified. A numeric branch operand is not offered.
+    // Zero candidates after the assembler path resolved is not verified and
+    // does not spawn.
     bool verified_ok = false;
+    bool verify_no_cands = false;
     size_t verify_rejected = 0;
     size_t verify_unverified = 0;
     std::string verified_path;
@@ -3465,7 +3513,7 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
             }
             if (cands.empty())
             {
-                verified_ok = true;
+                verify_no_cands = true;
             }
             else
             {
@@ -3908,54 +3956,42 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
             equ_hex(at_equ.org, true)));
     }
     // A sized branch to a label defined on a slice in another sN segment is
-    // A2170. Equs are already in failed_equ. Defined labels were skipped above.
-    // The loop below is the only demotion, so n_insns drops once.
+    // A2170. Equs and undefined names are already in failed_equ and demote
+    // every use. A defined label demotes only the slice whose segment is not
+    // lab_seg, so a same-segment sized use of that name stays. This is the
+    // only demotion, so n_insns drops once per demoted slice.
+    std::map<std::string, size_t, std::less<>> lab_seg;
+    for (size_t si = 0; si < segs.size(); ++si)
     {
-        std::map<std::string, size_t, std::less<>> lab_seg;
-        for (size_t si = 0; si < segs.size(); ++si)
+        for (const Slice& sl : segs[si].slices)
         {
-            for (const Slice& sl : segs[si].slices)
+            for (const std::string& lab : sl.labels)
             {
-                for (const std::string& lab : sl.labels)
-                {
-                    lab_seg.emplace(lab, si);
-                }
-            }
-        }
-        for (size_t si = 0; si < segs.size(); ++si)
-        {
-            for (const Slice& sl : segs[si].slices)
-            {
-                if (!sl.sized_branch || sl.branch_sym.empty())
-                {
-                    continue;
-                }
-                const auto found = lab_seg.find(sl.branch_sym);
-                if (found != lab_seg.end() && found->second != si)
-                {
-                    failed_equ.insert(sl.branch_sym);
-                }
+                lab_seg.emplace(lab, si);
             }
         }
     }
-    if (!failed_equ.empty())
+    for (size_t si = 0; si < segs.size(); ++si)
     {
-        for (Seg& seg : segs)
+        for (Slice& sl : segs[si].slices)
         {
-            for (Slice& sl : seg.slices)
+            if (!sl.sized_branch || sl.branch_sym.empty())
             {
-                if (!sl.sized_branch || failed_equ.count(sl.branch_sym) == 0)
-                {
-                    continue;
-                }
-                sl.insn = false;
-                sl.sized_branch = false;
-                sl.text.clear();
-                sl.branch_sym.clear();
-                if (n_insns > 0)
-                {
-                    --n_insns;
-                }
+                continue;
+            }
+            const auto found = lab_seg.find(sl.branch_sym);
+            const bool cross = found != lab_seg.end() && found->second != si;
+            if (failed_equ.count(sl.branch_sym) == 0 && !cross)
+            {
+                continue;
+            }
+            sl.insn = false;
+            sl.sized_branch = false;
+            sl.text.clear();
+            sl.branch_sym.clear();
+            if (n_insns > 0)
+            {
+                --n_insns;
             }
         }
     }
@@ -3996,6 +4032,10 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
         out << std::format(
             "; NOT VERIFIED (assembler rejected {} candidates)\n",
             verify_rejected);
+    }
+    else if (verify_no_cands)
+    {
+        out << "; NOT VERIFIED (0 candidates)\n";
     }
     else
     {
@@ -4559,9 +4599,8 @@ static inline int listing_run(const std::vector<uint8_t>& fileData,
                           uasm_com_psp, human_ptr, entry_in_window, relocs, cfg_out,
                           entry_seg_base, &uasm_status))
     {
-        if (!opts.jsonOut && !opts.uasm_stdout_only())
-            std::cout << "\nListing: image offset outside file or empty.\n";
-        return 0;
+        std::cerr << "listing: empty load image\n";
+        return 1;
     }
     const int delivered = listing_deliver(opts, input_path, text, n_procs, n_insns, kind, human);
 
