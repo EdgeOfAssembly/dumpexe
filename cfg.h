@@ -921,9 +921,12 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             }
 
             // The first instruction of this walk may cover an interior
-            // target. A later instruction must not. Opcode 00 is a 2-byte
-            // add, so a zero hole would otherwise claim the next leader.
-            if (linear != start && insn->size > 1)
+            // target. Only a later opcode-00 instruction stops: opcode 00
+            // is a 2-byte add that would swallow the next leader. Other
+            // opcodes do not stop. Stopping on every overlap drops real
+            // instructions that merely cover a speculative INT-nearby
+            // seed (RG6).
+            if (linear != start && insn->size > 1 && insn->bytes[0] == 0x00)
             {
                 bool covers_leader = false;
                 for (uint16_t k = 1; k < insn->size; ++k)
@@ -1446,9 +1449,13 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                 break;
             }
 
-            // Same as the trusted walk: do not let a later instruction
-            // cover a queued leader. The block's first instruction may.
-            if (linear != L && insn->size > 1)
+            // Same as the trusted walk. The block's first instruction may
+            // cover an interior target. Only a later opcode-00 instruction
+            // stops: opcode 00 is a 2-byte add that would swallow the next
+            // leader. Other opcodes do not stop. Stopping on every overlap
+            // drops real instructions that merely cover a speculative
+            // INT-nearby seed (RG6).
+            if (linear != L && insn->size > 1 && insn->bytes[0] == 0x00)
             {
                 bool covers_leader = false;
                 for (uint16_t k = 1; k < insn->size; ++k)

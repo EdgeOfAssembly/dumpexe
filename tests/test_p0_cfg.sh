@@ -82,6 +82,14 @@ def write_sparse(path, size, prefix):
 # ret then eight 00 bytes. The hole is not code.
 (td / "retz.com").write_bytes(bytes.fromhex("c30000000000000000"))
 
+# RG6: cmp at 0117 overlaps a speculative INT seed at site-8 (0118).
+(td / "rg6.com").write_bytes(bytes.fromhex(
+    "cd20" + ("00" * 14) +
+    "0655b825038ed8833e900000750433c0cd20833e900001750633c0b401cd21c3"))
+# RG6: call to 0105. The fall-through walk starts on nop. A later
+# opcode 00 at 0104 must not swallow the ret leader.
+(td / "zhole.com").write_bytes(bytes.fromhex("e802009000c3"))
+
 # N-test RG4: CS=0100h IP=0, header 32 bytes, minalloc 0x10.
 # INT 21h at linear 0x200 sits under the entry frame. Frame 0 must cover it.
 rg4 = bytearray(0x1100)
@@ -306,6 +314,47 @@ print("ret hole", len(rows))
 PY
 }
 
+# RG6: a real insn that covers a speculative INT-nearby seed stays decoded.
+# Address 0118 must not be its own row. Do not search for 3E90.
+case_rg6_intseed_cover() {
+  dump rg6 || return 1
+  local out="$TD/rg6.out"
+  has_f "$out" 833E900001 || return 1
+  has_f "$out" B401 || return 1
+  python3 - "$out" << 'PY'
+import re, sys
+text = open(sys.argv[1], errors="replace").read()
+rows = re.findall(r"^\s+([0-9A-Fa-f]+)\s+([0-9A-F]+)\s+(\S+)", text, re.M)
+if not rows:
+    sys.exit("no decoded rows:\n" + text)
+hit = [r for r in rows if r[0].upper() == "0117" and r[1] == "833E900000"]
+if not hit:
+    sys.exit("no row 0117 833E900000:\n" + text)
+bad = [r for r in rows if r[0].upper() == "0118"]
+if bad:
+    sys.exit("decoded row at 0118: " + " ".join(bad[0]) + "\n" + text)
+print("rg6 intseed", len(rows))
+PY
+}
+
+# RG6: a later opcode 00 must not swallow the ret leader.
+case_rg6_zero_hole() {
+  dump zhole || return 1
+  local out="$TD/zhole.out"
+  lacks_f "$out" 00C3 || return 1
+  python3 - "$out" << 'PY'
+import re, sys
+text = open(sys.argv[1], errors="replace").read()
+rows = re.findall(r"^\s+([0-9A-Fa-f]+)\s+([0-9A-F]+)\s+(\S+)", text, re.M)
+if not rows:
+    sys.exit("no decoded rows:\n" + text)
+hit = [r for r in rows if r[0].upper() == "0105" and r[2].lower() == "ret"]
+if not hit:
+    sys.exit("no ret at 0105:\n" + text)
+print("rg6 zero hole", " ".join(hit[0]))
+PY
+}
+
 # Moved from test_p0_linear.sh. Same assertion. Does not need uasm.
 case_rg4_int_below_frame() {
   "$BIN" --json --no-asm-file --no-repack "$TD/rg4.exe" \
@@ -388,6 +437,8 @@ check delta0_entry case_delta0_entry
 check call_fallthrough_zeros case_call_fallthrough_zeros
 check nop_after_four_zeros case_nop_after_four_zeros
 check ret_zero_hole case_ret_zero_hole
+check rg6_intseed_cover case_rg6_intseed_cover
+check rg6_zero_hole case_rg6_zero_hole
 check rg4_int_below_frame case_rg4_int_below_frame
 check max_image case_max_image
 
