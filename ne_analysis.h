@@ -17,9 +17,12 @@
 
 #include <cstdint>
 #include <cstring>
+#include <format>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 //=============================================================================
@@ -403,22 +406,86 @@ static inline void ne_print_resources(const std::vector<uint8_t>& data,
     }
 }
 
+/**
+ * @brief File window @c ne_disasm_segment passes to disassemble.
+ *
+ * DATA segments, sector 0, and offsets past EOF have no window. @p flen is
+ * the length argument disassemble receives, clamped to the bytes on disk.
+ *
+ * @param data File bytes.
+ * @param ne Parsed NE image.
+ * @param seg_index_0based Segment table index.
+ * @param foff Set to the file offset when the return is true.
+ * @param flen Set to the decoded length when the return is true.
+ * @return false when this segment is not disassembled.
+ */
+static inline bool ne_code_disasm_window(const std::vector<uint8_t>& data,
+                                         const NEParsed& ne,
+                                         size_t seg_index_0based,
+                                         size_t& foff,
+                                         size_t& flen)
+{
+    foff = 0;
+    flen = 0;
+    if (seg_index_0based >= ne.segs.size())
+    {
+        return false;
+    }
+    const NESegment& seg = ne.segs[seg_index_0based];
+    if (seg.flags & NE_SEG_DATA)
+    {
+        return false;
+    }
+    foff = ne_seg_file_offset(ne.hdr, seg);
+    flen = ne_seg_file_length(seg);
+    if (foff == 0 || foff >= data.size())
+    {
+        return false;
+    }
+    if (foff + flen > data.size())
+    {
+        flen = data.size() - foff;
+    }
+    return true;
+}
+
+/// @brief Byte budget for the NE -a CODE-segment loop.
+/// @param file_size On-disk size. The entry preview is not charged.
+/// @return min(16 MiB, max(2 * file_size, 1)).
+static inline uint64_t ne_a_disasm_budget(uint64_t file_size)
+{
+    constexpr uint64_t kCap = 16ull * 1024ull * 1024ull;
+    uint64_t twice = file_size;
+    if (file_size > (UINT64_MAX / 2ull))
+    {
+        twice = UINT64_MAX;
+    }
+    else
+    {
+        twice = file_size * 2ull;
+    }
+    if (twice < 1ull)
+    {
+        twice = 1ull;
+    }
+    if (twice > kCap)
+    {
+        return kCap;
+    }
+    return twice;
+}
+
 /// Disassemble one CODE segment for its on-disk length, not a preview cap.
 static inline void ne_disasm_segment(const std::vector<uint8_t>& data,
                                      const NEParsed& ne,
                                      size_t seg_index_0based)
 {
-    if (seg_index_0based >= ne.segs.size())
+    size_t foff = 0;
+    size_t flen = 0;
+    if (!ne_code_disasm_window(data, ne, seg_index_0based, foff, flen))
+    {
         return;
-    const NESegment& seg = ne.segs[seg_index_0based];
-    if (seg.flags & NE_SEG_DATA)
-        return;
-    const size_t foff = ne_seg_file_offset(ne.hdr, seg);
-    size_t flen = ne_seg_file_length(seg);
-    if (foff == 0 || foff >= data.size())
-        return;
-    if (foff + flen > data.size())
-        flen = data.size() - foff;
+    }
 
     std::cout << "\n=== Disassembly CODE segment " << (seg_index_0based + 1)
               << " (file " << std::hex << foff << "h, decoded "
@@ -431,6 +498,77 @@ static inline void ne_disasm_segment(const std::vector<uint8_t>& data,
     const uint16_t cs = static_cast<uint16_t>(seg_index_0based + 1);
     // flen starts at foff, which is IP 0 for this segment.
     disassemble(data, foff, cs, /*ip=*/0, o, flen);
+}
+
+/**
+ * @brief Disassemble CODE segments for -a, deduped and budget-capped.
+ *
+ * The entry preview is not part of this loop and does not spend the budget.
+ * DATA segments are skipped. A CODE segment whose file offset and decoded
+ * length match an earlier disassembled CODE segment prints
+ * "same bytes as segment k" (k is that earlier 1-based segment index) and
+ * is not disassembled again. Its length is not added to the running sum.
+ *
+ * The budget is min(16 MiB, max(2 * file size, 1)). The sum counts bytes
+ * passed to disassemble from this loop only. When the next new segment
+ * would exceed the budget, it and every later CODE segment are not
+ * disassembled. One line "truncated: N more CODE segments" counts those
+ * remaining non-DATA segments, excluding a duplicate already reported as
+ * the same bytes.
+ *
+ * @param fileData Whole file.
+ * @param ne Parsed NE image.
+ */
+static inline void ne_disasm_all_code(const std::vector<uint8_t>& fileData,
+                                      const NEParsed& ne)
+{
+    const uint64_t budget = ne_a_disasm_budget(static_cast<uint64_t>(fileData.size()));
+    uint64_t used = 0;
+    std::map<std::pair<size_t, size_t>, size_t> seen;
+    bool stop = false;
+    size_t more = 0;
+    for (size_t i = 0; i < ne.segs.size(); ++i)
+    {
+        if (ne.segs[i].flags & NE_SEG_DATA)
+        {
+            continue;
+        }
+        size_t foff = 0;
+        size_t flen = 0;
+        const bool have = ne_code_disasm_window(fileData, ne, i, foff, flen);
+        if (have)
+        {
+            const std::pair<size_t, size_t> key{foff, flen};
+            const auto it = seen.find(key);
+            if (it != seen.end())
+            {
+                std::cout << std::format("same bytes as segment {}\n", it->second);
+                continue;
+            }
+        }
+        if (stop)
+        {
+            ++more;
+            continue;
+        }
+        if (!have)
+        {
+            continue;
+        }
+        if (static_cast<uint64_t>(flen) > budget - used)
+        {
+            stop = true;
+            ++more;
+            continue;
+        }
+        seen.emplace(std::pair<size_t, size_t>{foff, flen}, i + 1);
+        used += static_cast<uint64_t>(flen);
+        ne_disasm_segment(fileData, ne, i);
+    }
+    if (more > 0)
+    {
+        std::cout << std::format("truncated: {} more CODE segments\n", more);
+    }
 }
 
 //=============================================================================
@@ -523,11 +661,7 @@ static inline bool analyze_ne(const Options& opts,
         }
         if (opts.showAll)
         {
-            for (size_t i = 0; i < ne.segs.size(); ++i)
-            {
-                if (!(ne.segs[i].flags & NE_SEG_DATA))
-                    ne_disasm_segment(fileData, ne, i);
-            }
+            ne_disasm_all_code(fileData, ne);
         }
     }
 

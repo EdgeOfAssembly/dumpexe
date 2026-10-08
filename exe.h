@@ -3,7 +3,8 @@
 // License: GPLv2 | Commercial (contact author)
 //
 // Pure data definitions: packed structs for the MZ EXE header and relocation
-// table entries. No functions, no register state, no formatting.
+// table entries. No functions other than the constexpr predicate
+// mz_signature_ok. No register state, no formatting.
 
 #ifndef EXE_H
 #define EXE_H
@@ -16,6 +17,15 @@
 
 /// MZ executable signature ('MZ' in little-endian: 0x4D='M', 0x5A='Z')
 inline constexpr uint16_t MZ_SIGNATURE = 0x5A4D;
+
+/// ZM executable signature ('ZM' in little-endian). Accepted as MZ.
+inline constexpr uint16_t ZM_SIGNATURE = 0x4D5A;
+
+/// @brief True for the little-endian MZ or ZM executable magic.
+inline constexpr bool mz_signature_ok(uint16_t sig)
+{
+    return sig == MZ_SIGNATURE || sig == ZM_SIGNATURE;
+}
 
 //=============================================================================
 // MS-DOS MZ EXE Format Structures

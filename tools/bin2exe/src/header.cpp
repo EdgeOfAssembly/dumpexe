@@ -96,6 +96,36 @@ bool append_matching_tail(std::span<const std::uint8_t> original,
     return true;
 }
 
+/**
+ * @brief Whether a 16-byte header's relocation table ends by byte 16.
+ *
+ * @param[in] exe_prefix     Leading file bytes. @c e_crlc is at offset 6.
+ * @param[in] exe_file_size  Bytes that belong to the file.
+ *
+ * @retval true  @c e_crlc is 0, or @c e_lfarlc + @c e_crlc * 4 is at most 16.
+ * @retval false The table runs past byte 16, or @c e_lfarlc (offset 24) is
+ *               outside the file so the table cannot be shown to fit.
+ */
+bool reloc_table_fits_in_16(std::span<const std::uint8_t> exe_prefix,
+                            std::uint64_t exe_file_size)
+{
+    const std::uint16_t relocs = load_le16(exe_prefix.data() + 6);
+    if (relocs == 0u)
+    {
+        return true;
+    }
+    /* e_lfarlc sits past the 16-byte header; the file must still hold it. */
+    if (exe_prefix.size() < 26u || exe_file_size < 26u)
+    {
+        return false;
+    }
+    const std::uint16_t lfarlc = load_le16(exe_prefix.data() + 24);
+    const std::uint32_t reloc_end =
+        static_cast<std::uint32_t>(lfarlc) +
+        static_cast<std::uint32_t>(relocs) * 4u;
+    return reloc_end <= 16u;
+}
+
 } /* namespace */
 
 build_result wrap_com(std::span<const std::uint8_t> image)
@@ -159,7 +189,12 @@ build_result copy_mz_header(std::span<const std::uint8_t> exe_prefix,
         result.code = status::empty_image;
         return result;
     }
-    if (exe_prefix.size() < k_com_header_bytes || exe_file_size < k_com_header_bytes)
+    /*
+     * e_cparhdr is at offset 8. One paragraph is a 16-byte header and is
+     * legal when its relocation table fits there. The 32-byte COM wrap is
+     * a different path and is not the minimum this copy will read.
+     */
+    if (exe_prefix.size() < 10u || exe_file_size < 10u)
     {
         result.code = status::header_too_small;
         return result;
@@ -171,7 +206,7 @@ build_result copy_mz_header(std::span<const std::uint8_t> exe_prefix,
     }
 
     const std::uint16_t paragraphs = load_le16(exe_prefix.data() + 8);
-    if (paragraphs < 2u)
+    if (paragraphs == 0u)
     {
         result.code = status::header_too_small;
         return result;
@@ -185,6 +220,12 @@ build_result copy_mz_header(std::span<const std::uint8_t> exe_prefix,
     if (exe_file_size < header_len || exe_prefix.size() < header_len)
     {
         result.code = status::header_truncated;
+        return result;
+    }
+    /* Only the 16-byte case checks relocation fit. 32 bytes and up do not. */
+    if (paragraphs == 1u && !reloc_table_fits_in_16(exe_prefix, exe_file_size))
+    {
+        result.code = status::header_too_small;
         return result;
     }
 

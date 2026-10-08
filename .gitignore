@@ -1,5 +1,6 @@
 # Build artifacts
 dumpexe
+dumpexe-asan
 /bin2exe
 tools/bin2exe/test_header
 *.o

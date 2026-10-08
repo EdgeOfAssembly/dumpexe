@@ -26,6 +26,8 @@ check() {
 }
 
 python3 - "$TD" << 'PY'
+import os
+import struct
 import sys
 from pathlib import Path
 td = Path(sys.argv[1])
@@ -43,6 +45,66 @@ fixtures = {
 }
 for name, blob in fixtures.items():
     (td / f"{name}.com").write_bytes(blob)
+
+def build_mz(image, paras=2, ip=0, cs=0, minalloc=0, signature=0x5A4D):
+    header_bytes = paras * 16
+    total = header_bytes + len(image)
+    final_len = total % 512
+    num_blocks = (total + 511) // 512
+    if total % 512 == 0:
+        final_len = 0
+    hdr = bytearray(header_bytes)
+    struct.pack_into("<14H", hdr, 0,
+                     signature, final_len, num_blocks, 0, paras,
+                     minalloc, 0xFFFF, 0, 0x200, 0, ip, cs & 0xFFFF, 0x1C, 0)
+    return bytes(hdr) + bytes(image)
+
+def write_sparse(path, size, prefix):
+    fd = os.open(path, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o644)
+    os.ftruncate(fd, size)
+    os.pwrite(fd, prefix, 0)
+    os.close(fd)
+
+# X4: ZM is the little-endian word 0x4D5A (on disk 5A 4D), 32-byte header.
+(td / "zm.exe").write_bytes(build_mz(bytes.fromhex("b44ccd21"), signature=0x4D5A))
+(td / "one_m.bin").write_bytes(b"M")
+
+# N7: delta == 0 still decodes image byte 0. CS=FFF0 IP=0100.
+(td / "delta0.exe").write_bytes(build_mz(bytes.fromhex("b042c3"), ip=0x100, cs=0xFFF0))
+# N7: delta < 0 (CS=FFFF IP=0 -> -16). Distinctive mov al,0EEh at linear 0.
+(td / "before.exe").write_bytes(build_mz(bytes.fromhex("b0eec3"), ip=0, cs=0xFFFF))
+
+# N5: near call whose next 8 bytes are mov ax,0 plus zeros (7 of 8 are 0).
+# E8 08 00 ; B8 00 00 00 00 00 00 00 ; C3
+(td / "callz.com").write_bytes(bytes.fromhex("e80800b800000000000000c3"))
+# Straight line: mov ax,1 then four 00 bytes then nop. The nop stays.
+(td / "nopgap.com").write_bytes(bytes.fromhex("b801000000000090c3"))
+# ret then eight 00 bytes. The hole is not code.
+(td / "retz.com").write_bytes(bytes.fromhex("c30000000000000000"))
+
+# N-test RG4: CS=0100h IP=0, header 32 bytes, minalloc 0x10.
+# INT 21h at linear 0x200 sits under the entry frame. Frame 0 must cover it.
+rg4 = bytearray(0x1100)
+rg4[0x1000:0x1005] = bytes.fromhex("b8004ccd21")
+rg4[0x200:0x20C] = bytes.fromhex("b409ba0000cd21b8004ccd21")
+(td / "rg4.exe").write_bytes(build_mz(rg4, ip=0, cs=0x0100, minalloc=0x10))
+
+# L11: clamped load image 1114113 bytes (header 32 + image).
+big_image = 1114113
+big_total = 32 + big_image
+big_prefix = build_mz(b"\xC3" + bytes(31))  # 32-byte header + 32 image bytes
+# Rewrite page fields for the real length, then extend the file.
+final_len = big_total % 512
+num_blocks = (big_total + 511) // 512
+if big_total % 512 == 0:
+    final_len = 0
+hdr = bytearray(big_prefix[:32])
+struct.pack_into("<HH", hdr, 2, final_len, num_blocks)
+write_sparse(str(td / "bigmz.exe"), big_total, bytes(hdr) + b"\xC3")
+# 64-byte MZ: header 32 + 32 image bytes. Under the default cap.
+(td / "smallmz.exe").write_bytes(build_mz(b"\xC3" + bytes(31)))
+# COM whose disassembly image (file + PSP hole) is over the cap.
+write_sparse(str(td / "big.com"), 1114113, b"\xC3")
 print("fixtures", td)
 PY
 
@@ -154,6 +216,162 @@ case_into() {
   has_re "$out" '[[:space:]]into[[:space:]]' || return 1
 }
 
+case_zm_magic() {
+  "$BIN" --json --no-asm-file "$TD/zm.exe" >"$TD/zm.json" 2>"$TD/zm.err" || {
+    echo "ZM json failed" >&2
+    cat "$TD/zm.err" >&2
+    return 1
+  }
+  has_f "$TD/zm.json" '"format": "mz"' || return 1
+  lacks_f "$TD/zm.json" '"format": "com"' || return 1
+  "$BIN" --json --no-asm-file "$TD/one_m.bin" >"$TD/one.json" 2>"$TD/one.err" || {
+    echo "one-byte M failed" >&2
+    cat "$TD/one.err" >&2
+    return 1
+  }
+  has_f "$TD/one.json" '"format": "com"' || return 1
+  lacks_f "$TD/one.json" '"format": "mz"' || return 1
+}
+
+case_before_image() {
+  "$BIN" -d --no-asm-file --no-repack "$TD/before.exe" \
+    >"$TD/before.out" 2>"$TD/before.err" || {
+    echo "before-image disasm failed" >&2
+    cat "$TD/before.err" >&2
+    return 1
+  }
+  local n
+  n=$(grep -c -F 'Warning: MZ entry is before the load image (in the PSP)' "$TD/before.err" || true)
+  if [[ "$n" != "1" ]]; then
+    echo "before-image warning count $n" >&2
+    cat "$TD/before.err" >&2
+    return 1
+  fi
+  lacks_f "$TD/before.out" B0EE || return 1
+  "$BIN" --json --no-asm-file --no-repack "$TD/before.exe" \
+    >"$TD/before.json" 2>"$TD/beforej.err" || return 1
+  python3 - "$TD/before.json" << 'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+cfg = d.get("cfg")
+if cfg is not None and cfg.get("blocks", 0) != 0:
+    sys.exit("before-image seeded cfg blocks " + str(cfg.get("blocks")))
+print("before-image cfg", cfg)
+PY
+}
+
+case_delta0_entry() {
+  "$BIN" -d --no-asm-file --no-repack "$TD/delta0.exe" \
+    >"$TD/delta0.out" 2>"$TD/delta0.err" || {
+    echo "delta0 disasm failed" >&2
+    cat "$TD/delta0.err" >&2
+    return 1
+  }
+  if grep -F -q 'Warning: MZ entry is before the load image (in the PSP)' "$TD/delta0.err"; then
+    echo "delta0 warned" >&2
+    cat "$TD/delta0.err" >&2
+    return 1
+  fi
+  # com2exe listing is byte-exact db; the decoded entry is still linear 0.
+  has_f "$TD/delta0.out" 'func_0000' || return 1
+  has_f "$TD/delta0.out" 'mov al, 42h' || return 1
+}
+
+case_call_fallthrough_zeros() {
+  dump callz || return 1
+  local out="$TD/callz.out"
+  has_f "$out" B80000 || return 1
+  has_re "$out" '[[:space:]]mov[[:space:]]' || return 1
+}
+
+case_nop_after_four_zeros() {
+  dump nopgap || return 1
+  local out="$TD/nopgap.out"
+  has_f "$out" 90 || return 1
+  has_re "$out" '[[:space:]]nop[[:space:]]' || return 1
+}
+
+case_ret_zero_hole() {
+  dump retz || return 1
+  python3 - "$TD/retz.out" << 'PY'
+import re, sys
+text = open(sys.argv[1], errors="replace").read()
+rows = re.findall(r"^\s+([0-9A-Fa-f]+)\s+([0-9A-F]+)\s+(\S+)", text, re.M)
+if not rows:
+    sys.exit("no decoded rows:\n" + text)
+for ip, hx, mnem in rows:
+    if hx != "C3":
+        sys.exit(f"decoded hole insn {ip} {hx} {mnem}")
+print("ret hole", len(rows))
+PY
+}
+
+# Moved from test_p0_linear.sh. Same assertion. Does not need uasm.
+case_rg4_int_below_frame() {
+  "$BIN" --json --no-asm-file --no-repack "$TD/rg4.exe" \
+    >"$TD/rg4.json" 2>"$TD/rg4.err" || {
+    echo "rg4 json failed" >&2
+    cat "$TD/rg4.err" >&2
+    return 1
+  }
+  python3 - "$TD/rg4.json" << 'PY'
+import json, sys
+cfg = json.load(open(sys.argv[1]))["cfg"]
+if cfg["blocks"] < 5:
+    sys.exit("blocks " + str(cfg["blocks"]))
+print("rg4 int below frame", cfg["blocks"])
+PY
+}
+
+case_max_image() {
+  local err="$TD/big.err"
+  if "$BIN" --no-asm-file --no-repack "$TD/bigmz.exe" >"$TD/big.out" 2>"$err"; then
+    echo "oversize MZ exited 0" >&2
+    return 1
+  fi
+  has_f "$err" 'Error: load image is 1114113 bytes, over the 1114112 cap (use --max-image=N)' || return 1
+  "$BIN" --max-image=1114113 --no-asm-file --no-repack "$TD/bigmz.exe" \
+    >"$TD/bigok.out" 2>"$TD/bigok.err" || {
+    echo "raised cap failed" >&2
+    cat "$TD/bigok.err" >&2
+    return 1
+  }
+  if grep -F -q 'over the ' "$TD/bigok.err"; then
+    echo "raised cap still refused" >&2
+    cat "$TD/bigok.err" >&2
+    return 1
+  fi
+  "$BIN" --no-asm-file --no-repack "$TD/smallmz.exe" \
+    >"$TD/small.out" 2>"$TD/small.err" || {
+    echo "small MZ failed" >&2
+    cat "$TD/small.err" >&2
+    return 1
+  }
+  if grep -F -q 'over the ' "$TD/small.err"; then
+    echo "small MZ hit the cap" >&2
+    return 1
+  fi
+  if "$BIN" --max-image 31 --no-asm-file --no-repack "$TD/smallmz.exe" \
+      >"$TD/sp.out" 2>"$TD/sp.err"; then
+    echo "space form did not cap" >&2
+    return 1
+  fi
+  has_f "$TD/sp.err" 'Error: load image is 32 bytes, over the 31 cap (use --max-image=N)' || return 1
+  if "$BIN" --no-asm-file "$TD/big.com" >"$TD/bigcom.out" 2>"$TD/bigcom.err"; then
+    echo "oversize COM exited 0" >&2
+    return 1
+  fi
+  has_f "$TD/bigcom.err" 'Error: load image is 1114369 bytes, over the 1114112 cap (use --max-image=N)' || return 1
+  "$BIN" --max-image=0 "$TD/smallmz.exe" >"$TD/bad0.out" 2>"$TD/bad0.err" && return 1
+  has_f "$TD/bad0.err" 'Error: Invalid --max-image value' || return 1
+  "$BIN" --max-image= "$TD/smallmz.exe" >"$TD/bade.out" 2>"$TD/bade.err" && return 1
+  has_f "$TD/bade.err" 'Error: Invalid --max-image value' || return 1
+  "$BIN" --max-image=abc "$TD/smallmz.exe" >"$TD/bada.out" 2>"$TD/bada.err" && return 1
+  has_f "$TD/bada.err" 'Error: Invalid --max-image value' || return 1
+  "$BIN" --max-image 0 "$TD/smallmz.exe" >"$TD/badsp.out" 2>"$TD/badsp.err" && return 1
+  has_f "$TD/badsp.err" 'Error: Invalid --max-image value' || return 1
+}
+
 check int20 case_int20
 check int27 case_int27
 check ah4c case_ah4c
@@ -164,6 +382,14 @@ check nop4c case_nop4c
 check ah09 case_ah09
 check unk case_unk
 check into case_into
+check zm_magic case_zm_magic
+check before_image case_before_image
+check delta0_entry case_delta0_entry
+check call_fallthrough_zeros case_call_fallthrough_zeros
+check nop_after_four_zeros case_nop_after_four_zeros
+check ret_zero_hole case_ret_zero_hole
+check rg4_int_below_frame case_rg4_int_below_frame
+check max_image case_max_image
 
 echo "cfg tests: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]

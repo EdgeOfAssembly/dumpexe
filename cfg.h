@@ -716,10 +716,11 @@ static inline void cfg_find_near_jmp_tables(const std::vector<uint8_t>& image,
  * @param follow_calls    When true, call targets are leaders.
  * @param max_blocks      Safety cap on blocks materialized in pass 2.
  * @param relocs          MZ fixups into this load image. Empty keeps M1 only.
- * @param entry_frame  Paragraph frame of @p entry_ip (`cs * 16`). 0 for COM
- *                      and for an MZ entry whose signed delta is <= 0.
- *                      May be negative. A negative value passed through
- *                      listing_run is taken from the one-shot override instead.
+ * @param entry_frame  Paragraph frame of @p entry_ip (`cs * 16`). 0 for COM,
+ *                      for an MZ entry whose signed delta is 0, and when the
+ *                      entry is not inside the image. May be negative. A
+ *                      negative value passed through listing_run is taken
+ *                      from the one-shot override instead.
  * @return Control-flow graph. Empty when the entry is outside the image.
  */
 static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
@@ -919,6 +920,26 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                 break;
             }
 
+            // The first instruction of this walk may cover an interior
+            // target. A later instruction must not. Opcode 00 is a 2-byte
+            // add, so a zero hole would otherwise claim the next leader.
+            if (linear != start && insn->size > 1)
+            {
+                bool covers_leader = false;
+                for (uint16_t k = 1; k < insn->size; ++k)
+                {
+                    if (leaders.count(static_cast<CfgLin>(linear + k)) != 0)
+                    {
+                        covers_leader = true;
+                        break;
+                    }
+                }
+                if (covers_leader)
+                {
+                    break;
+                }
+            }
+
             const cs_x86& x86 = insn->detail->x86;
             std::string mnem = insn->mnemonic;
             const uint16_t next16 = static_cast<uint16_t>(ip16 + insn->size);
@@ -996,26 +1017,12 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             {
                 // Same order as jcc: own the instruction after CALL before
                 // a target that lands inside it can steal those bytes.
-                // Fall-through after CALL is real in most code, but entry stubs
-                // (Pascal MT+) often park a *data* segment table right after the
-                // call. Only enqueue continuation if it does not look like a
-                // zero/data hole and is not the middle of a jump table.
+                // Always decode that one fall-through instruction. A run of
+                // zeros does not suppress it. Still skip an E9/E9 jump table
+                // or an 80/b0 segment table parked after a Pascal entry call.
                 bool looks_data = false;
                 if (next_ok && cfg_ip_in_image(next, image.size()))
                 {
-                    int z = 0;
-                    for (size_t k = 0; k < 8 &&
-                         static_cast<size_t>(next) + k < image.size(); ++k)
-                    {
-                        if (image[static_cast<size_t>(next) + k] == 0)
-                        {
-                            ++z;
-                        }
-                    }
-                    if (z >= 6)
-                    {
-                        looks_data = true;
-                    }
                     if (static_cast<size_t>(next) + 6 <= image.size() &&
                         image[static_cast<size_t>(next)] == 0xE9 &&
                         image[static_cast<size_t>(next) + 3] == 0xE9)
@@ -1439,6 +1446,25 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                 break;
             }
 
+            // Same as the trusted walk: do not let a later instruction
+            // cover a queued leader. The block's first instruction may.
+            if (linear != L && insn->size > 1)
+            {
+                bool covers_leader = false;
+                for (uint16_t k = 1; k < insn->size; ++k)
+                {
+                    if (leaders.count(static_cast<CfgLin>(linear + k)) != 0)
+                    {
+                        covers_leader = true;
+                        break;
+                    }
+                }
+                if (covers_leader)
+                {
+                    break;
+                }
+            }
+
             // Refuse an insn that would cover a byte owned by a different start.
             bool clash = false;
             for (uint16_t k = 0; k < insn->size; ++k)
@@ -1666,24 +1692,12 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                     e.has_target = false;
                     blk.outs.push_back(e);
                 }
-                // Fall-through only if continuation looks like code (not data hole
-                // / jump-table / segment-table after Pascal entry call).
+                // Fall-through edge for the one instruction after CALL. A zero
+                // run does not suppress it. Still skip an 80/b0 segment table
+                // or a jump-table slot. ret does not fall through.
                 bool cont_ok = next_ok && cfg_ip_in_image(next, image.size());
                 if (cont_ok)
                 {
-                    int z = 0;
-                    for (size_t k = 0; k < 8 &&
-                         static_cast<size_t>(next) + k < image.size(); ++k)
-                    {
-                        if (image[static_cast<size_t>(next) + k] == 0)
-                        {
-                            ++z;
-                        }
-                    }
-                    if (z >= 6)
-                    {
-                        cont_ok = false;
-                    }
                     // Segment table after ICON entry: 80 0c b0 08 ... then zeros
                     if (static_cast<size_t>(next) + 4 < image.size() &&
                         image[static_cast<size_t>(next)] == 0x80 &&

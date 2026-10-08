@@ -104,7 +104,11 @@ struct build_result
  * @note Does not exit the process and does not open a destination file.
  *       Relocation entries are not adjusted. A flat image that is not a
  *       prefix of the original payload is copied as-is and the tail is left
- *       behind.
+ *       behind. @c e_cparhdr == 0 is refused. @c e_cparhdr == 1 (16 bytes)
+ *       is accepted only when @c e_crlc is 0 or the relocation table ends
+ *       at or before byte 16. A file shorter than the claimed header is
+ *       status::header_truncated. Headers of 32 bytes and larger are not
+ *       checked for relocation fit.
  */
 [[nodiscard]] build_result copy_mz_header(std::span<const std::uint8_t> exe_prefix,
                                           std::uint64_t exe_file_size,

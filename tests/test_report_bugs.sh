@@ -596,7 +596,7 @@ json_mz_22() {
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["tool"] == "dumpexe", d.get("tool")
-assert d["version"] == "2.22", d.get("version")
+assert d["version"] == "2.23", d.get("version")
 mz = d["mz"]
 assert mz["extra_bytes"] == 10, mz.get("extra_bytes")
 assert mz["min_alloc"] == 14, mz.get("min_alloc")
@@ -634,7 +634,7 @@ json_com_entry() {
   python3 - "$TD/com.json" "$TD/com_psp_flag.json" << 'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert d["version"] == "2.22"
+assert d["version"] == "2.23"
 assert d["format"] == "com"
 assert d["com"]["file_size"] == 1
 assert d["com"]["entry_ip"] == "0100"
@@ -668,7 +668,7 @@ check json_com_psp json_com_psp
 check version_capstone bash -c "
   set -euo pipefail
   '$BIN' -v >'$TD/ver.txt'
-  grep -q 'dumpexe 2.22' '$TD/ver.txt'
+  grep -q 'dumpexe 2.23' '$TD/ver.txt'
   grep -Eq 'Capstone[[:space:]]+[0-9]+\\.[0-9]+' '$TD/ver.txt'
 "
 
@@ -1190,12 +1190,14 @@ skip_or_check unpack_keep_existing "$SAMPLES/exepack-1.exe" bash -c "
   [[ \"\$(cat '$TD/exepack-1_UNPACKED.asm')\" == ASMKEEP ]]
 "
 
-BTECH="/mnt/samples/BattleTech - The Crescent Hawks' Revenge (1990) (v1.00) (Infocom, Inc.) (360K) (Disk 1) [!]/INSTALL.EXE"
-FIXIN="/mnt/samples/Chamber of the Sci-Mutant Priestess (1990) (Data East USA, Inc.) (360K) (Disk 1) [cp] [!]/FIXIN.EXE"
-GOLD="/mnt/samples/Gold of the Aztecs, The (1991) (v1.0) (U.S. Gold, Inc.) (1.44M) (Disk 1) [!]/INSTALL.EXE"
-ANOTHER="/mnt/samples/Another World (1992) (Europe) (U.S. Gold Ltd.) (720K) (Disk A) [!]/ANOTHER.EXE"
-LEMM="/mnt/samples/Lemmings (1991-05-11) (Psygnosis Limited) (360K) (Disk 1) [cp] [!]/CGALEMMI.EXE"
-WWF="/mnt/samples/WWF Wrestlemania (1991) (Ocean Software Ltd.) (360K) (Disk 1) [!]/WWF.EXE"
+# DUMPEXE_SAMPLES, when set and non-empty, replaces /mnt/samples.
+SAMPLE_ROOT="${DUMPEXE_SAMPLES:-/mnt/samples}"
+BTECH="$SAMPLE_ROOT/BattleTech - The Crescent Hawks' Revenge (1990) (v1.00) (Infocom, Inc.) (360K) (Disk 1) [!]/INSTALL.EXE"
+FIXIN="$SAMPLE_ROOT/Chamber of the Sci-Mutant Priestess (1990) (Data East USA, Inc.) (360K) (Disk 1) [cp] [!]/FIXIN.EXE"
+GOLD="$SAMPLE_ROOT/Gold of the Aztecs, The (1991) (v1.0) (U.S. Gold, Inc.) (1.44M) (Disk 1) [!]/INSTALL.EXE"
+ANOTHER="$SAMPLE_ROOT/Another World (1992) (Europe) (U.S. Gold Ltd.) (720K) (Disk A) [!]/ANOTHER.EXE"
+LEMM="$SAMPLE_ROOT/Lemmings (1991-05-11) (Psygnosis Limited) (360K) (Disk 1) [cp] [!]/CGALEMMI.EXE"
+WWF="$SAMPLE_ROOT/WWF Wrestlemania (1991) (Ocean Software Ltd.) (360K) (Disk 1) [!]/WWF.EXE"
 
 if [[ -f "$BTECH" ]]; then
   cp "$BTECH" "$TD/btech.exe"

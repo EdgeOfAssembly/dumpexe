@@ -611,6 +611,16 @@ put(e2f, 0xFFFE, "eb10")
 put(e2f, 0x10010, "b8004ccd21")
 (td / "e2f.exe").write_bytes(mz(e2f, ip=0, cs=0x0800))
 (td / "e2f.img").write_bytes(e2f)
+
+# N-C1: func_10030 is a sized near call in s1 (its own segment) and from s0.
+# CS=0FFF puts frame FFF0 over both sites. INT 21 at 10010 seeds the s1 call
+# (ip-16) without being the shared symbol.
+nc1 = bytearray(0x10040)
+nc1[0xFFF0:0xFFF4] = bytes.fromhex("e83d00c3")
+nc1[0x10000:0x10004] = bytes.fromhex("e82d00c3")
+nc1[0x10010:0x10012] = bytes.fromhex("cd21")
+nc1[0x10030] = 0xC3
+(td / "nc1.exe").write_bytes(mz(nc1, ip=0, cs=0x0FFF))
 PY
 
 case_rg5_com() {
@@ -637,6 +647,40 @@ case_c1() {
   local name=$1
   emit_mz "$name" || return 1
   round_img "$name"
+}
+
+# Same symbol, two sized uses. Only the other segment becomes db.
+case_nc1() {
+  emit_mz nc1 || return 1
+  python3 - "$TD/nc1.asm" << 'PY'
+import sys
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+marker = "s1 segment"
+at = text.find(marker)
+if at < 0:
+    print("missing s1 segment")
+    sys.exit(1)
+s0 = text[:at]
+s1 = text[at:]
+end = s1.find("s2 segment")
+if end >= 0:
+    s1 = s1[:end]
+sym = "call near ptr func_10030"
+if sym in s0:
+    print("s0 still has a sized branch to func_10030")
+    sys.exit(1)
+if s1.count(sym) != 1:
+    print("s1 sized-branch count", s1.count(sym))
+    sys.stderr.write(s1)
+    sys.exit(1)
+if "0E8h, 03Dh, 000h" not in s0:
+    print("s0 cross-segment call was not db")
+    sys.exit(1)
+if "0E8h, 02Dh, 000h" in s1:
+    print("s1 same-segment call was demoted to db")
+    sys.exit(1)
+print("nc1 ok")
+PY
 }
 
 UASM_ABS="$(readlink -f "$UASM")"
@@ -1020,6 +1064,7 @@ check rg5_mz case_rg5_mz
 check c1_e2d case_c1 e2d
 check c1_e2e case_c1 e2e
 check c1_e2f case_c1 e2f
+check nc1_same_seg case_nc1
 check v1_partial case_v1_partial
 check v1_one_spawn case_v1_one_spawn
 check v2_rel_bin case_v2_rel
