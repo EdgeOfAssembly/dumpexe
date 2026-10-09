@@ -22,6 +22,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <queue>
 #include <set>
 #include <span>
@@ -30,7 +31,9 @@
 #include <vector>
 #include <capstone/capstone.h>
 
+#include "decode.h"
 #include "exe.h"
+#include "flow.h"
 #include "options.h"
 
 //=============================================================================
@@ -317,6 +320,9 @@ struct CfgGraph {
     std::vector<CfgStringLit> strings;   ///< recovered literals in image
     size_t n_int_sites = 0;
     size_t n_str_xrefs = 0;
+    /// P1 record of this build. Disengaged when cfg_build returns early.
+    /// Printers and --json do not read it.
+    std::optional<dx::FlowTrace> flow;
 };
 
 //=============================================================================
@@ -797,6 +803,21 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
     // int block's AH is unknown. This set is what stops that block.
     std::set<CfgLin> noreturn_ips;
 
+    // Format is stored on the trace only. It must not change enqueue.
+    // Com when this is the COM path the caller already knows: load base is
+    // the file CS, there are no relocs, and the entry frame is 0.
+    const dx::Fmt trace_fmt =
+        (cs_seg == file_cs && relocs.empty() && entry_frame == 0) ? dx::Fmt::Com
+                                                                   : dx::Fmt::Mz;
+    const uint32_t trace_n = static_cast<uint32_t>(
+        std::min<size_t>(image.size(), static_cast<size_t>(UINT32_MAX)));
+    const uint32_t trace_base = static_cast<uint32_t>(
+        std::min<size_t>(file_base, static_cast<size_t>(UINT32_MAX)));
+    dx::FlowTrace trace(trace_n, trace_fmt, dx::FileOff{trace_base}, dx::Lin{entry_ip},
+                        entry_frame, std::span<const uint8_t>(image.data(), trace_n));
+    dx::Strength active_strength = dx::Strength::Proven;
+    CfgLin active_origin = entry_ip;
+
     // Rejected: not a leader. Present: already one. Created: just inserted.
     // Does not touch spec_leaders. Nearby must not promote, so the erase
     // stays in enqueue and not on this path.
@@ -834,27 +855,33 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
 
     // Non-nearby source. Promotes even when the address was already a leader.
     // Nearby does not call this; a second nearby seed must keep the mark.
-    auto enqueue = [&](CfgLin linear, int32_t frame)
+    // Call fall-through is Likely and still promote_real. It is not speculative.
+    auto enqueue = [&](CfgLin linear, int32_t frame, dx::Why why, dx::Strength strength,
+                       uint32_t source)
     {
         if (place_leader(linear, frame) == CfgPlace::Rejected)
         {
             return;
         }
-        spec_leaders.erase(linear);
+        dx::promote_real(spec_leaders, linear);
+        trace.note_leader(linear, why, strength, source);
     };
 
     // Only enqueue_nearby calls this. Creating the leader records it as
     // speculative. An address that is already a leader is left alone.
-    auto enqueue_spec = [&](CfgLin linear, int32_t frame)
+    // mark_spec_created runs only on Created, not on a second nearby seed.
+    auto enqueue_spec = [&](CfgLin linear, int32_t frame, uint32_t source)
     {
         if (place_leader(linear, frame) == CfgPlace::Created)
         {
-            spec_leaders.insert(linear);
+            dx::mark_spec_created(spec_leaders, linear);
+            trace.note_leader(linear, dx::Why::HintIntScan, dx::Strength::Hint, source);
         }
     };
 
     auto claim = [&](CfgLin linear, uint16_t size)
     {
+        bool claimed_new = false;
         for (uint16_t k = 0; k < size; ++k)
         {
             const size_t idx = static_cast<size_t>(linear) + k;
@@ -865,7 +892,15 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             if (owner[idx] == kCfgUnowned)
             {
                 owner[idx] = linear;
+                claimed_new = true;
             }
+        }
+        if (claimed_new)
+        {
+            const uint8_t noted =
+                static_cast<uint8_t>(std::min<uint16_t>(size, static_cast<uint16_t>(255)));
+            trace.note_insn(linear, noted, dx::Why::DirectFlow, active_strength,
+                            active_origin);
         }
     };
 
@@ -899,6 +934,10 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
         {
             return;
         }
+
+        active_origin = start;
+        active_strength = (spec_leaders.count(start) == 0) ? dx::Strength::Proven
+                                                           : dx::Strength::Likely;
 
         CfgLin linear = start;
         // AH for this walk only. 0x100 is unknown. A nop does not clear it.
@@ -961,22 +1000,13 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             // (detail->x86.opcode[0], not bytes[0], so 2E 00 still stops).
             // The covered address must be in leaders and not in
             // spec_leaders. An INT-nearby seed does not end the walk
-            // (RG6). Other opcodes do not stop.
-            if (linear != start && insn->size > 1 &&
-                insn->detail != nullptr &&
-                insn->detail->x86.opcode[0] == 0x00)
+            // (RG6). Other opcodes do not stop. A null detail is not opcode 00.
             {
-                bool covers_leader = false;
-                for (uint16_t k = 1; k < insn->size; ++k)
-                {
-                    const CfgLin at = static_cast<CfgLin>(linear + k);
-                    if (leaders.count(at) != 0 && spec_leaders.count(at) == 0)
-                    {
-                        covers_leader = true;
-                        break;
-                    }
-                }
-                if (covers_leader)
+                uint8_t opcode0 = 0;
+                const uint8_t sz8 = static_cast<uint8_t>(
+                    std::min<uint16_t>(insn->size, static_cast<uint16_t>(255)));
+                if (dx::opcode_after_prefixes(insn, opcode0) &&
+                    dx::stop_opcode00(linear, start, sz8, opcode0, leaders, spec_leaders))
                 {
                     break;
                 }
@@ -991,7 +1021,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             const bool wrapped = cfg_ip16_wrapped(ip16, next16);
             claim(linear, insn->size);
 
-            auto enqueue_near = [&](int op_i) -> bool
+            auto enqueue_near = [&](int op_i, dx::Why why) -> bool
             {
                 if (op_i >= x86.op_count)
                 {
@@ -1007,7 +1037,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                 {
                     return false;
                 }
-                enqueue(tgt, frame);
+                enqueue(tgt, frame, why, dx::Strength::Proven, linear);
                 return true;
             };
 
@@ -1023,20 +1053,21 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                         cfg_far_reloc_site(image, linear, insn->size, reloc_at);
                     if (pin.kind == CfgFarRelocKind::InImage)
                     {
-                        enqueue(pin.ip, static_cast<int32_t>(pin.seg_base));
+                        enqueue(pin.ip, static_cast<int32_t>(pin.seg_base), dx::Why::DirectJmp,
+                                dx::Strength::Proven, linear);
                     }
                     else if (pin.kind == CfgFarRelocKind::NotPinned)
                     {
                         uint16_t far_off = 0;
                         if (cfg_far_same_seg_off(x86, file_cs, far_off))
                         {
-                            enqueue(far_off, 0);
+                            enqueue(far_off, 0, dx::Why::DirectJmp, dx::Strength::Proven, linear);
                         }
                     }
                 }
                 else
                 {
-                    enqueue_near(0);
+                    enqueue_near(0, dx::Why::DirectJmp);
                 }
                 break;
             }
@@ -1050,9 +1081,9 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                 // wraps inside this frame. A negative next is not enqueued.
                 if (next_ok)
                 {
-                    enqueue(next, frame);
+                    enqueue(next, frame, dx::Why::DirectJmp, dx::Strength::Proven, linear);
                 }
-                enqueue_near(0);
+                enqueue_near(0, dx::Why::DirectJcc);
                 break;
             }
             if (cfg_is_call(mnem))
@@ -1080,7 +1111,8 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                 }
                 if (!looks_data && next_ok)
                 {
-                    enqueue(next, frame);
+                    enqueue(next, frame, dx::Why::CallFallthroughSpec, dx::Strength::Likely,
+                            linear);
                 }
                 // Far lcall/callf still falls through above. A relocated segment
                 // word is followed instead of M1, and only when follow_calls
@@ -1091,20 +1123,21 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                         cfg_far_reloc_site(image, linear, insn->size, reloc_at);
                     if (pin.kind == CfgFarRelocKind::InImage)
                     {
-                        enqueue(pin.ip, static_cast<int32_t>(pin.seg_base));
+                        enqueue(pin.ip, static_cast<int32_t>(pin.seg_base), dx::Why::DirectCall,
+                                dx::Strength::Proven, linear);
                     }
                     else if (pin.kind == CfgFarRelocKind::NotPinned)
                     {
                         uint16_t far_off = 0;
                         if (cfg_far_same_seg_off(x86, file_cs, far_off))
                         {
-                            enqueue(far_off, 0);
+                            enqueue(far_off, 0, dx::Why::DirectCall, dx::Strength::Proven, linear);
                         }
                     }
                 }
                 else if (follow_calls)
                 {
-                    enqueue_near(0);
+                    enqueue_near(0, dx::Why::DirectCall);
                 }
                 break;
             }
@@ -1142,7 +1175,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                     {
                         if (next_ok)
                         {
-                            enqueue(next, frame);
+                            enqueue(next, frame, dx::Why::DirectJmp, dx::Strength::Proven, linear);
                         }
                         break;
                     }
@@ -1162,7 +1195,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             {
                 if (next_ok)
                 {
-                    enqueue(next, frame);
+                    enqueue(next, frame, dx::Why::DirectJmp, dx::Strength::Proven, linear);
                 }
                 break;
             }
@@ -1214,7 +1247,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
     };
 
     // --- Pass 1a: trusted flow from the entry, then call/jmp/jcc targets ---
-    enqueue(entry_ip, entry_frame);
+    enqueue(entry_ip, entry_frame, dx::Why::Entry, dx::Strength::Proven, entry_ip);
     drain();
 
     // Jump tables only where the E9 is not an immediate inside owned code.
@@ -1346,7 +1379,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
         {
             continue;
         }
-        enqueue(ip, sb);
+        enqueue(ip, sb, dx::Why::DirectJmp, dx::Strength::Proven, ip);
         // Nearby seeds only when they are not strictly inside an owned insn,
         // so mov ah / mov dx can still open a block ahead of an uncovered INT.
         // Skip 00 bytes: they are padding (and the fake PSP hole), and decoding
@@ -1369,7 +1402,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             {
                 return;
             }
-            enqueue_spec(at, sb);
+            enqueue_spec(at, sb, ip);
         };
         const uint16_t ip16 = cfg_ip16(ip, sb);
         if (ip16 >= 16)
@@ -1457,6 +1490,9 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
         bool stop = false;
         // AH from the start of this block only. Unknown until B4 or B8.
         uint16_t block_ah = 0x100;
+        // Strength is fixed at the start of this walk, before any promote.
+        const dx::Strength block_strength =
+            (spec_leaders.count(L) == 0) ? dx::Strength::Proven : dx::Strength::Likely;
 
         while (!stop && linear < limit && cfg_ip_in_image(linear, image.size()))
         {
@@ -1494,22 +1530,13 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             // is 00 (detail->x86.opcode[0], not bytes[0], so 2E 00 still
             // stops). The covered address must be in leaders and not in
             // spec_leaders. An INT-nearby seed does not end the walk
-            // (RG6). Other opcodes do not stop.
-            if (linear != L && insn->size > 1 &&
-                insn->detail != nullptr &&
-                insn->detail->x86.opcode[0] == 0x00)
+            // (RG6). Other opcodes do not stop. A null detail is not opcode 00.
             {
-                bool covers_leader = false;
-                for (uint16_t k = 1; k < insn->size; ++k)
-                {
-                    const CfgLin at = static_cast<CfgLin>(linear + k);
-                    if (leaders.count(at) != 0 && spec_leaders.count(at) == 0)
-                    {
-                        covers_leader = true;
-                        break;
-                    }
-                }
-                if (covers_leader)
+                uint8_t opcode0 = 0;
+                const uint8_t sz8 = static_cast<uint8_t>(
+                    std::min<uint16_t>(insn->size, static_cast<uint16_t>(255)));
+                if (dx::opcode_after_prefixes(insn, opcode0) &&
+                    dx::stop_opcode00(linear, L, sz8, opcode0, leaders, spec_leaders))
                 {
                     break;
                 }
@@ -1530,13 +1557,21 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             {
                 break;
             }
+            bool claimed_new = false;
             for (uint16_t k = 0; k < insn->size; ++k)
             {
                 const size_t idx = static_cast<size_t>(linear) + k;
                 if (owner[idx] == kCfgUnowned)
                 {
                     owner[idx] = linear;
+                    claimed_new = true;
                 }
+            }
+            if (claimed_new)
+            {
+                const uint8_t noted = static_cast<uint8_t>(
+                    std::min<uint16_t>(insn->size, static_cast<uint16_t>(255)));
+                trace.note_insn(linear, noted, dx::Why::DirectFlow, block_strength, L);
             }
 
             CfgInsn ci;
@@ -1851,6 +1886,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
 
     cs_free(insn, 1);
     cs_close(&handle);
+    g.flow = std::move(trace);
     return g;
 }
 

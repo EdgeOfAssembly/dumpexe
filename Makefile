@@ -39,7 +39,7 @@ CAPSTONE_LIBS   := $(shell pkg-config --libs capstone 2>/dev/null)
 
 all: dumpexe bin2exe
 
-HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h listing.h cfg.h analysis.h sim.h sim_path.h sys.h sys_analysis.h com.h com_analysis.h ne.h ne_shift.h ne_analysis.h dos_extender.h dx_strings.h pascal_mt.h turbo_pascal.h toolchain.h symbols.h repack.h json_escape.h json_report.h unpack.h unpack_integrate.h
+HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h listing.h cfg.h analysis.h sim.h sim_path.h sys.h sys_analysis.h com.h com_analysis.h ne.h ne_shift.h ne_analysis.h dos_extender.h dx_strings.h pascal_mt.h turbo_pascal.h toolchain.h symbols.h repack.h json_escape.h json_report.h unpack.h unpack_integrate.h image_model.h bytemap.h facts.h decode.h flow.h
 
 # Deark modules (MIT, Jason Summers). Host glue is unpack_host.c.
 # -I so <#include <deark-private.h>> in the modules resolves.
@@ -153,6 +153,16 @@ tools/bin2exe/test_header: tools/bin2exe/tests/test_header.cpp tools/bin2exe/src
 		tools/bin2exe/tests/test_header.cpp tools/bin2exe/src/header.cpp tools/bin2exe/src/mz_pages.c \
 		$(CATCH_LIBS) -Wl,-rpath,$(HOME)/.local/lib64
 
+# P1 model and flow records. Non-static Catch2 binaries. Flow links Capstone.
+P1_TEST_CXXFLAGS := -std=c++23 -Wall -Wextra -Werror
+test_p1_model: tests/test_p1_model.cpp image_model.h bytemap.h facts.h
+	$(CXX) $(P1_TEST_CXXFLAGS) -I. $(CATCH_CFLAGS) -o $@ \
+		tests/test_p1_model.cpp $(CATCH_LIBS) -Wl,-rpath,$(HOME)/.local/lib64
+
+test_p1_flow: tests/test_p1_flow.cpp decode.h flow.h image_model.h bytemap.h facts.h
+	$(CXX) $(P1_TEST_CXXFLAGS) -I. $(CAPSTONE_CFLAGS) $(CATCH_CFLAGS) -o $@ \
+		tests/test_p1_flow.cpp $(CAPSTONE_LIBS) $(CATCH_LIBS) -Wl,-rpath,$(HOME)/.local/lib64
+
 PREFIX ?= /usr/local
 install: dumpexe bin2exe
 	install -d $(DESTDIR)$(PREFIX)/bin
@@ -163,7 +173,7 @@ install: dumpexe bin2exe
 	install -m 644 tools/bin2exe/bin2exe.1 $(DESTDIR)$(PREFIX)/share/man/man1/
 
 clean:
-	rm -f dumpexe dumpexe-asan bin2exe tools/bin2exe/test_header *.o int_db.h \
+	rm -f dumpexe dumpexe-asan bin2exe tools/bin2exe/test_header test_p1_model test_p1_flow *.o int_db.h \
 		unpack_host.o unpack_host-asan.o \
 		deark_bundle.o deark_bundle-asan.o $(DEARK_OBJS) $(DEARK_ASAN_OBJS)
 
@@ -173,7 +183,7 @@ run_suite = rc=0; bash $(1) || rc=$$?; \
 	elif [ $$rc -ne 0 ]; then exit $$rc; fi
 
 .PHONY: test tests verify test-uasm
-test: dumpexe bin2exe tools/bin2exe/test_header
+test: dumpexe bin2exe tools/bin2exe/test_header test_p1_model test_p1_flow
 	@$(call run_suite,tests/test_cli_contracts.sh)
 	@$(call run_suite,tests/test_report_bugs.sh)
 	@$(call run_suite,tests/test_listing_bugs.sh)
@@ -183,6 +193,8 @@ test: dumpexe bin2exe tools/bin2exe/test_header
 	@$(call run_suite,tests/test_p0_ne.sh)
 	@$(call run_suite,tests/test_p0_uasm.sh)
 	@$(call run_suite,tests/test_p0_cfg.sh)
+	@./test_p1_model
+	@./test_p1_flow
 	@$(call run_suite,tests/test_p0_reloc.sh)
 	@$(call run_suite,tests/test_p0_stats.sh)
 	@$(call run_suite,tests/test_p0_shift.sh)

@@ -99,6 +99,12 @@ def write_sparse(path, size, prefix):
     "90909090900093eb2ab8024233c933d2cd21c3061e5590ebf0b44ccd21c3"))
 # N5-pfx: call 0106, nop, then 2E 00 C3. The prefix must not hide opcode 00.
 (td / "n5_pfx.com").write_bytes(bytes.fromhex("e80300902e00c3"))
+# P1: same bytes as zhole. A later real leader stops opcode 00.
+(td / "real_leader_stop.com").write_bytes(bytes.fromhex("e802009000c3"))
+# P1: the first instruction of a walk may cover an interior real leader.
+(td / "first_insn_cover.com").write_bytes(bytes.fromhex("e80700eb0390909000060001c3c3"))
+# P1: a second nearby seed does not promote. Both seeds fall outside the image.
+(td / "second_nearby.com").write_bytes(bytes.fromhex("b401cd21b401cd21c3"))
 
 # N-test RG4: CS=0100h IP=0, header 32 bytes, minalloc 0x10.
 # INT 21h at linear 0x200 sits under the entry frame. Frame 0 must cover it.
@@ -426,6 +432,88 @@ print("n5 pfx", " ".join(hit[0]))
 PY
 }
 
+# P1: a later opcode 00 must not swallow the ret leader. Same bytes as zhole.
+case_real_leader_stop() {
+  dump real_leader_stop || return 1
+  local out="$TD/real_leader_stop.out"
+  lacks_f "$out" 00C3 || return 1
+  python3 - "$out" << 'PY'
+import re, sys
+text = open(sys.argv[1], errors="replace").read()
+rows = re.findall(r"^\s+([0-9A-Fa-f]+)\s+([0-9A-F]+)\s+(\S+)", text, re.M)
+if not rows:
+    sys.exit("no decoded rows:\n" + text)
+bad = [r for r in rows if r[1] == "00C3"]
+if bad:
+    sys.exit("decoded row bytes 00C3: " + " ".join(bad[0]) + "\n" + text)
+hit = [r for r in rows if r[0].upper() == "0105" and r[2].lower() == "ret"]
+if not hit:
+    sys.exit("no ret at 0105:\n" + text)
+print("real leader stop", " ".join(hit[0]))
+PY
+}
+
+# P1: call target is claimed before the jmp target, so 0108 is not decoded.
+# 010A stays 0001. The jmp prints 0x108 and not func_0108. ret stays at 010C.
+case_first_insn_cover() {
+  dump first_insn_cover || return 1
+  local out="$TD/first_insn_cover.out"
+  has_f "$out" 0x108 || return 1
+  lacks_f "$out" func_0108 || return 1
+  python3 - "$out" << 'PY'
+import re, sys
+text = open(sys.argv[1], errors="replace").read()
+rows = re.findall(r"^\s+([0-9A-Fa-f]+)\s+([0-9A-F]+)\s+(\S+)", text, re.M)
+if not rows:
+    sys.exit("no decoded rows:\n" + text)
+hit = [r for r in rows if r[0].upper() == "010A" and r[1] == "0001" and r[2].lower() == "add"]
+if not hit:
+    sys.exit("no row 010A 0001 add:\n" + text)
+bad = [r for r in rows if r[0].upper() == "0108"]
+if bad:
+    sys.exit("decoded row at 0108: " + " ".join(bad[0]) + "\n" + text)
+ret = [r for r in rows if r[0].upper() == "010C" and r[2].lower() == "ret"]
+if not ret:
+    sys.exit("no ret at 010C:\n" + text)
+if "func_0108" in text:
+    sys.exit("unexpected func_0108:\n" + text)
+if "0x108" not in text:
+    sys.exit("missing 0x108:\n" + text)
+print("first insn cover", " ".join(hit[0]), " ".join(ret[0]))
+PY
+}
+
+# P1: one func_0100, both INT 21h keep the AH=01 note, ret at 0108.
+# A second nearby seed must not create func_0102.
+case_second_nearby() {
+  dump second_nearby || return 1
+  local out="$TD/second_nearby.out"
+  has_f "$out" func_0100 || return 1
+  lacks_f "$out" func_0102 || return 1
+  python3 - "$out" << 'PY'
+import re, sys
+text = open(sys.argv[1], errors="replace").read()
+rows = re.findall(r"^\s+([0-9A-Fa-f]+)\s+([0-9A-F]+)\s+(\S+)", text, re.M)
+if not rows:
+    sys.exit("no decoded rows:\n" + text)
+cd = [r for r in rows if r[1] == "CD21"]
+if len(cd) != 2:
+    sys.exit("expected two CD21 rows, got %d:\n%s" % (len(cd), text))
+ret = [r for r in rows if r[0].upper() == "0108" and r[2].lower() == "ret"]
+if not ret:
+    sys.exit("no ret at 0108:\n" + text)
+notes = text.count("READ CHARACTER")
+ah = text.count("ah, 1")
+if notes < 2 and ah < 2:
+    sys.exit("expected two AH=01 notes:\n" + text)
+if "func_0100" not in text:
+    sys.exit("missing func_0100:\n" + text)
+if "func_0102" in text:
+    sys.exit("unexpected func_0102:\n" + text)
+print("second nearby", "cd", len(cd), "notes", notes, "ah", ah)
+PY
+}
+
 # Moved from test_p0_linear.sh. Same assertion. Does not need uasm.
 case_rg4_int_below_frame() {
   "$BIN" --json --no-asm-file --no-repack "$TD/rg4.exe" \
@@ -513,6 +601,9 @@ check rg6_zero_hole case_rg6_zero_hole
 check rg6r case_rg6r
 check rg6t case_rg6t
 check n5_pfx case_n5_pfx
+check real_leader_stop case_real_leader_stop
+check first_insn_cover case_first_insn_cover
+check second_nearby case_second_nearby
 check rg4_int_below_frame case_rg4_int_below_frame
 check max_image case_max_image
 
