@@ -224,6 +224,44 @@ static inline CfgLin cfg_listing_entry_base(int32_t frame)
     return static_cast<CfgLin>(frame);
 }
 
+/**
+ * @brief Sticky slot for @c cfg_set_record_flow.
+ *
+ * Callers use the setter and @c cfg_record_flow. The default is false.
+ *
+ * @return The process-lifetime flag.
+ */
+static inline bool& cfg_record_flow_slot()
+{
+    static bool on = false;
+    return on;
+}
+
+/**
+ * @brief Enable or disable flow recording for later @c cfg_build calls.
+ *
+ * Sticky until the next call. Off by default. Not a command-line switch.
+ * @c dumpexe never calls this. A test that passes true must pass false
+ * before it returns. When off, @c cfg_build does not construct a
+ * @c dx::FlowTrace and leaves @c CfgGraph::flow disengaged.
+ *
+ * @param on True records the walk into @c CfgGraph::flow on success.
+ */
+static inline void cfg_set_record_flow(bool on)
+{
+    cfg_record_flow_slot() = on;
+}
+
+/**
+ * @brief True when @c cfg_build should record a @c dx::FlowTrace.
+ *
+ * @return The sticky flag. False until @c cfg_set_record_flow(true).
+ */
+static inline bool cfg_record_flow()
+{
+    return cfg_record_flow_slot();
+}
+
 //=============================================================================
 // CFG data structures
 //=============================================================================
@@ -320,8 +358,9 @@ struct CfgGraph {
     std::vector<CfgStringLit> strings;   ///< recovered literals in image
     size_t n_int_sites = 0;
     size_t n_str_xrefs = 0;
-    /// P1 record of this build. Disengaged when cfg_build returns early.
-    /// Printers and --json do not read it.
+    /// P1 record of this build. Disengaged unless cfg_set_record_flow(true)
+    /// ran first, and on every early return. Printers and --json do not
+    /// read it. listing_generate does not copy it into *cfg_out.
     std::optional<dx::FlowTrace> flow;
 };
 
@@ -727,7 +766,15 @@ static inline void cfg_find_near_jmp_tables(const std::vector<uint8_t>& image,
  *                      entry is not inside the image. May be negative. A
  *                      negative value passed through listing_run is taken
  *                      from the one-shot override instead.
+ * @param trace_fmt     Format stored on the flow trace when recording is on.
+ *                      Default @c dx::Fmt::Mz. Not guessed from CS, relocs,
+ *                      or the entry frame. Does not change enqueue.
+ * @param psp_in_bytes  True when @p image already contains the 256-byte PSP
+ *                      or the zero hole. COM then records @c virtual_below 0.
+ *                      Default false. Ignored when recording is off.
  * @return Control-flow graph. Empty when the entry is outside the image.
+ *         @c flow is set only when @c cfg_record_flow is true and this
+ *         returns the completed graph. Early returns leave it disengaged.
  */
 static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                                  CfgLin entry_ip,
@@ -737,7 +784,9 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                                  bool follow_calls,
                                  size_t max_blocks = 20000,
                                  std::span<const RelocEntry> relocs = {},
-                                 int32_t entry_frame = 0)
+                                 int32_t entry_frame = 0,
+                                 dx::Fmt trace_fmt = dx::Fmt::Mz,
+                                 bool psp_in_bytes = false)
 {
     CfgGraph g;
     g.cs_seg = cs_seg;
@@ -803,18 +852,20 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
     // int block's AH is unknown. This set is what stops that block.
     std::set<CfgLin> noreturn_ips;
 
-    // Format is stored on the trace only. It must not change enqueue.
-    // Com when this is the COM path the caller already knows: load base is
-    // the file CS, there are no relocs, and the entry frame is 0.
-    const dx::Fmt trace_fmt =
-        (cs_seg == file_cs && relocs.empty() && entry_frame == 0) ? dx::Fmt::Com
-                                                                   : dx::Fmt::Mz;
-    const uint32_t trace_n = static_cast<uint32_t>(
-        std::min<size_t>(image.size(), static_cast<size_t>(UINT32_MAX)));
-    const uint32_t trace_base = static_cast<uint32_t>(
-        std::min<size_t>(file_base, static_cast<size_t>(UINT32_MAX)));
-    dx::FlowTrace trace(trace_n, trace_fmt, dx::FileOff{trace_base}, dx::Lin{entry_ip},
-                        entry_frame, std::span<const uint8_t>(image.data(), trace_n));
+    // Format is stored on the trace only. The caller passes it. A matching
+    // CS, an empty reloc list, and frame 0 are not a COM guess. Recording
+    // off constructs nothing: note_leader and note_insn are not called.
+    std::optional<dx::FlowTrace> trace;
+    if (cfg_record_flow())
+    {
+        const uint32_t trace_n = static_cast<uint32_t>(
+            std::min<size_t>(image.size(), static_cast<size_t>(UINT32_MAX)));
+        const uint32_t trace_base = static_cast<uint32_t>(
+            std::min<size_t>(file_base, static_cast<size_t>(UINT32_MAX)));
+        trace.emplace(trace_n, trace_fmt, dx::FileOff{trace_base}, dx::Lin{entry_ip},
+                      entry_frame, std::span<const uint8_t>(image.data(), trace_n),
+                      psp_in_bytes);
+    }
     dx::Strength active_strength = dx::Strength::Proven;
     CfgLin active_origin = entry_ip;
 
@@ -864,7 +915,10 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             return;
         }
         dx::promote_real(spec_leaders, linear);
-        trace.note_leader(linear, why, strength, source);
+        if (trace.has_value())
+        {
+            trace->note_leader(linear, why, strength, source);
+        }
     };
 
     // Only enqueue_nearby calls this. Creating the leader records it as
@@ -875,7 +929,10 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
         if (place_leader(linear, frame) == CfgPlace::Created)
         {
             dx::mark_spec_created(spec_leaders, linear);
-            trace.note_leader(linear, dx::Why::HintIntScan, dx::Strength::Hint, source);
+            if (trace.has_value())
+            {
+                trace->note_leader(linear, dx::Why::HintIntScan, dx::Strength::Hint, source);
+            }
         }
     };
 
@@ -899,8 +956,11 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
         {
             const uint8_t noted =
                 static_cast<uint8_t>(std::min<uint16_t>(size, static_cast<uint16_t>(255)));
-            trace.note_insn(linear, noted, dx::Why::DirectFlow, active_strength,
-                            active_origin);
+            if (trace.has_value())
+            {
+                trace->note_insn(linear, noted, dx::Why::DirectFlow, active_strength,
+                                 active_origin);
+            }
         }
     };
 
@@ -1081,7 +1141,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                 // wraps inside this frame. A negative next is not enqueued.
                 if (next_ok)
                 {
-                    enqueue(next, frame, dx::Why::DirectJmp, dx::Strength::Proven, linear);
+                    enqueue(next, frame, dx::Why::Fallthrough, dx::Strength::Proven, linear);
                 }
                 enqueue_near(0, dx::Why::DirectJcc);
                 break;
@@ -1175,7 +1235,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                     {
                         if (next_ok)
                         {
-                            enqueue(next, frame, dx::Why::DirectJmp, dx::Strength::Proven, linear);
+                            enqueue(next, frame, dx::Why::Wrap, dx::Strength::Proven, linear);
                         }
                         break;
                     }
@@ -1195,7 +1255,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             {
                 if (next_ok)
                 {
-                    enqueue(next, frame, dx::Why::DirectJmp, dx::Strength::Proven, linear);
+                    enqueue(next, frame, dx::Why::Wrap, dx::Strength::Proven, linear);
                 }
                 break;
             }
@@ -1379,7 +1439,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
         {
             continue;
         }
-        enqueue(ip, sb, dx::Why::DirectJmp, dx::Strength::Proven, ip);
+        enqueue(ip, sb, dx::Why::IntScan, dx::Strength::Likely, ip);
         // Nearby seeds only when they are not strictly inside an owned insn,
         // so mov ah / mov dx can still open a block ahead of an uncovered INT.
         // Skip 00 bytes: they are padding (and the fake PSP hole), and decoding
@@ -1571,7 +1631,10 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             {
                 const uint8_t noted = static_cast<uint8_t>(
                     std::min<uint16_t>(insn->size, static_cast<uint16_t>(255)));
-                trace.note_insn(linear, noted, dx::Why::DirectFlow, block_strength, L);
+                if (trace.has_value())
+                {
+                    trace->note_insn(linear, noted, dx::Why::DirectFlow, block_strength, L);
+                }
             }
 
             CfgInsn ci;
@@ -1886,7 +1949,10 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
 
     cs_free(insn, 1);
     cs_close(&handle);
-    g.flow = std::move(trace);
+    if (trace.has_value())
+    {
+        g.flow = std::move(*trace);
+    }
     return g;
 }
 
@@ -3280,6 +3346,9 @@ static inline bool cfg_write_dot(const CfgGraph& g,
  * @param entry_frame  Paragraph frame of @p entry_ip (`cs * 16`). 0 for COM
  *                      and for an entry that is not inside the image.
  *                      May be negative.
+ * @param trace_fmt     Format forwarded to @c cfg_build. Default Mz.
+ * @param psp_in_bytes  Forwarded to @c cfg_build. True when the slice
+ *                      already contains the PSP or the zero hole.
  * @return Annotated graph. Empty when the slice is outside the file.
  */
 static inline CfgGraph cfg_build_annotated(const std::vector<uint8_t>& fileData,
@@ -3290,7 +3359,9 @@ static inline CfgGraph cfg_build_annotated(const std::vector<uint8_t>& fileData,
                                            uint16_t file_cs,
                                            const Options& opts,
                                            std::span<const RelocEntry> relocs = {},
-                                           int32_t entry_frame = 0)
+                                           int32_t entry_frame = 0,
+                                           dx::Fmt trace_fmt = dx::Fmt::Mz,
+                                           bool psp_in_bytes = false)
 {
     CfgGraph empty;
     if (image_file_off >= fileData.size())
@@ -3301,7 +3372,8 @@ static inline CfgGraph cfg_build_annotated(const std::vector<uint8_t>& fileData,
         fileData.begin() + static_cast<std::ptrdiff_t>(image_file_off + len));
 
     CfgGraph g = cfg_build(image, entry_ip, cs_seg, file_cs, image_file_off,
-                           opts.cfgFollowCalls, 20000, relocs, entry_frame);
+                           opts.cfgFollowCalls, 20000, relocs, entry_frame,
+                           trace_fmt, psp_in_bytes);
     cfg_annotate(g, image);
     return g;
 }
@@ -3342,6 +3414,9 @@ static inline void cfg_emit_views(const CfgGraph& g, const Options& opts)
  * @param relocs          MZ fixups into the image. Empty for COM.
  * @param entry_frame  Paragraph frame of @p entry_ip (`cs * 16`). 0 for COM.
  *                      May be negative.
+ * @param trace_fmt     Format forwarded to @c cfg_build. Default Mz.
+ * @param psp_in_bytes  Forwarded to @c cfg_build. True when the slice
+ *                      already contains the PSP or the zero hole.
  * @return The annotated graph.
  */
 static inline CfgGraph cfg_analyze_image(const std::vector<uint8_t>& fileData,
@@ -3352,7 +3427,9 @@ static inline CfgGraph cfg_analyze_image(const std::vector<uint8_t>& fileData,
                                          uint16_t file_cs,
                                          const Options& opts,
                                          std::span<const RelocEntry> relocs = {},
-                                         int32_t entry_frame = 0)
+                                         int32_t entry_frame = 0,
+                                         dx::Fmt trace_fmt = dx::Fmt::Mz,
+                                         bool psp_in_bytes = false)
 {
     if (image_file_off >= fileData.size())
     {
@@ -3363,7 +3440,7 @@ static inline CfgGraph cfg_analyze_image(const std::vector<uint8_t>& fileData,
 
     CfgGraph g = cfg_build_annotated(fileData, image_file_off, image_len,
                                      entry_ip, cs_seg, file_cs, opts, relocs,
-                                     entry_frame);
+                                     entry_frame, trace_fmt, psp_in_bytes);
     cfg_emit_views(g, opts);
     return g;
 }

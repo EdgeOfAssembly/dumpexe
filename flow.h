@@ -99,15 +99,19 @@ public:
      * @brief Record an image of @p n_bytes and copy @p image_bytes into it.
      *
      * @param n_bytes          Byte-map length. The caller passes the image size.
-     * @param fmt              Com when the caller already knows this is a COM
-     *                         path. Otherwise Mz. Not guessed from bytes.
+     * @param fmt              Format the caller already decided. Not guessed.
      * @param image_file_base  File offset of the first image byte.
      * @param entry            Entry linear.
      * @param entry_frame      Paragraph frame. May be negative.
      * @param image_bytes      Load-image slice. Copied. Not a new PSP prefix.
+     * @param psp_in_bytes     True when @p image_bytes already includes the
+     *                         256-byte PSP or the zero hole. Forwarded to
+     *                         @c image_from_load. No default: @c cfg_build
+     *                         is the only production caller and must say.
      */
     explicit FlowTrace(uint32_t n_bytes, Fmt fmt, FileOff image_file_base, Lin entry,
-                       int32_t entry_frame, std::span<const uint8_t> image_bytes);
+                       int32_t entry_frame, std::span<const uint8_t> image_bytes,
+                       bool psp_in_bytes);
 
     /**
      * @brief Record a leader. Does not claim bytes.
@@ -162,9 +166,11 @@ private:
 };
 
 inline FlowTrace::FlowTrace(uint32_t n_bytes, Fmt fmt, FileOff image_file_base, Lin entry,
-                            int32_t entry_frame, std::span<const uint8_t> image_bytes)
+                            int32_t entry_frame, std::span<const uint8_t> image_bytes,
+                            bool psp_in_bytes)
     : bytes_(n_bytes)
-    , image_(image_from_load(fmt, image_bytes, image_file_base, entry, entry_frame))
+    , image_(image_from_load(fmt, image_bytes, image_file_base, entry, entry_frame,
+                             psp_in_bytes))
 {
 }
 

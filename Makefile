@@ -159,7 +159,7 @@ test_p1_model: tests/test_p1_model.cpp image_model.h bytemap.h facts.h
 	$(CXX) $(P1_TEST_CXXFLAGS) -I. $(CATCH_CFLAGS) -o $@ \
 		tests/test_p1_model.cpp $(CATCH_LIBS) -Wl,-rpath,$(HOME)/.local/lib64
 
-test_p1_flow: tests/test_p1_flow.cpp decode.h flow.h image_model.h bytemap.h facts.h
+test_p1_flow: tests/test_p1_flow.cpp cfg.h decode.h flow.h image_model.h bytemap.h facts.h options.h exe.h
 	$(CXX) $(P1_TEST_CXXFLAGS) -I. $(CAPSTONE_CFLAGS) $(CATCH_CFLAGS) -o $@ \
 		tests/test_p1_flow.cpp $(CAPSTONE_LIBS) $(CATCH_LIBS) -Wl,-rpath,$(HOME)/.local/lib64
 

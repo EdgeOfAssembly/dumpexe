@@ -20,9 +20,10 @@ namespace dx
 /**
  * @brief Byte offset from the start of the load image.
  *
- * Byte 0 is the first byte of the load image. COM listing bytes are not
- * prefixed with a PSP; the PSP hole is @c Image::virtual_below, not a
- * negative @c Lin.
+ * Byte 0 is the first byte of the load image. When a COM slice does not
+ * already include the PSP, the hole is @c Image::virtual_below (0x100),
+ * not a negative @c Lin. A buffer that already contains the PSP or the
+ * zero hole stores @c virtual_below 0 so the prefix is not counted twice.
  */
 struct Lin
 {
@@ -208,7 +209,9 @@ struct Image
  *
  * One segment, id 0, @c base_lin 0, size = @p bytes.size(). Kind is
  * @c Code for @c Fmt::Com and @c Fmt::Mz, otherwise @c Unknown.
- * @c virtual_below is @c 0x100 for @c Fmt::Com and 0 otherwise.
+ * @c virtual_below is @c 0x100 only when @p fmt is @c Fmt::Com and
+ * @p psp_in_bytes is false. A COM buffer that already contains the PSP
+ * or the zero hole stores 0. @c Fmt::Mz stays 0.
  * Relocations stay empty. The byte vector is a copy of @p bytes, not a
  * PSP-prefixed COM image.
  *
@@ -227,6 +230,11 @@ struct Image
  * @param[in] entry           Entry linear inside the load image.
  * @param[in] entry_frame     Paragraph frame of @p entry (`cs * 16`).
  *                            May be negative. Not a @c uint32_t base.
+ * @param[in] psp_in_bytes    True when @p bytes already contains the
+ *                            256-byte PSP or the zero hole. COM then
+ *                            stores @c virtual_below 0. Default false
+ *                            keeps the hole for a bare COM program.
+ *                            Ignored unless @p fmt is @c Fmt::Com.
  * @return Image with one segment and one entry. @c relocs is empty.
  * @note Does not read an MZ header and does not invent relocations.
  */
@@ -234,13 +242,15 @@ inline Image image_from_load(Fmt fmt,
                              std::span<const uint8_t> bytes,
                              FileOff image_file_base,
                              Lin entry,
-                             int32_t entry_frame)
+                             int32_t entry_frame,
+                             bool psp_in_bytes = false)
 {
     Image image{};
     image.fmt = fmt;
     image.bytes.assign(bytes.begin(), bytes.end());
     image.image_file_base = image_file_base;
-    image.virtual_below = (fmt == Fmt::Com) ? 0x100u : 0u;
+    image.virtual_below =
+        (fmt == Fmt::Com && !psp_in_bytes) ? 0x100u : 0u;
 
     Segment segment{};
     segment.id = 0;

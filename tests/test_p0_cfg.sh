@@ -106,6 +106,32 @@ def write_sparse(path, size, prefix):
 # P1: a second nearby seed does not promote. Both seeds fall outside the image.
 (td / "second_nearby.com").write_bytes(bytes.fromhex("b401cd21b401cd21c3"))
 
+# F6: 67-byte COM. X is linear 0x130 (file 0x30, byte C0). File 0x2F is 00.
+# Fill is 90. INT 21h at file 0x38 is linear 0x138, so site-8 is X.
+# nb1: one INT, X stays speculative, so the opcode-00 walk emits 012F 00C0.
+# nb2: a second INT nearby-seeds X again and must not promote.
+# nb3: nb2 plus EB F4 at file 0x3A (jmp 0130). That later enqueue promotes,
+# so the opcode-00 walk stops and 012F is not a row.
+# nb4: entry EB 2E (jmp 0130) plus both INTs. X is real before the walk.
+def com67(entry, at_3a, second_int, ret_at_3c=False):
+    blob = bytearray(b"\x90" * 0x43)
+    blob[0:len(entry)] = entry
+    blob[0x2F] = 0x00
+    blob[0x30] = 0xC0
+    blob[0x38:0x3A] = b"\xCD\x21"
+    blob[0x3A:0x3A + len(at_3a)] = at_3a
+    if ret_at_3c:
+        blob[0x3C] = 0xC3
+    if second_int:
+        blob[0x40:0x43] = b"\xCD\x21\xC3"
+    assert len(blob) == 0x43
+    return bytes(blob)
+
+(td / "nb1.com").write_bytes(com67(b"\xC3", b"\xC3", False))
+(td / "nb2.com").write_bytes(com67(b"\xC3", b"\xC3", True))
+(td / "nb3.com").write_bytes(com67(b"\xC3", b"\xEB\xF4", True, True))
+(td / "nb4.com").write_bytes(com67(b"\xEB\x2E", b"\xC3", True))
+
 # N-test RG4: CS=0100h IP=0, header 32 bytes, minalloc 0x10.
 # INT 21h at linear 0x200 sits under the entry frame. Frame 0 must cover it.
 rg4 = bytearray(0x1100)
@@ -514,6 +540,74 @@ print("second nearby", "cd", len(cd), "notes", notes, "ah", ah)
 PY
 }
 
+# F6 nearby pins. -d listing only. A second nearby seed must not promote
+# (nb1, nb2 keep row 012F 00C0). A later real enqueue must still promote
+# (nb3, nb4 have no row at 012F).
+dump_nb() {
+  local name=$1
+  "$BIN" -d --no-asm-file --no-repack "$TD/$name.com" >"$TD/$name.out" 2>"$TD/$name.err"
+}
+
+case_nb1() {
+  dump_nb nb1 || return 1
+  python3 - "$TD/nb1.out" << 'PY'
+import re, sys
+text = open(sys.argv[1], errors="replace").read()
+rows = re.findall(r"^\s+([0-9A-Fa-f]+)\s+([0-9A-F]+)\s+(\S+)", text, re.M)
+if not rows:
+    sys.exit("no decoded rows:\n" + text)
+hit = [r for r in rows if r[0].upper() == "012F" and r[1] == "00C0"]
+if not hit:
+    sys.exit("no row 012F 00C0:\n" + text)
+print("nb1", " ".join(hit[0]))
+PY
+}
+
+case_nb2() {
+  dump_nb nb2 || return 1
+  python3 - "$TD/nb2.out" << 'PY'
+import re, sys
+text = open(sys.argv[1], errors="replace").read()
+rows = re.findall(r"^\s+([0-9A-Fa-f]+)\s+([0-9A-F]+)\s+(\S+)", text, re.M)
+if not rows:
+    sys.exit("no decoded rows:\n" + text)
+hit = [r for r in rows if r[0].upper() == "012F" and r[1] == "00C0"]
+if not hit:
+    sys.exit("no row 012F 00C0 (second nearby seed promoted?):\n" + text)
+print("nb2", " ".join(hit[0]))
+PY
+}
+
+case_nb3() {
+  dump_nb nb3 || return 1
+  python3 - "$TD/nb3.out" << 'PY'
+import re, sys
+text = open(sys.argv[1], errors="replace").read()
+rows = re.findall(r"^\s+([0-9A-Fa-f]+)\s+([0-9A-F]+)\s+(\S+)", text, re.M)
+if not rows:
+    sys.exit("no decoded rows:\n" + text)
+bad = [r for r in rows if r[0].upper() == "012F"]
+if bad:
+    sys.exit("row at 012F (later enqueue did not promote?): " + " ".join(bad[0]) + "\n" + text)
+print("nb3 no 012F")
+PY
+}
+
+case_nb4() {
+  dump_nb nb4 || return 1
+  python3 - "$TD/nb4.out" << 'PY'
+import re, sys
+text = open(sys.argv[1], errors="replace").read()
+rows = re.findall(r"^\s+([0-9A-Fa-f]+)\s+([0-9A-F]+)\s+(\S+)", text, re.M)
+if not rows:
+    sys.exit("no decoded rows:\n" + text)
+bad = [r for r in rows if r[0].upper() == "012F"]
+if bad:
+    sys.exit("row at 012F: " + " ".join(bad[0]) + "\n" + text)
+print("nb4 no 012F")
+PY
+}
+
 # Moved from test_p0_linear.sh. Same assertion. Does not need uasm.
 case_rg4_int_below_frame() {
   "$BIN" --json --no-asm-file --no-repack "$TD/rg4.exe" \
@@ -604,6 +698,10 @@ check n5_pfx case_n5_pfx
 check real_leader_stop case_real_leader_stop
 check first_insn_cover case_first_insn_cover
 check second_nearby case_second_nearby
+check nb1 case_nb1
+check nb2 case_nb2
+check nb3 case_nb3
+check nb4 case_nb4
 check rg4_int_below_frame case_rg4_int_below_frame
 check max_image case_max_image
 

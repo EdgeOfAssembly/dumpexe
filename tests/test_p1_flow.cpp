@@ -1,9 +1,11 @@
 /**
  * @file test_p1_flow.cpp
- * @brief Catch2 checks for the opcode-00 stop, speculative marks, and decode.
+ * @brief Catch2 checks for the opcode-00 stop, speculative marks, decode, and flow.
  *
- * No cfg_build. cfg_build calls mark_spec_created only when a leader is Created.
+ * cfg_build calls mark_spec_created only when a leader is Created.
+ * Tests that turn recording on clear the hook before they return.
  */
+#include "cfg.h"
 #include "decode.h"
 #include "flow.h"
 
@@ -11,6 +13,8 @@
 
 #include <cstdint>
 #include <set>
+#include <span>
+#include <vector>
 
 TEST_CASE("stop_opcode00 is false for the first instruction of the walk", "[flow]")
 {
@@ -109,4 +113,179 @@ TEST_CASE("Decoder maps opcode 98 to cbw and 99 to cwd", "[decode]")
     const uint8_t cwd[] = {0x99};
     REQUIRE(decoder.at(cwd, dx::Lin{0}, insn));
     REQUIRE(insn.mnem == dx::Mnem::Cwd);
+}
+
+namespace
+{
+
+/**
+ * @brief Sets the flow-recording hook and clears it on every exit.
+ */
+class RecordFlow
+{
+public:
+    /**
+     * @brief Store @p on in the process hook.
+     *
+     * @param on True records the next @c cfg_build. False leaves flow off.
+     */
+    explicit RecordFlow(bool on)
+    {
+        cfg_set_record_flow(on);
+    }
+
+    /** @brief Force the hook off so a later test does not inherit it. */
+    ~RecordFlow()
+    {
+        cfg_set_record_flow(false);
+    }
+
+    RecordFlow(const RecordFlow&) = delete;
+    RecordFlow& operator=(const RecordFlow&) = delete;
+};
+
+/**
+ * @brief Block-start linears in map order.
+ *
+ * @param graph Graph from @c cfg_build.
+ * @return Start IP of each block.
+ */
+std::vector<CfgLin> block_starts(const CfgGraph& graph)
+{
+    std::vector<CfgLin> starts;
+    starts.reserve(graph.blocks.size());
+    for (const auto& item : graph.blocks)
+    {
+        starts.push_back(item.first);
+    }
+    return starts;
+}
+
+/**
+ * @brief True when @p trace holds one fact with this why and strength.
+ *
+ * @param trace    Recorded walk.
+ * @param why      Expected reason.
+ * @param strength Expected strength.
+ * @return true if any fact matches both fields.
+ */
+bool has_fact(const dx::FlowTrace& trace, dx::Why why, dx::Strength strength)
+{
+    for (const dx::Fact& fact : trace.facts().all())
+    {
+        if (fact.why == why && fact.strength == strength)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * @brief True when a fact matches why, strength, and subject linear.
+ *
+ * @param trace    Recorded walk.
+ * @param why      Expected reason.
+ * @param strength Expected strength.
+ * @param subject  Expected subject linear.
+ * @return true if any fact matches all three.
+ */
+bool has_fact_at(const dx::FlowTrace& trace, dx::Why why, dx::Strength strength,
+                 uint32_t subject)
+{
+    for (const dx::Fact& fact : trace.facts().all())
+    {
+        if (fact.why == why && fact.strength == strength && fact.subject.v == subject)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+} /* namespace */
+
+TEST_CASE("cfg_build leaves flow disengaged by default", "[flow]")
+{
+    REQUIRE_FALSE(cfg_record_flow());
+    const std::vector<uint8_t> image{0xC3};
+    const CfgGraph graph = cfg_build(image, 0, 0, 0, 0, false);
+    REQUIRE_FALSE(graph.flow.has_value());
+    REQUIRE_FALSE(cfg_record_flow());
+}
+
+TEST_CASE("COM psp_in_bytes does not count the PSP twice", "[flow]")
+{
+    const RecordFlow guard(true);
+    std::vector<uint8_t> image(256, 0);
+    image.push_back(0xC3);
+    const CfgGraph graph = cfg_build(image, 0x100, 0, 0, 0, false, 20000, {}, 0,
+                                     dx::Fmt::Com, true);
+    REQUIRE(graph.flow.has_value());
+    REQUIRE(graph.flow->image().fmt == dx::Fmt::Com);
+    REQUIRE(graph.flow->image().virtual_below == 0u);
+    REQUIRE(graph.flow->image().bytes.size() == 257u);
+}
+
+TEST_CASE("equal CS and frame 0 stay Mz when the caller does not say Com", "[flow]")
+{
+    const RecordFlow guard(true);
+    const std::vector<uint8_t> image{0xC3};
+    // cs_seg == file_cs, empty relocs, frame 0. The deleted guess said Com.
+    const CfgGraph graph = cfg_build(image, 0, 0, 0, 0, false);
+    REQUIRE(graph.flow.has_value());
+    REQUIRE(graph.flow->image().fmt == dx::Fmt::Mz);
+    REQUIRE(graph.flow->image().virtual_below == 0u);
+}
+
+TEST_CASE("jz fall-through is Fallthrough and leaders match the hook off", "[flow]")
+{
+    const RecordFlow guard(false);
+    const std::vector<uint8_t> image{0x74, 0x00, 0xC3};
+    const CfgGraph off = cfg_build(image, 0, 0, 0, 0, false);
+    REQUIRE_FALSE(off.flow.has_value());
+    cfg_set_record_flow(true);
+    const CfgGraph on = cfg_build(image, 0, 0, 0, 0, false);
+    REQUIRE(on.flow.has_value());
+    const std::vector<CfgLin> off_starts = block_starts(off);
+    const std::vector<CfgLin> on_starts = block_starts(on);
+    REQUIRE(off_starts == on_starts);
+    REQUIRE(on_starts == std::vector<CfgLin>{0u, 2u});
+    REQUIRE(has_fact(*on.flow, dx::Why::Fallthrough, dx::Strength::Proven));
+}
+
+TEST_CASE("INT 21h reached only by the scan is IntScan Likely", "[flow]")
+{
+    const RecordFlow guard(true);
+    constexpr CfgLin k_entry = 0x100u;
+    constexpr CfgLin k_int = 0x114u;
+    std::vector<uint8_t> image(static_cast<std::size_t>(k_int) + 2u, 0);
+    image[k_entry] = 0xC3;
+    for (CfgLin at = k_entry + 1u; at < k_int; ++at)
+    {
+        image[at] = 0x90;
+    }
+    image[k_int] = 0xCD;
+    image[static_cast<std::size_t>(k_int) + 1u] = 0x21;
+    const CfgGraph graph = cfg_build(image, k_entry, 0, 0, 0, false, 20000, {}, 0,
+                                     dx::Fmt::Com, true);
+    REQUIRE(graph.flow.has_value());
+    const dx::FlowTrace& trace = *graph.flow;
+    REQUIRE(has_fact_at(trace, dx::Why::IntScan, dx::Strength::Likely, k_int));
+    REQUIRE(has_fact_at(trace, dx::Why::HintIntScan, dx::Strength::Hint, k_int - 16u));
+    REQUIRE(has_fact_at(trace, dx::Why::HintIntScan, dx::Strength::Hint, k_int - 8u));
+}
+
+TEST_CASE("image_from_load psp_in_bytes true clears the COM hole", "[image]")
+{
+    const uint8_t raw[] = {0xC3};
+    const dx::Image image = dx::image_from_load(dx::Fmt::Com,
+                                                 std::span<const uint8_t>(raw, 1),
+                                                 dx::FileOff{0},
+                                                 dx::Lin{0},
+                                                 0,
+                                                 true);
+    REQUIRE(image.fmt == dx::Fmt::Com);
+    REQUIRE(image.virtual_below == 0u);
+    REQUIRE(image.bytes.size() == 1u);
 }

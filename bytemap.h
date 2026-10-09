@@ -188,7 +188,10 @@ public:
      *
      * Bytes outside the map are ignored. The existing @c item is kept.
      * A @c CodeTail that loses the @c CodeHead of its item is also marked
-     * @c Conflict so a tail is never left without its head.
+     * @c Conflict so a tail is never left without its head. That repair
+     * visits only the neighbourhood of the punched span: 14 bytes before
+     * @p at through 14 bytes after the punched end. An instruction is at
+     * most 15 bytes. Cells outside that window are not touched.
      *
      * @param[in] at  First byte to mark. Out of range marks nothing.
      * @param[in] len Byte count. Zero marks nothing.
@@ -285,13 +288,20 @@ private:
     static uint16_t claim_flags(Strength strength);
 
     /**
-     * @brief Turn orphan code tails into @c Conflict.
+     * @brief Turn orphan code tails next to a punch into @c Conflict.
      *
-     * A tail must sit in the span of a live @c CodeHead of the same item.
-     * Punching out a head, or a byte in the middle of an item, would
-     * otherwise leave a tail that the invariant forbids.
+     * @p at and @p end are the half-open range just marked @c Conflict.
+     * An instruction is at most 15 bytes, so the only bytes that can change
+     * are in [@p at >= 14 ? @p at - 14 : 0, min(n, @p end + 14)].
+     * Cells outside that window are not read or written. Inside it, a tail
+     * must still sit in the span of a live @c CodeHead of the same item.
+     * A tail at the start of the window, before any gap, is left alone:
+     * its head began before the window and cannot cover the punch.
+     *
+     * @param[in] at   First punched index.
+     * @param[in] end  Exclusive punched end. No repair when @p end <= @p at.
      */
-    void repair_orphan_tails();
+    void repair_orphan_tails(uint32_t at, uint32_t end);
 
     /**
      * @brief Check the public invariants.
@@ -346,14 +356,33 @@ inline uint16_t ByteMap::claim_flags(Strength strength)
     return 0;
 }
 
-inline void ByteMap::repair_orphan_tails()
+inline void ByteMap::repair_orphan_tails(uint32_t at, uint32_t end)
 {
     const uint32_t n = static_cast<uint32_t>(cells_.size());
+    if (at >= n || end <= at)
+    {
+        return;
+    }
+    if (end > n)
+    {
+        end = n;
+    }
+    // 15-byte instruction: 1 head + at most 14 tails.
+    constexpr uint32_t k_tail = 14u;
+    const uint32_t lo = (at >= k_tail) ? (at - k_tail) : 0u;
+    const uint64_t hi64 = static_cast<uint64_t>(end) + static_cast<uint64_t>(k_tail);
+    const uint32_t hi = (hi64 > static_cast<uint64_t>(n))
+                            ? n
+                            : static_cast<uint32_t>(hi64);
+
     uint32_t active_head = n;
     uint32_t active_end = 0;
     uint32_t active_item = 0;
     uint8_t active_len = 0;
-    for (uint32_t i = 0; i < n; ++i)
+    // Stays false while the window still opens on tails of a head that
+    // starts before lo. That head cannot reach the punch.
+    bool gap_seen = false;
+    for (uint32_t i = lo; i < hi; ++i)
     {
         const BState state = cells_[i].state;
         if (state == BState::CodeHead)
@@ -369,18 +398,20 @@ inline void ByteMap::repair_orphan_tails()
                                  && i < active_end
                                  && cells_[i].item == active_item
                                  && span_[i] == active_len;
-            if (!in_item)
+            if (!in_item && (gap_seen || active_head != n))
             {
                 cells_[i].state = BState::Conflict;
                 cells_[i].sub = static_cast<uint8_t>(ConflictKind::Overlap);
                 active_head = n;
                 active_end = 0;
+                gap_seen = true;
             }
         }
         else
         {
             active_head = n;
             active_end = 0;
+            gap_seen = true;
         }
     }
 }
@@ -449,7 +480,7 @@ inline void ByteMap::mark_conflict(Lin at,
         cells_[i].state = BState::Conflict;
         cells_[i].sub = static_cast<uint8_t>(k);
     }
-    repair_orphan_tails();
+    repair_orphan_tails(at.v, end);
     ConflictNote note{};
     note.at = at.v;
     note.len = end - at.v;
