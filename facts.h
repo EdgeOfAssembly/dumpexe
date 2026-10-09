@@ -34,6 +34,10 @@ constexpr Strength kPromote = Strength::Likely;
 
 /**
  * @brief Why a fact exists. P1 only records the edges the old walk already has.
+ *
+ * @c IntScan, @c Fallthrough, and @c Wrap name enqueues the walk already
+ * performed. They do not add leaders. @c DirectFlow stays the @c note_insn
+ * reason. Existing values are not renumbered.
  */
 enum class Why : uint16_t
 {
@@ -43,7 +47,10 @@ enum class Why : uint16_t
     DirectCall = 3,
     CallFallthroughSpec = 4,
     HintIntScan = 5,
-    DirectFlow = 6
+    DirectFlow = 6,
+    IntScan = 7,
+    Fallthrough = 8,
+    Wrap = 9
 };
 
 /**

@@ -35,6 +35,16 @@ dx::Fact fact_at(dx::Why why,
     return fact;
 }
 
+bool cell_same(const dx::ByteCell& got, const dx::ByteCell& orig)
+{
+    return got.state == orig.state
+           && got.strength == orig.strength
+           && got.sub == orig.sub
+           && got.dtype_or_pad == orig.dtype_or_pad
+           && got.flags == orig.flags
+           && got.item == orig.item;
+}
+
 } /* namespace */
 
 TEST_CASE("image_from_load COM virtual_below and negative frame", "[image]")
@@ -334,4 +344,89 @@ TEST_CASE("FactStore::at is insertion order", "[facts]")
     REQUIRE(at_nine.size() == 1u);
     REQUIRE(at_nine[0].source.v == 5u);
     REQUIRE(store.at(dx::Lin{4}).empty());
+}
+
+TEST_CASE("mark_conflict on a head repairs that instruction's tails only", "[bytemap]")
+{
+    constexpr uint32_t k_n = 200u;
+    dx::ByteMap map(k_n);
+    REQUIRE(map.size() >= 200u);
+    const dx::Fact early = fact_at(dx::Why::Entry, dx::Strength::Proven, 1u, 0u);
+    const dx::Fact later = fact_at(dx::Why::DirectFlow, dx::Strength::Proven, 2u, 10u);
+    REQUIRE(map.claim_code(dx::Lin{0}, 2, 7u, early));
+    REQUIRE(map.claim_code(dx::Lin{10}, 4, 11u, later));
+    const dx::ByteCell head0 = map.at(dx::Lin{0});
+    const dx::ByteCell tail0 = map.at(dx::Lin{1});
+    REQUIRE(head0.state == dx::BState::CodeHead);
+    REQUIRE(tail0.state == dx::BState::CodeTail);
+    REQUIRE(map.at(dx::Lin{10}).state == dx::BState::CodeHead);
+    REQUIRE(map.at(dx::Lin{11}).state == dx::BState::CodeTail);
+    REQUIRE(map.at(dx::Lin{13}).state == dx::BState::CodeTail);
+
+    const dx::Fact punch_a = fact_at(dx::Why::DirectFlow, dx::Strength::Proven, 2u, 10u);
+    const dx::Fact punch_b = fact_at(dx::Why::DirectJmp, dx::Strength::Proven, 3u, 10u);
+    map.mark_conflict(dx::Lin{10}, 1u, dx::ConflictKind::Overlap, punch_a, punch_b);
+
+    REQUIRE(cell_same(map.at(dx::Lin{0}), head0));
+    REQUIRE(cell_same(map.at(dx::Lin{1}), tail0));
+    REQUIRE(map.at(dx::Lin{10}).state == dx::BState::Conflict);
+    REQUIRE(map.at(dx::Lin{10}).item == 11u);
+    REQUIRE(map.at(dx::Lin{10}).sub == static_cast<uint8_t>(dx::ConflictKind::Overlap));
+    for (uint32_t i = 11u; i <= 13u; ++i)
+    {
+        REQUIRE(map.at(dx::Lin{i}).state == dx::BState::Conflict);
+        REQUIRE(map.at(dx::Lin{i}).item == 11u);
+        REQUIRE(map.at(dx::Lin{i}).sub == static_cast<uint8_t>(dx::ConflictKind::Overlap));
+    }
+    REQUIRE(map.at(dx::Lin{14}).state == dx::BState::Unknown);
+    REQUIRE(map.at(dx::Lin{199}).state == dx::BState::Unknown);
+}
+
+TEST_CASE("mark_conflict near the end does not clear a claim at 0", "[bytemap]")
+{
+    constexpr uint32_t k_n = 200u;
+    dx::ByteMap map(k_n);
+    REQUIRE(map.size() >= 200u);
+    const dx::Fact early = fact_at(dx::Why::Entry, dx::Strength::Proven, 1u, 0u);
+    const dx::Fact tail_insn = fact_at(dx::Why::DirectFlow, dx::Strength::Proven, 4u, 170u);
+    const dx::Fact end_insn = fact_at(dx::Why::DirectFlow, dx::Strength::Proven, 5u, 196u);
+    REQUIRE(map.claim_code(dx::Lin{0}, 2, 7u, early));
+    REQUIRE(map.claim_code(dx::Lin{170}, 15, 8u, tail_insn));
+    REQUIRE(map.claim_code(dx::Lin{196}, 4, 9u, end_insn));
+
+    std::vector<dx::ByteCell> outside;
+    outside.reserve(182u);
+    for (uint32_t i = 0; i < 182u; ++i)
+    {
+        outside.push_back(map.at(dx::Lin{i}));
+    }
+    REQUIRE(outside[0].state == dx::BState::CodeHead);
+    REQUIRE(outside[1].state == dx::BState::CodeTail);
+    REQUIRE(map.at(dx::Lin{170}).state == dx::BState::CodeHead);
+    REQUIRE(map.at(dx::Lin{184}).state == dx::BState::CodeTail);
+
+    const dx::Fact punch_a = fact_at(dx::Why::DirectFlow, dx::Strength::Proven, 5u, 196u);
+    const dx::Fact punch_b = fact_at(dx::Why::DirectJmp, dx::Strength::Proven, 6u, 196u);
+    map.mark_conflict(dx::Lin{196}, 1u, dx::ConflictKind::Overlap, punch_a, punch_b);
+
+    for (uint32_t i = 0; i < 182u; ++i)
+    {
+        REQUIRE(cell_same(map.at(dx::Lin{i}), outside[static_cast<std::size_t>(i)]));
+    }
+    REQUIRE(map.at(dx::Lin{0}).state == dx::BState::CodeHead);
+    REQUIRE(map.at(dx::Lin{0}).item == 7u);
+    REQUIRE(map.at(dx::Lin{1}).state == dx::BState::CodeTail);
+    REQUIRE(map.at(dx::Lin{1}).item == 7u);
+    REQUIRE(map.at(dx::Lin{182}).state == dx::BState::CodeTail);
+    REQUIRE(map.at(dx::Lin{182}).item == 8u);
+    REQUIRE(map.at(dx::Lin{184}).state == dx::BState::CodeTail);
+    REQUIRE(map.at(dx::Lin{184}).item == 8u);
+    REQUIRE(map.at(dx::Lin{196}).state == dx::BState::Conflict);
+    REQUIRE(map.at(dx::Lin{196}).item == 9u);
+    for (uint32_t i = 197u; i <= 199u; ++i)
+    {
+        REQUIRE(map.at(dx::Lin{i}).state == dx::BState::Conflict);
+        REQUIRE(map.at(dx::Lin{i}).item == 9u);
+        REQUIRE(map.at(dx::Lin{i}).sub == static_cast<uint8_t>(dx::ConflictKind::Overlap));
+    }
 }

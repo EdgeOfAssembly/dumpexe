@@ -4313,10 +4313,16 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
     if (entry_in_window)
     {
         g = cfg_build_annotated(fileData, image_file_off, len, entry_ip, cs_seg,
-                                file_cs, cfg_opts, relocs, entry_seg_base);
+                                file_cs, cfg_opts, relocs, entry_seg_base,
+                                uasm_com ? dx::Fmt::Com : dx::Fmt::Mz, uasm_com);
         if (cfg_out != nullptr)
         {
+            // Printers do not read flow. Move it aside so the copy does not
+            // duplicate the trace, then put it back on the local graph.
+            std::optional<dx::FlowTrace> held = std::move(g.flow);
+            g.flow.reset();
             *cfg_out = g;
+            g.flow = std::move(held);
         }
     }
     if (g.blocks.empty() && !opts.uasm)

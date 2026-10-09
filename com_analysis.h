@@ -293,7 +293,7 @@ static inline int analyze_com(const Options& opts,
         }
         else if (has_psp) {
             cfg_analyze_image(data, 0, data.size(), COM_ENTRY_IP, opts.loadBase,
-                              opts.loadBase, opts);
+                              opts.loadBase, opts, {}, 0, dx::Fmt::Com, true);
         } else {
             // Prepend 0x100 zero bytes so IPs match DOS (code at 0100h).
             std::vector<uint8_t> virt(COM_PSP_SIZE + data.size(), 0);
@@ -301,7 +301,8 @@ static inline int analyze_com(const Options& opts,
             // file offsets in dump will be wrong by +100h for virt — pass file base 0
             // and note in analysis; use image that starts at 0 with code at 100h.
             CfgGraph g = cfg_build(virt, COM_ENTRY_IP, opts.loadBase, opts.loadBase, 0,
-                                   opts.cfgFollowCalls, 20000);
+                                   opts.cfgFollowCalls, 20000, {}, 0,
+                                   dx::Fmt::Com, true);
             cfg_annotate(g, virt);
             // Fix displayed file offsets: real file off = ip - 0x100
             for (auto& [ip, blk] : g.blocks) {
