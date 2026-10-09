@@ -598,7 +598,7 @@ json_mz_22() {
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["tool"] == "dumpexe", d.get("tool")
-assert d["version"] == "2.25", d.get("version")
+assert d["version"] == "2.26", d.get("version")
 mz = d["mz"]
 assert mz["extra_bytes"] == 10, mz.get("extra_bytes")
 assert mz["min_alloc"] == 14, mz.get("min_alloc")
@@ -636,7 +636,7 @@ json_com_entry() {
   python3 - "$TD/com.json" "$TD/com_psp_flag.json" << 'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert d["version"] == "2.25"
+assert d["version"] == "2.26"
 assert d["format"] == "com"
 assert d["com"]["file_size"] == 1
 assert d["com"]["entry_ip"] == "0100"
@@ -670,7 +670,7 @@ check json_com_psp json_com_psp
 check version_capstone bash -c "
   set -euo pipefail
   '$BIN' -v >'$TD/ver.txt'
-  grep -q 'dumpexe 2.25' '$TD/ver.txt'
+  grep -q 'dumpexe 2.26' '$TD/ver.txt'
   grep -Eq 'Capstone[[:space:]]+[0-9]+\\.[0-9]+' '$TD/ver.txt'
 "
 
@@ -697,7 +697,7 @@ l11j_mz_json_over() {
   [[ "$rc" -eq 1 ]] &&
     n=$(grep -F -c -- "$line" "$err") &&
     [[ "$n" -eq 1 ]] &&
-    l11j_one_object "$out" mz 2.25 "$TD/cap32.exe"
+    l11j_one_object "$out" mz 2.26 "$TD/cap32.exe"
 }
 
 l11j_mz_text_over() {
@@ -718,7 +718,7 @@ l11j_mz_json_ok() {
 import json, sys
 d = json.load(open(sys.argv[1], encoding="utf-8"))
 assert d["format"] == "mz", d.get("format")
-assert d["version"] == "2.25", d.get("version")
+assert d["version"] == "2.26", d.get("version")
 assert "error" not in d, d.get("error")
 assert d["mz"]["load_image_size"] == 32, d["mz"]
 PY
@@ -731,7 +731,7 @@ l11j_com_json_over() {
   [[ "$rc" -eq 1 ]] &&
     n=$(grep -F -c -- "$line" "$err") &&
     [[ "$n" -eq 1 ]] &&
-    l11j_one_object "$out" com 2.25 "$TD/tiny.com"
+    l11j_one_object "$out" com 2.26 "$TD/tiny.com"
 }
 
 l11j_com_json_ok() {
@@ -742,7 +742,7 @@ l11j_com_json_ok() {
 import json, sys
 d = json.load(open(sys.argv[1], encoding="utf-8"))
 assert d["format"] == "com", d.get("format")
-assert d["version"] == "2.25", d.get("version")
+assert d["version"] == "2.26", d.get("version")
 assert "error" not in d, d.get("error")
 assert d["com"]["load_model"] == "org100", d["com"]
 assert d["com"]["file_size"] == 1, d["com"]
