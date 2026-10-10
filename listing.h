@@ -50,6 +50,7 @@
 #include "toolchain.h"
 #include "turbo_pascal.h"
 #include "repack.h"
+#include "uasm_scratch.h"
 
 //=============================================================================
 // Paths
@@ -1655,19 +1656,27 @@ static inline bool listing_uasm_stand_behind(const CfgInsn& in,
 /**
  * @brief Scratch directory for one listing_emit_uasm call.
  *
- * The directory is created with mkdtemp under /tmp. Destruction unlinks every
- * directory entry except "." and "..", then removes the directory, so an
- * unexpected assembler .err cannot leak /tmp/dumpexe-uasm-*.
+ * listing_uasm_scratch_template picks the mkdtemp parent: an absolute
+ * existing TMPDIR, otherwise /tmp. Destruction unlinks every directory
+ * entry except "." and "..", then removes the directory, so an unexpected
+ * assembler .err cannot leak a dumpexe-uasm-* directory.
  */
 class ListingUasmScratch
 {
 public:
     /**
-     * @brief Create the scratch directory and remember the two paths.
+     * @brief Create the scratch directory and remember its paths.
+     *
+     * mkdtemp failure leaves the object not ready.
      */
     ListingUasmScratch()
     {
-        char tmpl[] = "/tmp/dumpexe-uasm-XXXXXX";
+        char tmpl[kListingUasmScratchBound] = {};
+        const char* env = std::getenv("TMPDIR");
+        if (!listing_uasm_scratch_template(env, tmpl, sizeof(tmpl)))
+        {
+            return;
+        }
         if (::mkdtemp(tmpl) == nullptr)
         {
             return;
@@ -3551,18 +3560,16 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
                             verify_rejected = got.dropped;
                             verify_unverified = got.unverified;
                             std::cerr << std::format(
-                                "listing: --uasm-verify: assembler rejected {} "
-                                "candidates, unverified {}\n",
-                                got.dropped,
-                                got.unverified);
+                                "listing: --uasm-verify: {}\n",
+                                listing_uasm_rejected_clause(got.dropped,
+                                                             got.unverified));
                         }
                         else if (got.dropped > 0)
                         {
                             verify_rejected = got.dropped;
                             std::cerr << std::format(
-                                "listing: --uasm-verify: assembler rejected {} "
-                                "candidates\n",
-                                got.dropped);
+                                "listing: --uasm-verify: {}\n",
+                                listing_uasm_rejected_clause(got.dropped, 0));
                         }
                     }
                 }
@@ -4022,16 +4029,16 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
     }
     else if (verify_unverified > 0)
     {
+        // Singular only when the rejected count is 1. Zero stays plural.
         out << std::format(
-            "; NOT VERIFIED (assembler rejected {} candidates, unverified {})\n",
-            verify_rejected,
-            verify_unverified);
+            "; NOT VERIFIED ({})\n",
+            listing_uasm_rejected_clause(verify_rejected, verify_unverified));
     }
     else if (verify_rejected > 0)
     {
         out << std::format(
-            "; NOT VERIFIED (assembler rejected {} candidates)\n",
-            verify_rejected);
+            "; NOT VERIFIED ({})\n",
+            listing_uasm_rejected_clause(verify_rejected, 0));
     }
     else if (verify_no_cands)
     {

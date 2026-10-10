@@ -2,9 +2,10 @@
  * @file bytemap.h
  * @brief Per-byte claims for code, data, and padding, plus retract.
  *
- * Hint strength never writes a cell. Equal-or-stronger code overlap becomes
- * @c Conflict and does not replace the old item. A weaker overlap is rejected
- * with no write. @c retract(0) is a no-op because unit 0 is not speculative.
+ * Hint strength never writes a cell. A strictly weaker overlap is rejected
+ * with no write. Equal-strength code overlap becomes @c Conflict and keeps
+ * the old item. A strictly stronger code claim replaces that code.
+ * @c retract(0) is a no-op because unit 0 is not speculative.
  */
 #ifndef BYTEMAP_H
 #define BYTEMAP_H
@@ -132,17 +133,24 @@ public:
      * only when @p why.strength is @c Likely.
      *
      * Overlap with existing code: a strictly weaker new strength returns
-     * false and changes nothing. Equal or stronger strength marks
-     * @c Conflict on the overlapping bytes, keeps the old item, and
-     * returns false. Data under an equal-or-stronger code claim becomes
+     * false and changes nothing. Equal strength marks @c Conflict on the
+     * overlapping bytes, keeps the old item, and returns false. A strictly
+     * stronger code claim replaces every overlapped instruction when the
+     * span has no data cell and no @c Conflict cell, then returns true.
+     * The whole instruction is cleared, not only the overlapped bytes.
+     * @c ByteCell::item is not a linear address. A tail's head is the
+     * @c CodeHead in the previous 14 bytes with the same item whose span
+     * covers that tail. Data under an equal-or-stronger code claim becomes
      * @c CodeOnData. Padding loses to any promoting code claim.
      *
      * @param[in] head First byte of the instruction.
      * @param[in] len  Instruction length, 1..15.
      * @param[in] item Caller item id stored on every claimed byte.
      * @param[in] why  Justifying fact. @c why.unit is the journal key.
-     * @retval true  The span was Unknown or padding and is now this item.
-     * @retval false Rejected, or overlap marked @c Conflict. No new item.
+     * @retval true  The span is now this item. Unknown, padding, and
+     *               strictly weaker code were replaced.
+     * @retval false Rejected, or an equal-strength or data overlap was
+     *               marked @c Conflict. The new item was not written.
      */
     bool claim_code(Lin head, uint8_t len, uint32_t item, const Fact& why);
 
@@ -323,6 +331,46 @@ private:
      *                      (code hits are @c DataOnCode).
      */
     void conflict_overlaps(uint32_t begin, uint32_t len, const Fact& why, bool from_code);
+
+    /**
+     * @brief Index of the @c CodeHead that owns @p index.
+     *
+     * @c ByteCell::item is not a linear address. A head owns itself. A tail
+     * belongs to the head in the previous 14 bytes with the same item whose
+     * span covers @p index. An instruction is at most 15 bytes, so a head
+     * further back cannot cover the tail.
+     *
+     * @param[in] index Cell index.
+     * @return Head index, or @c cells_.size() when @p index is not code or
+     *         no covering head sits in that window.
+     */
+    uint32_t code_head_at(uint32_t index) const;
+
+    /**
+     * @brief Clear one instruction to @c Unknown.
+     *
+     * Writes @c ByteCell{}, @c unit_of_ 0, and @c span_ 0 on
+     * [@p begin, @p begin + span). A zero span still clears the head byte:
+     * a live head is never stored with span 0. Spans above 15 are capped
+     * so a corrupt length cannot walk the map.
+     *
+     * @param[in] begin First byte of the instruction.
+     * @param[in] span  Head span, normally 1..15.
+     */
+    void clear_code_span(uint32_t begin, uint8_t span);
+
+    /**
+     * @brief Store one code claim the way a first successful claim does.
+     *
+     * Head, tails, @c unit_of_, @c span_, and one journal row. Does not
+     * scan for overlap and does not call @c check_invariants.
+     *
+     * @param[in] begin First byte. The caller already proved the span fits.
+     * @param[in] len   Instruction length, 1..15.
+     * @param[in] item  Caller item id.
+     * @param[in] why   Justifying fact. @c why.unit is the journal key.
+     */
+    void write_code_claim(uint32_t begin, uint8_t len, uint32_t item, const Fact& why);
 };
 
 inline ByteMap::ByteMap(uint32_t n)
@@ -549,6 +597,102 @@ inline void ByteMap::conflict_overlaps(uint32_t begin,
     }
 }
 
+inline uint32_t ByteMap::code_head_at(uint32_t index) const
+{
+    const uint32_t n = static_cast<uint32_t>(cells_.size());
+    if (index >= n)
+    {
+        return n;
+    }
+    if (cells_[index].state == BState::CodeHead)
+    {
+        return index;
+    }
+    if (cells_[index].state != BState::CodeTail)
+    {
+        return n;
+    }
+    const uint32_t item = cells_[index].item;
+    constexpr uint32_t k_back = 14u;
+    const uint32_t farthest = (index >= k_back) ? (index - k_back) : 0u;
+    // Nearest covering head wins. Instructions do not overlap when the
+    // audit invariant holds, so at most one head covers this tail.
+    for (uint32_t head = index; head > farthest;)
+    {
+        --head;
+        if (cells_[head].state != BState::CodeHead)
+        {
+            continue;
+        }
+        if (cells_[head].item != item)
+        {
+            continue;
+        }
+        const uint8_t span = span_[head];
+        if (span < 1u)
+        {
+            continue;
+        }
+        const uint64_t end = static_cast<uint64_t>(head) + static_cast<uint64_t>(span);
+        if (static_cast<uint64_t>(index) < end)
+        {
+            return head;
+        }
+    }
+    return n;
+}
+
+inline void ByteMap::clear_code_span(uint32_t begin, uint8_t span)
+{
+    uint32_t nclear = span;
+    if (nclear < 1u || nclear > 15u)
+    {
+        nclear = 1u;
+    }
+    const uint32_t n = static_cast<uint32_t>(cells_.size());
+    if (begin >= n)
+    {
+        return;
+    }
+    const uint64_t end64 = static_cast<uint64_t>(begin) + static_cast<uint64_t>(nclear);
+    const uint32_t end = (end64 > static_cast<uint64_t>(n))
+                             ? n
+                             : static_cast<uint32_t>(end64);
+    for (uint32_t i = begin; i < end; ++i)
+    {
+        cells_[i] = ByteCell{};
+        unit_of_[i] = 0u;
+        span_[i] = 0u;
+    }
+}
+
+inline void ByteMap::write_code_claim(uint32_t begin, uint8_t len, uint32_t item, const Fact& why)
+{
+    const uint8_t neu = static_cast<uint8_t>(why.strength);
+    const uint16_t flags = claim_flags(why.strength);
+    for (uint32_t k = 0; k < len; ++k)
+    {
+        const uint32_t index = begin + k;
+        ByteCell cell{};
+        cell.state = (k == 0u) ? BState::CodeHead : BState::CodeTail;
+        cell.strength = neu;
+        cell.sub = 0;
+        cell.dtype_or_pad = 0;
+        cell.flags = flags;
+        cell.item = item;
+        cells_[index] = cell;
+        unit_of_[index] = why.unit;
+        span_[index] = len;
+    }
+    JournalRow row{};
+    row.unit = why.unit;
+    row.begin = begin;
+    row.len = len;
+    row.item = item;
+    row.state = BState::CodeHead;
+    journal_.push_back(row);
+}
+
 inline bool ByteMap::claim_code(Lin head, uint8_t len, uint32_t item, const Fact& why)
 {
     if (!promotes(why.strength))
@@ -569,15 +713,46 @@ inline bool ByteMap::claim_code(Lin head, uint8_t len, uint32_t item, const Fact
     bool code_hit = false;
     bool data_hit = false;
     bool blocked = false;
+    bool equal_code = false;
+    // One slot per overlapped byte. A 15-byte claim covers at most 15 insns.
+    constexpr uint32_t k_max_insns = 15u;
+    uint32_t heads[k_max_insns] = {};
+    uint8_t head_span[k_max_insns] = {};
+    uint32_t nheads = 0u;
     for (uint32_t k = 0; k < len; ++k)
     {
-        const ByteCell& cell = cells_[head.v + k];
+        const uint32_t index = head.v + k;
+        const ByteCell& cell = cells_[index];
         if (cell.state == BState::CodeHead || cell.state == BState::CodeTail)
         {
             code_hit = true;
             if (neu < cell.strength)
             {
                 weaker = true;
+            }
+            else if (neu == cell.strength)
+            {
+                equal_code = true;
+            }
+            const uint32_t owned = code_head_at(index);
+            if (owned >= cells_.size())
+            {
+                continue;
+            }
+            bool seen = false;
+            for (uint32_t s = 0; s < nheads; ++s)
+            {
+                if (heads[s] == owned)
+                {
+                    seen = true;
+                    break;
+                }
+            }
+            if (!seen && nheads < k_max_insns)
+            {
+                heads[nheads] = owned;
+                head_span[nheads] = span_[owned];
+                ++nheads;
             }
         }
         else if (cell.state == BState::Data)
@@ -597,6 +772,18 @@ inline bool ByteMap::claim_code(Lin head, uint8_t len, uint32_t item, const Fact
     {
         return false;
     }
+    // Every overlapped code byte is strictly weaker, and nothing in the
+    // span is data or Conflict. Equal strength stays on the conflict path.
+    if (code_hit && !data_hit && !blocked && !equal_code)
+    {
+        for (uint32_t s = 0; s < nheads; ++s)
+        {
+            clear_code_span(heads[s], head_span[s]);
+        }
+        write_code_claim(head.v, len, item, why);
+        check_invariants();
+        return true;
+    }
     if (code_hit || data_hit || blocked)
     {
         if (code_hit || data_hit)
@@ -607,28 +794,7 @@ inline bool ByteMap::claim_code(Lin head, uint8_t len, uint32_t item, const Fact
         return false;
     }
 
-    const uint16_t flags = claim_flags(why.strength);
-    for (uint32_t k = 0; k < len; ++k)
-    {
-        const uint32_t index = head.v + k;
-        ByteCell cell{};
-        cell.state = (k == 0u) ? BState::CodeHead : BState::CodeTail;
-        cell.strength = neu;
-        cell.sub = 0;
-        cell.dtype_or_pad = 0;
-        cell.flags = flags;
-        cell.item = item;
-        cells_[index] = cell;
-        unit_of_[index] = why.unit;
-        span_[index] = len;
-    }
-    JournalRow row{};
-    row.unit = why.unit;
-    row.begin = head.v;
-    row.len = len;
-    row.item = item;
-    row.state = BState::CodeHead;
-    journal_.push_back(row);
+    write_code_claim(head.v, len, item, why);
     check_invariants();
     return true;
 }

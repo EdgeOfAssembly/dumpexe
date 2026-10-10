@@ -7,7 +7,9 @@
 
 #include "image_model.h"
 
+#include <cstddef>
 #include <cstdint>
+#include <unordered_map>
 #include <vector>
 
 namespace dx
@@ -71,19 +73,27 @@ struct Fact
 
 /**
  * @brief Append-only facts in insertion order.
+ *
+ * @c add records the new position under @c Fact::subject. @c at reads that
+ * index and returns matches oldest first.
  */
 class FactStore
 {
 public:
     /**
-     * @brief Append @p fact. Does not touch a byte map.
+     * @brief Append @p fact and index it by subject linear.
+     *
+     * Does not touch a byte map. The index is what @c at searches.
      *
      * @param[in] fact Evidence record copied into the store.
      */
     void add(Fact fact);
 
     /**
-     * @brief Facts whose subject linear equals @p subject, in insertion order.
+     * @brief Facts whose subject linear equals @p subject, oldest first.
+     *
+     * Uses the subject index filled by @c add. It does not scan facts
+     * whose linear is different.
      *
      * @param[in] subject Query linear. Compared by @c Lin::v.
      * @return Matching facts, oldest first. Empty if none match.
@@ -100,22 +110,31 @@ public:
 
 private:
     std::vector<Fact> facts_;
+    /** Insertion-order positions of each @c Lin::v. Not a scan of @c facts_. */
+    std::unordered_map<uint32_t, std::vector<std::size_t>> index_;
 };
 
 inline void FactStore::add(Fact fact)
 {
+    const uint32_t key = fact.subject.v;
+    const std::size_t pos = facts_.size();
     facts_.push_back(fact);
+    index_[key].push_back(pos);
 }
 
 inline std::vector<Fact> FactStore::at(Lin subject) const
 {
     std::vector<Fact> matched;
-    for (const Fact& fact : facts_)
+    const auto found = index_.find(subject.v);
+    if (found == index_.end())
     {
-        if (fact.subject.v == subject.v)
-        {
-            matched.push_back(fact);
-        }
+        return matched;
+    }
+    const std::vector<std::size_t>& positions = found->second;
+    matched.reserve(positions.size());
+    for (const std::size_t pos : positions)
+    {
+        matched.push_back(facts_[pos]);
     }
     return matched;
 }
