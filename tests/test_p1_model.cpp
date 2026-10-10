@@ -214,17 +214,153 @@ TEST_CASE("equal-strength code overlap sets Conflict and keeps the old item", "[
     REQUIRE(same.at(dx::Lin{0}).item == 5u);
 }
 
-TEST_CASE("stronger code overlap conflicts and does not replace the item", "[bytemap]")
+TEST_CASE("stronger code overlap replaces the weaker item", "[bytemap]")
 {
     dx::ByteMap map(2);
     const dx::Fact likely = fact_at(dx::Why::CallFallthroughSpec, dx::Strength::Likely, 2u, 0u);
     const dx::Fact proven = fact_at(dx::Why::DirectJmp, dx::Strength::Proven, 3u, 0u);
     REQUIRE(map.claim_code(dx::Lin{0}, 2, 4u, likely));
-    REQUIRE_FALSE(map.claim_code(dx::Lin{0}, 2, 9u, proven));
+    REQUIRE(map.claim_code(dx::Lin{0}, 2, 9u, proven));
+    REQUIRE(map.at(dx::Lin{0}).state == dx::BState::CodeHead);
+    REQUIRE(map.at(dx::Lin{1}).state == dx::BState::CodeTail);
+    REQUIRE(map.at(dx::Lin{0}).item == 9u);
+    REQUIRE(map.at(dx::Lin{1}).item == 9u);
+    REQUIRE(map.at(dx::Lin{0}).strength == static_cast<uint8_t>(dx::Strength::Proven));
+    REQUIRE(map.at(dx::Lin{1}).strength == static_cast<uint8_t>(dx::Strength::Proven));
+    const uint16_t spec = static_cast<uint16_t>(dx::F_Speculative);
+    REQUIRE((map.at(dx::Lin{0}).flags & spec) == 0u);
+    REQUIRE((map.at(dx::Lin{1}).flags & spec) == 0u);
+}
+
+TEST_CASE("retract of the replaced unit leaves the stronger code", "[bytemap]")
+{
+    dx::ByteMap map(16);
+    const dx::Fact likely = fact_at(dx::Why::CallFallthroughSpec, dx::Strength::Likely, 2u, 0u);
+    const dx::Fact proven = fact_at(dx::Why::DirectJmp, dx::Strength::Proven, 9u, 14u);
+    // Item 100 is not the linear address. The tail at 14 must find the head
+    // in the previous 14 bytes by item and span, then the whole insn clears.
+    REQUIRE(map.claim_code(dx::Lin{0}, 15, 100u, likely));
+    REQUIRE(map.at(dx::Lin{0}).state == dx::BState::CodeHead);
+    REQUIRE(map.at(dx::Lin{14}).state == dx::BState::CodeTail);
+    REQUIRE(map.at(dx::Lin{14}).item == 100u);
+    REQUIRE(map.claim_code(dx::Lin{14}, 1, 200u, proven));
+    for (uint32_t i = 0; i < 14u; ++i)
+    {
+        REQUIRE(map.at(dx::Lin{i}).state == dx::BState::Unknown);
+        REQUIRE(map.at(dx::Lin{i}).item == 0u);
+        REQUIRE(map.at(dx::Lin{i}).strength == 0u);
+    }
+    REQUIRE(map.at(dx::Lin{14}).state == dx::BState::CodeHead);
+    REQUIRE(map.at(dx::Lin{14}).item == 200u);
+    REQUIRE(map.at(dx::Lin{14}).strength == static_cast<uint8_t>(dx::Strength::Proven));
+    REQUIRE(map.at(dx::Lin{15}).state == dx::BState::Unknown);
+
+    map.retract(2u);
+    REQUIRE(map.at(dx::Lin{14}).state == dx::BState::CodeHead);
+    REQUIRE(map.at(dx::Lin{14}).item == 200u);
+    REQUIRE(map.at(dx::Lin{0}).state == dx::BState::Unknown);
+    REQUIRE(map.at(dx::Lin{13}).state == dx::BState::Unknown);
+
+    map.retract(9u);
+    REQUIRE(map.at(dx::Lin{14}).state == dx::BState::Unknown);
+    REQUIRE(map.at(dx::Lin{14}).item == 0u);
+    REQUIRE(map.at(dx::Lin{14}).strength == 0u);
+}
+
+TEST_CASE("stronger code replaces every weaker instruction in the span", "[bytemap]")
+{
+    dx::ByteMap map(6);
+    const dx::Fact first = fact_at(dx::Why::CallFallthroughSpec, dx::Strength::Likely, 1u, 0u);
+    const dx::Fact second = fact_at(dx::Why::CallFallthroughSpec, dx::Strength::Likely, 2u, 2u);
+    const dx::Fact proven = fact_at(dx::Why::DirectJmp, dx::Strength::Proven, 3u, 1u);
+    REQUIRE(map.claim_code(dx::Lin{0}, 2, 10u, first));
+    REQUIRE(map.claim_code(dx::Lin{2}, 2, 11u, second));
+    REQUIRE(map.claim_code(dx::Lin{1}, 2, 12u, proven));
+    REQUIRE(map.at(dx::Lin{0}).state == dx::BState::Unknown);
+    REQUIRE(map.at(dx::Lin{1}).state == dx::BState::CodeHead);
+    REQUIRE(map.at(dx::Lin{1}).item == 12u);
+    REQUIRE(map.at(dx::Lin{2}).state == dx::BState::CodeTail);
+    REQUIRE(map.at(dx::Lin{2}).item == 12u);
+    REQUIRE(map.at(dx::Lin{3}).state == dx::BState::Unknown);
+    REQUIRE(map.at(dx::Lin{4}).state == dx::BState::Unknown);
+    map.retract(1u);
+    map.retract(2u);
+    REQUIRE(map.at(dx::Lin{1}).state == dx::BState::CodeHead);
+    REQUIRE(map.at(dx::Lin{1}).item == 12u);
+    REQUIRE(map.at(dx::Lin{2}).state == dx::BState::CodeTail);
+    REQUIRE(map.at(dx::Lin{2}).item == 12u);
+    map.retract(3u);
+    REQUIRE(map.at(dx::Lin{1}).state == dx::BState::Unknown);
+    REQUIRE(map.at(dx::Lin{2}).state == dx::BState::Unknown);
+}
+
+TEST_CASE("a stronger byte does not let a weaker neighbour be replaced", "[bytemap]")
+{
+    dx::ByteMap map(4);
+    const dx::Fact weak = fact_at(dx::Why::CallFallthroughSpec, dx::Strength::Likely, 1u, 0u);
+    const dx::Fact strong = fact_at(dx::Why::Entry, dx::Strength::Proven, 2u, 2u);
+    REQUIRE(map.claim_code(dx::Lin{0}, 2, 4u, weak));
+    REQUIRE(map.claim_code(dx::Lin{2}, 2, 5u, strong));
+    const dx::Fact mid = fact_at(dx::Why::DirectJmp, dx::Strength::Derived, 3u, 0u);
+    REQUIRE_FALSE(map.claim_code(dx::Lin{0}, 4, 9u, mid));
+    REQUIRE(map.at(dx::Lin{0}).state == dx::BState::CodeHead);
+    REQUIRE(map.at(dx::Lin{0}).item == 4u);
+    REQUIRE(map.at(dx::Lin{1}).state == dx::BState::CodeTail);
+    REQUIRE(map.at(dx::Lin{1}).item == 4u);
+    REQUIRE(map.at(dx::Lin{2}).state == dx::BState::CodeHead);
+    REQUIRE(map.at(dx::Lin{2}).item == 5u);
+    REQUIRE(map.at(dx::Lin{3}).state == dx::BState::CodeTail);
+    REQUIRE(map.at(dx::Lin{3}).item == 5u);
+}
+
+TEST_CASE("equal code beside weaker code conflicts and does not replace", "[bytemap]")
+{
+    dx::ByteMap map(4);
+    const dx::Fact weak = fact_at(dx::Why::CallFallthroughSpec, dx::Strength::Likely, 1u, 0u);
+    const dx::Fact strong = fact_at(dx::Why::Entry, dx::Strength::Proven, 2u, 2u);
+    REQUIRE(map.claim_code(dx::Lin{0}, 2, 4u, weak));
+    REQUIRE(map.claim_code(dx::Lin{2}, 2, 5u, strong));
+    const dx::Fact again = fact_at(dx::Why::DirectJmp, dx::Strength::Proven, 3u, 0u);
+    REQUIRE_FALSE(map.claim_code(dx::Lin{0}, 4, 9u, again));
+    REQUIRE(map.at(dx::Lin{0}).state == dx::BState::Conflict);
+    REQUIRE(map.at(dx::Lin{0}).item == 4u);
+    REQUIRE(map.at(dx::Lin{1}).state == dx::BState::Conflict);
+    REQUIRE(map.at(dx::Lin{1}).item == 4u);
+    REQUIRE(map.at(dx::Lin{2}).state == dx::BState::Conflict);
+    REQUIRE(map.at(dx::Lin{2}).item == 5u);
+    REQUIRE(map.at(dx::Lin{3}).state == dx::BState::Conflict);
+    REQUIRE(map.at(dx::Lin{3}).item == 5u);
+}
+
+TEST_CASE("stronger code on data still conflicts and keeps the data item", "[bytemap]")
+{
+    dx::ByteMap map(2);
+    const dx::Fact data = fact_at(dx::Why::DirectFlow, dx::Strength::Likely, 1u, 0u);
+    REQUIRE(map.claim_data(dx::Lin{0}, 2, dx::DType::Word, 4u, data));
+    const dx::Fact code = fact_at(dx::Why::DirectJmp, dx::Strength::Proven, 2u, 0u);
+    REQUIRE_FALSE(map.claim_code(dx::Lin{0}, 2, 9u, code));
     REQUIRE(map.at(dx::Lin{0}).state == dx::BState::Conflict);
     REQUIRE(map.at(dx::Lin{1}).state == dx::BState::Conflict);
     REQUIRE(map.at(dx::Lin{0}).item == 4u);
     REQUIRE(map.at(dx::Lin{1}).item == 4u);
+    REQUIRE(map.at(dx::Lin{0}).sub == static_cast<uint8_t>(dx::ConflictKind::CodeOnData));
+    REQUIRE(map.at(dx::Lin{1}).sub == static_cast<uint8_t>(dx::ConflictKind::CodeOnData));
+}
+
+TEST_CASE("stronger code does not replace a Conflict cell", "[bytemap]")
+{
+    dx::ByteMap map(2);
+    const dx::Fact first = fact_at(dx::Why::DirectJmp, dx::Strength::Likely, 1u, 0u);
+    const dx::Fact second = fact_at(dx::Why::DirectCall, dx::Strength::Likely, 2u, 0u);
+    REQUIRE(map.claim_code(dx::Lin{0}, 2, 5u, first));
+    REQUIRE_FALSE(map.claim_code(dx::Lin{0}, 2, 8u, second));
+    REQUIRE(map.at(dx::Lin{0}).state == dx::BState::Conflict);
+    const dx::Fact proven = fact_at(dx::Why::Entry, dx::Strength::Proven, 3u, 0u);
+    REQUIRE_FALSE(map.claim_code(dx::Lin{0}, 2, 9u, proven));
+    REQUIRE(map.at(dx::Lin{0}).state == dx::BState::Conflict);
+    REQUIRE(map.at(dx::Lin{1}).state == dx::BState::Conflict);
+    REQUIRE(map.at(dx::Lin{0}).item == 5u);
+    REQUIRE(map.at(dx::Lin{1}).item == 5u);
 }
 
 TEST_CASE("retract(unit) restores Unknown and retract(0) does not", "[bytemap]")

@@ -274,6 +274,72 @@ TEST_CASE("INT 21h reached only by the scan is IntScan Likely", "[flow]")
     REQUIRE(has_fact_at(trace, dx::Why::IntScan, dx::Strength::Likely, k_int));
     REQUIRE(has_fact_at(trace, dx::Why::HintIntScan, dx::Strength::Hint, k_int - 16u));
     REQUIRE(has_fact_at(trace, dx::Why::HintIntScan, dx::Strength::Hint, k_int - 8u));
+
+    // Likely note_insn facts (DirectFlow) each take the next unit from 1.
+    // Leaders, hints, and Proven instructions stay on unit 0.
+    std::vector<uint32_t> likely_units;
+    uint32_t proven = 0u;
+    for (const dx::Fact& fact : trace.facts().all())
+    {
+        if (fact.why == dx::Why::DirectFlow && fact.strength == dx::Strength::Likely)
+        {
+            likely_units.push_back(fact.unit);
+            continue;
+        }
+        REQUIRE(fact.unit == 0u);
+        if (fact.strength == dx::Strength::Proven)
+        {
+            ++proven;
+        }
+    }
+    REQUIRE(proven >= 1u);
+    REQUIRE(likely_units.size() >= 2u);
+    for (std::size_t i = 0; i < likely_units.size(); ++i)
+    {
+        REQUIRE(likely_units[i] == static_cast<uint32_t>(i + 1u));
+    }
+}
+
+TEST_CASE("Likely note_insn units start at 1 and other strengths stay 0", "[flow]")
+{
+    const uint8_t raw[] = {0xC3};
+    dx::FlowTrace trace(1u,
+                        dx::Fmt::Mz,
+                        dx::FileOff{0},
+                        dx::Lin{0},
+                        0,
+                        std::span<const uint8_t>(raw, 1),
+                        true);
+    trace.note_insn(0u, 1u, dx::Why::DirectFlow, dx::Strength::Likely, 0u);
+    trace.note_insn(0u, 1u, dx::Why::DirectFlow, dx::Strength::Proven, 0u);
+    trace.note_insn(0u, 1u, dx::Why::DirectFlow, dx::Strength::Derived, 0u);
+    trace.note_insn(0u, 1u, dx::Why::DirectFlow, dx::Strength::Likely, 0u);
+    trace.note_insn(0u, 1u, dx::Why::DirectFlow, dx::Strength::Hint, 0u);
+    trace.note_leader(0u, dx::Why::IntScan, dx::Strength::Likely, 0u);
+    const std::vector<dx::Fact>& all = trace.facts().all();
+    REQUIRE(all.size() == 6u);
+    REQUIRE(all[0].unit == 1u);
+    REQUIRE(all[0].strength == dx::Strength::Likely);
+    REQUIRE(all[1].unit == 0u);
+    REQUIRE(all[1].strength == dx::Strength::Proven);
+    REQUIRE(all[2].unit == 0u);
+    REQUIRE(all[2].strength == dx::Strength::Derived);
+    REQUIRE(all[3].unit == 2u);
+    REQUIRE(all[3].strength == dx::Strength::Likely);
+    REQUIRE(all[4].unit == 0u);
+    REQUIRE(all[4].strength == dx::Strength::Hint);
+    REQUIRE(all[5].unit == 0u);
+    REQUIRE(all[5].strength == dx::Strength::Likely);
+}
+
+TEST_CASE("RecordFlow clears the hook on the way out", "[flow]")
+{
+    REQUIRE_FALSE(cfg_record_flow());
+    {
+        const RecordFlow guard(true);
+        REQUIRE(cfg_record_flow());
+    }
+    REQUIRE_FALSE(cfg_record_flow());
 }
 
 TEST_CASE("image_from_load psp_in_bytes true clears the COM hole", "[image]")

@@ -130,6 +130,11 @@ public:
      * and claims the bytes when @p strength is at least @c kPromote. A false
      * claim is ignored. The walk is not told to drop the instruction.
      *
+     * When @p strength is @c Likely, @c fact.unit comes from a counter that
+     * starts at 1 and increases by 1 for each such call on this trace.
+     * Every other strength stores unit 0. @c note_leader does not use the
+     * counter.
+     *
      * @param at        Instruction linear.
      * @param len       Instruction length.
      * @param why       Stored on the fact.
@@ -163,6 +168,8 @@ private:
     ByteMap bytes_;
     FactStore facts_;
     Image image_;
+    /** Next unit for a Likely @c note_insn. Starts at 1. Other strengths stay 0. */
+    uint32_t next_likely_unit_ = 1u;
 };
 
 inline FlowTrace::FlowTrace(uint32_t n_bytes, Fmt fmt, FileOff image_file_base, Lin entry,
@@ -192,7 +199,15 @@ inline void FlowTrace::note_insn(uint32_t at, uint8_t len, Why why, Strength str
     fact.strength = strength;
     fact.subject = Lin{at};
     fact.source = Lin{source};
-    fact.unit = (strength == Strength::Likely) ? 1u : 0u;
+    if (strength == Strength::Likely)
+    {
+        fact.unit = next_likely_unit_;
+        ++next_likely_unit_;
+    }
+    else
+    {
+        fact.unit = 0u;
+    }
     facts_.add(fact);
     if (static_cast<uint8_t>(strength) >= static_cast<uint8_t>(kPromote) &&
         lin_in_image(image_, Lin{at}))

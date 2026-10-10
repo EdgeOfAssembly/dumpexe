@@ -223,3 +223,5 @@ verify: test
 	$(HOME)/.local/bin/cbmc tools/bin2exe/src/mz_pages.c tools/bin2exe/formal/harness_pages.c \
 	  -Itools/bin2exe/include \
 	  --bounds-check --pointer-check --unwind 2 --unwinding-assertions
+	$(HOME)/.local/bin/cbmc formal/bytemap_claim.c formal/harness_bytemap_claim.c \
+	  --bounds-check --pointer-check --unwind 8 --unwinding-assertions

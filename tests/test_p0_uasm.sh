@@ -799,35 +799,179 @@ case_v3_path_dir() {
   fi
 }
 
-scratch_dirs() {
-  (
-    shopt -s nullglob
-    local d
-    for d in /tmp/dumpexe-uasm-*; do
-      printf '%s\n' "$d"
-    done | sort
-  )
-}
-
 case_v4_env() {
   printf 'nop\n' > "$TD/extra.asm"
   printf '\x8b\xc3\xc3' > "$TD/v4.com"
-  local before after new
-  before="$(scratch_dirs)"
-  if ! UASM="$TD/extra.asm" "$BIN" --uasm --uasm-verify --uasm-bin "$UASM_ABS" \
+  # F9: scratch dirs follow an absolute existing TMPDIR. Leftovers are
+  # checked only under this empty directory, never via /tmp/dumpexe-uasm-*.
+  local scratch_root="$TD/v4tmp"
+  mkdir -p "$scratch_root"
+  if ! TMPDIR="$scratch_root" UASM="$TD/extra.asm" \
+      "$BIN" --uasm --uasm-verify --uasm-bin "$UASM_ABS" \
       -o "$TD/v4.asm" "$TD/v4.com" \
       >"$TD/v4.stdout" 2>"$TD/v4.stderr"; then
     echo "v4 verify failed" >&2
     cat "$TD/v4.stderr" >&2 || true
     return 1
   fi
-  after="$(scratch_dirs)"
-  new="$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") || true)"
-  # comm emits a blank line when both sides are empty.
-  new="$(printf '%s\n' "$new" | sed '/^$/d' || true)"
-  if [[ -n "$new" ]]; then
-    echo "scratch dir leaked:" >&2
-    printf '%s\n' "$new" >&2
+  local leaked
+  leaked="$(find "$scratch_root" -mindepth 1 -maxdepth 1 -name 'dumpexe-uasm-*' -print)"
+  if [[ -n "$leaked" ]]; then
+    echo "scratch dir leaked under TMPDIR:" >&2
+    printf '%s\n' "$leaked" >&2
+    return 1
+  fi
+}
+
+# Template choice and the singular rejected-candidate noun. No assembler.
+case_f9_nmsg() {
+  local src="$TD/uasm_scratch_driver.cpp"
+  local bin="$TD/uasm_scratch_driver"
+  local cxx="${CXX:-}"
+  if [[ -z "$cxx" ]]; then
+    cxx="g++"
+    if command -v g++-15 >/dev/null 2>&1; then
+      cxx="g++-15"
+    fi
+  fi
+  mkdir -p "$TD/f9root/absdir"
+  : > "$TD/f9root/notdir"
+  ln -s absdir "$TD/f9root/linkdir"
+  cat > "$src" << 'EOF'
+#include "uasm_scratch.h"
+
+#include <cstdio>
+#include <cstring>
+#include <string>
+
+static int g_fail = 0;
+
+static void fail(const char* what)
+{
+    std::fprintf(stderr, "uasm_scratch_driver: %s\n", what);
+    g_fail = 1;
+}
+
+static void expect_tmpl(const char* what, const char* tmpdir, const char* want)
+{
+    char buf[kListingUasmScratchBound];
+    buf[0] = '\0';
+    if (!listing_uasm_scratch_template(tmpdir, buf, sizeof(buf)))
+    {
+        fail(what);
+        return;
+    }
+    if (std::strcmp(buf, want) != 0)
+    {
+        std::fprintf(stderr, "uasm_scratch_driver: %s: got \"%s\" want \"%s\"\n",
+                     what, buf, want);
+        g_fail = 1;
+    }
+}
+
+static void expect_clause(const char* what,
+                          size_t rejected,
+                          size_t unverified,
+                          const char* want)
+{
+    const std::string got = listing_uasm_rejected_clause(rejected, unverified);
+    if (got != want)
+    {
+        std::fprintf(stderr, "uasm_scratch_driver: %s: got \"%s\" want \"%s\"\n",
+                     what, got.c_str(), want);
+        g_fail = 1;
+    }
+}
+
+int main(int argc, char** argv)
+{
+    if (argc != 2 || argv[1] == nullptr || argv[1][0] != '/')
+    {
+        fail("need an absolute root directory");
+        return 1;
+    }
+    const std::string root(argv[1]);
+    const std::string abs = root + "/absdir";
+    const std::string file = root + "/notdir";
+    const std::string link = root + "/linkdir";
+    const std::string abs_tmpl = abs + "/dumpexe-uasm-XXXXXX";
+    const std::string link_tmpl = link + "/dumpexe-uasm-XXXXXX";
+    constexpr const char* kFallback = "/tmp/dumpexe-uasm-XXXXXX";
+
+    expect_tmpl("relative", "rel", kFallback);
+    expect_tmpl("relative nested", "rel/dir", kFallback);
+    expect_tmpl("dot relative", "./rel", kFallback);
+    expect_tmpl("parent relative", "../rel", kFallback);
+    expect_tmpl("empty", "", kFallback);
+    expect_tmpl("null", nullptr, kFallback);
+    expect_tmpl("missing", "/no/such/dumpexe-p1c-tmpdir", kFallback);
+    expect_tmpl("missing slash", "/no/such/dumpexe-p1c-tmpdir/", kFallback);
+    expect_tmpl("file", file.c_str(), kFallback);
+    expect_tmpl("absolute", abs.c_str(), abs_tmpl.c_str());
+    const std::string slashed = abs + "/";
+    expect_tmpl("one trailing slash", slashed.c_str(), abs_tmpl.c_str());
+    expect_tmpl("symlink dir", link.c_str(), link_tmpl.c_str());
+    expect_tmpl("root", "/", "/dumpexe-uasm-XXXXXX");
+
+    char small[32];
+    small[0] = '\0';
+    if (abs_tmpl.size() + 1U <= sizeof(small))
+    {
+        fail("absolute template fits in the small buffer");
+    }
+    else if (!listing_uasm_scratch_template(abs.c_str(), small, sizeof(small)) ||
+             std::strcmp(small, kFallback) != 0)
+    {
+        std::fprintf(stderr, "uasm_scratch_driver: small buf got \"%s\"\n", small);
+        g_fail = 1;
+    }
+
+    std::string huge(5000, 'a');
+    huge[0] = '/';
+    expect_tmpl("over bound", huge.c_str(), kFallback);
+
+    char tiny[8];
+    tiny[0] = 'x';
+    if (listing_uasm_scratch_template(abs.c_str(), tiny, sizeof(tiny)))
+    {
+        fail("tiny buffer returned true");
+    }
+    else if (tiny[0] != '\0')
+    {
+        fail("tiny buffer was not cleared");
+    }
+    char one = 'x';
+    if (listing_uasm_scratch_template(abs.c_str(), &one, 0))
+    {
+        fail("zero-size buffer returned true");
+    }
+    else if (one != 'x')
+    {
+        fail("zero-size buffer was written");
+    }
+    if (listing_uasm_scratch_template(abs.c_str(), nullptr, 64))
+    {
+        fail("nullptr buffer returned true");
+    }
+
+    expect_clause("one unverified 0", 1, 0, "assembler rejected 1 candidate");
+    expect_clause("one unverified 2", 1, 2,
+                  "assembler rejected 1 candidate, unverified 2");
+    expect_clause("seven unverified 33", 7, 33,
+                  "assembler rejected 7 candidates, unverified 33");
+    expect_clause("two", 2, 0, "assembler rejected 2 candidates");
+    expect_clause("two unverified 1", 2, 1,
+                  "assembler rejected 2 candidates, unverified 1");
+    expect_clause("zero", 0, 0, "assembler rejected 0 candidates");
+    return g_fail;
+}
+EOF
+  if ! "$cxx" -std=c++23 -Wall -Wextra -Werror -I"$ROOT" -o "$bin" "$src"; then
+    echo "uasm scratch driver failed to compile" >&2
+    return 1
+  fi
+  if ! "$bin" "$TD/f9root"; then
+    echo "uasm scratch driver failed" >&2
     return 1
   fi
 }
@@ -1070,6 +1214,7 @@ check v1_one_spawn case_v1_one_spawn
 check v2_rel_bin case_v2_rel
 check v3_path_dir case_v3_path_dir
 check v4_env case_v4_env
+check f9_nmsg case_f9_nmsg
 check ni2_path case_ni2_path
 check v1b_numeric case_v1b_numeric
 check v1b_e100000 case_v1b_e100000
