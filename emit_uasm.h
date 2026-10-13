@@ -501,6 +501,7 @@ inline void UasmEmitter::add_value_refs()
             const uint32_t disp = b[k] | (b[k + 1] << 8);
             // Bound: cmp r, imm followed by an unsigned jcc, all contiguous.
             int64_t count = -1;
+            bool doubled_after_cmp = false;
             for (size_t back = 1; back <= 8 && back <= j; ++back)
             {
                 const EmitUnit& c = units_[code[j - back]];
@@ -508,6 +509,14 @@ inline void UasmEmitter::add_value_refs()
                 if (c.lin + c.size != nx.lin)
                     break;
                 const uint8_t* cb = img.data() + c.lin;
+                // shl bx,1 (D1 E3) or add bx,bx (03 DB / 01 DB) between the
+                // compare and the jump: the compare saw the undoubled index.
+                if (c.size == 2 && ((cb[0] == 0xD1 && cb[1] == 0xE3) ||
+                                    ((cb[0] == 0x03 || cb[0] == 0x01) && cb[1] == 0xDB)))
+                {
+                    doubled_after_cmp = true;
+                    continue;
+                }
                 int64_t imm = -1;
                 if (c.size == 3 && cb[0] == 0x83 && (cb[1] & 0xF8) == 0xF8)
                     imm = cb[2];
@@ -526,6 +535,10 @@ inline void UasmEmitter::add_value_refs()
                     count = imm + 1;
                 else if (jo == 0x73 || jo == 0x72) // jae / jb: 0..imm-1
                     count = imm;
+                // Review R9: a compare on the already doubled index bounds
+                // the byte offset, so the entry count is half.
+                if (count > 0 && !doubled_after_cmp)
+                    count = (count + 1) / 2;
                 break;
             }
             if (count > 0 && count <= 256)

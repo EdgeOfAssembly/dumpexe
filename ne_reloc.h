@@ -64,7 +64,17 @@ struct NeModel
     std::vector<NeExport> exports;               ///< ordinal order
     std::vector<std::vector<NeReloc>> relocs;    ///< per segment (0-based)
     std::vector<std::map<uint16_t, size_t>> site_of; ///< per segment: site -> reloc vector index
+    /// Segments whose relocation table is the same bytes as an earlier
+    /// segment's: index of that segment (parsed once). Else itself.
+    std::vector<size_t> alias;
+    size_t dropped_records = 0; ///< records past the module budget
 };
+
+/** @brief Segment whose parsed relocations apply to segment @p s. */
+static inline size_t ne_reloc_owner(const NeModel& m, size_t s)
+{
+    return s < m.alias.size() ? m.alias[s] : s;
+}
 
 static inline std::string ne_entry_loc(uint8_t seg, uint16_t off)
 {
@@ -212,11 +222,18 @@ static inline void ne_parse_relocs(const std::vector<uint8_t>& d, const NEParsed
 {
     m.relocs.assign(ne.segs.size(), {});
     m.site_of.assign(ne.segs.size(), {});
+    m.alias.resize(ne.segs.size());
+    std::map<std::pair<size_t, size_t>, size_t> table_seen;
+    // Module budget: every record is 8 file bytes, so a sane file never has
+    // more than size/8 in total. Tables shared by several segments (same
+    // file window) are parsed once.
+    size_t budget = d.size() / 8;
     std::map<uint16_t, std::string> exp_name;
     for (const NeExport& e : m.exports)
         exp_name[e.ord] = e.name;
     for (size_t s = 0; s < ne.segs.size(); ++s)
     {
+        m.alias[s] = s;
         const NESegment& seg = ne.segs[s];
         if ((seg.flags & NE_SEG_RELOCINFO) == 0 || seg.sector == 0)
             continue;
@@ -225,8 +242,19 @@ static inline void ne_parse_relocs(const std::vector<uint8_t>& d, const NEParsed
         size_t p = foff + flen;
         if (p + 2 > d.size())
             continue;
+        if (auto it = table_seen.find({foff, flen}); it != table_seen.end())
+        {
+            m.alias[s] = it->second;
+            continue;
+        }
+        table_seen.emplace(std::pair<size_t, size_t>{foff, flen}, s);
         uint16_t cnt = static_cast<uint16_t>(d[p] | (d[p + 1] << 8));
         p += 2;
+        if (cnt > budget)
+        {
+            m.dropped_records += cnt - budget;
+            cnt = static_cast<uint16_t>(budget);
+        }
         // Records that fit in the file only.
         cnt = static_cast<uint16_t>(std::min<size_t>(cnt, (d.size() - p) / 8));
         // One visited set per segment: chains that merge are walked once,
@@ -306,6 +334,7 @@ static inline void ne_parse_relocs(const std::vector<uint8_t>& d, const NEParsed
                 m.site_of[s].emplace(st, vi);
             m.relocs[s].push_back(std::move(r));
         }
+        budget -= std::min(budget, m.relocs[s].size());
     }
 }
 
@@ -330,14 +359,33 @@ static inline void ne_print_exports(const NeModel& m, std::ostream& os)
 
 static inline void ne_print_relocs(const NeModel& m, std::ostream& os)
 {
+    size_t printed = 0;
+    constexpr size_t kMaxLines = 20000;
     for (size_t s = 0; s < m.relocs.size(); ++s)
     {
+        if (ne_reloc_owner(m, s) != s)
+        {
+            os << std::format("\n=== Relocations segment {}: same table as segment {} ===\n", s + 1,
+                              ne_reloc_owner(m, s) + 1);
+            continue;
+        }
         if (m.relocs[s].empty())
             continue;
+        if (printed >= kMaxLines)
+        {
+            os << std::format("\n=== Relocations segment {} ({} records, not listed: output cap) ===\n",
+                              s + 1, m.relocs[s].size());
+            continue;
+        }
         os << std::format("\n=== Relocations segment {} ({} records) ===\n", s + 1, m.relocs[s].size());
         os << "  #  Type      Kind      Target                         Sites\n";
         for (const NeReloc& r : m.relocs[s])
         {
+            if (printed++ >= kMaxLines)
+            {
+                os << "  … (output cap reached)\n";
+                break;
+            }
             std::string sites;
             for (size_t k = 0; k < r.sites.size(); ++k)
             {
@@ -357,69 +405,6 @@ static inline void ne_print_relocs(const NeModel& m, std::ostream& os)
 }
 
 /**
- * @brief Linear listing of @p len bytes of segment @p seg (0-based) from
- *        @p ip, with relocation sites resolved: `call far KERNEL.91` for a
- *        far-pointer fixup on 9A/EA, otherwise the fixup as a comment.
- */
-static inline void ne_list_segment(const std::vector<uint8_t>& d, const NEParsed& ne, const NeModel& m,
-                                   size_t seg, uint16_t ip, size_t len, std::ostream& os)
-{
-    const size_t foff = ne_seg_file_offset(ne.hdr, ne.segs[seg]);
-    size_t flen = ne_seg_file_length(ne.segs[seg]);
-    if (foff >= d.size())
-        return;
-    flen = std::min(flen, d.size() - foff);
-    csh h;
-    if (cs_open(CS_ARCH_X86, CS_MODE_16, &h) != CS_ERR_OK)
-        return;
-    cs_insn* in = cs_malloc(h);
-    const auto& sites = m.site_of[seg];
-    size_t off = ip;
-    const size_t stop = std::min(flen, static_cast<size_t>(ip) + len);
-    while (off < stop)
-    {
-        const uint8_t* code = d.data() + foff + off;
-        size_t sz = std::min<size_t>(15, flen - off);
-        uint64_t addr = off;
-        // A relocation site must not be swallowed by a misdecode across
-        // records: decode normally, then look for sites inside.
-        if (!cs_disasm_iter(h, &code, &sz, &addr, in))
-        {
-            os << std::format("{}:{:04X}  {:02X}{:<12}  db {:02X}h\n", seg + 1, off, d[foff + off], "",
-                              d[foff + off]);
-            ++off;
-            continue;
-        }
-        std::string bytes;
-        for (size_t k = 0; k < in->size && k < 6; ++k)
-            bytes += std::format("{:02X}", in->bytes[k]);
-        std::string text = std::format("{:<8} {}", in->mnemonic, in->op_str);
-        std::string note;
-        for (size_t k = 0; k < in->size; ++k)
-        {
-            auto it = sites.find(static_cast<uint16_t>(off + k));
-            if (it == sites.end())
-                continue;
-            const NeReloc& r = m.relocs[seg][it->second];
-            const uint8_t op = in->bytes[0];
-            if (k == 1 && r.atype == 3 && (op == 0x9A || op == 0xEA) && in->size == 5)
-                text = std::format("{:<8} {}", op == 0x9A ? "call" : "jmp", "far " + r.target);
-            else
-                note += std::format("{}fixup {} {} at +{}", note.empty() ? "" : "; ",
-                                    ne_atype_name(r.atype), r.target, k);
-            if (!r.note.empty())
-                note += note.empty() ? r.note : " (" + r.note + ")";
-            note += std::format(" [reloc {}]", r.index);
-        }
-        os << std::format("{}:{:04X}  {:<12}  {}{}\n", seg + 1, off, bytes, text,
-                          note.empty() ? "" : "  ; " + note);
-        off += in->size;
-    }
-    cs_free(in, 1);
-    cs_close(&h);
-}
-
-/**
  * @brief Name relocation sites in an already rendered multi-pass listing
  *        (lines "    IIII  BYTES  mnemonic ops"). A far-pointer fixup on
  *        9A/EA becomes `call far KERNEL.91`; other sites get a comment.
@@ -427,6 +412,7 @@ static inline void ne_list_segment(const std::vector<uint8_t>& d, const NEParsed
  */
 static inline std::string ne_annotate_listing(const std::string& text, const NeModel& m, size_t seg)
 {
+    seg = ne_reloc_owner(m, seg);
     if (seg >= m.site_of.size() || m.site_of[seg].empty())
         return text;
     const auto& sites = m.site_of[seg];
