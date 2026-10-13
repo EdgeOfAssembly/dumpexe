@@ -72,6 +72,11 @@ struct VerifyResult
     std::map<std::string, size_t> reasons;
     ShiftResult shift_start;
     ShiftResult shift_mid;
+    ShiftResult shift_data;   ///< db 0 inside DGROUP, after its base
+    ShiftResult shift_para;   ///< 16 bytes before a relocation-derived base
+    int64_t dgroup = -1;      ///< inferred DGROUP base linear, or -1
+    size_t far_xfers = 0;     ///< relocated far call/jmp with an in-image target
+    size_t far_reached = 0;   ///< ... whose target starts a decoded instruction
 };
 
 /**
@@ -267,12 +272,12 @@ inline bool demote_unit(UasmEmitter& em, EmitUnit& u, const std::string& why, bo
  * @brief Shift test: insert @p text before unit @p at, reassemble, check refs.
  */
 inline ShiftResult shift_test(UasmEmitter& em, const std::string& asm_bin, const std::string& dir,
-                              int at, const char* text)
+                              int64_t at, const char* text)
 {
     ShiftResult s;
-    if (at < 0 || static_cast<size_t>(at) >= em.units().size())
+    if (at < 0)
     {
-        s.why_not = "no unit at the insertion point";
+        s.why_not = "no insertion point";
         return s;
     }
     const std::string src = em.render({}, at, text);
@@ -349,14 +354,25 @@ inline ShiftResult shift_test(UasmEmitter& em, const std::string& asm_bin, const
             }
             else
             {
-                if (ref.frame < em.emit_lo() || ref.frame >= n)
-                    continue; // literal by design (frame outside the image)
-                ++s.checked;
-                const int64_t nf = newlin(ref.frame);
-                if (ref.kind == RefKind::Seg)
-                    ok = (nf % 16) == 0 && ((nf / 16) & 0xFFFF) == got;
+                const int64_t base = newlin(em.emit_lo());
+                if (ref.kind == RefKind::Seg && ref.frame >= n)
+                {
+                    // Past the image: paragraphs after the rounded-up image end.
+                    ++s.checked;
+                    const int64_t k = ref.frame / 16 - (n + 15) / 16;
+                    ok = ((((newlin(n) - base + 15) >> 4) + k) & 0xFFFF) == got;
+                }
                 else
-                    ok = ((newlin(ref.target) - nf) & 0xFFFF) == got;
+                {
+                    if (ref.frame < em.emit_lo() || ref.frame >= n)
+                        continue; // literal by design (far target outside the image)
+                    ++s.checked;
+                    const int64_t nf = newlin(ref.frame) - base;
+                    if (ref.kind == RefKind::Seg)
+                        ok = (nf % 16) == 0 && ((nf / 16) & 0xFFFF) == got;
+                    else
+                        ok = ((newlin(ref.target) - newlin(ref.frame)) & 0xFFFF) == got;
+                }
             }
             if (!ok)
             {
@@ -367,6 +383,34 @@ inline ShiftResult shift_test(UasmEmitter& em, const std::string& asm_bin, const
                                           : ref.kind == RefKind::Seg ? "segment word"
                                                                      : "far offset");
             }
+        }
+    }
+    // Relocated words printed in data as segment expressions.
+    for (uint32_t at : em.symbolic_relocs())
+    {
+        const int ui = em.unit_covering(at);
+        if (ui < 0 || em.units()[static_cast<size_t>(ui)].code || r.off_of.count(at) == 0)
+            continue;
+        const uint32_t fr = (img[at] | (img[at + 1] << 8)) * 16u;
+        const int64_t got = rd(r.off_of[at], 2);
+        const int64_t base = newlin(em.emit_lo());
+        bool ok;
+        if (fr >= n)
+        {
+            const int64_t k = fr / 16 - (n + 15) / 16;
+            ok = ((((newlin(n) - base + 15) >> 4) + k) & 0xFFFF) == got;
+        }
+        else
+        {
+            const int64_t nf = newlin(fr) - base;
+            ok = (nf % 16) == 0 && ((nf / 16) & 0xFFFF) == got;
+        }
+        ++s.checked;
+        if (!ok)
+        {
+            ++s.broken;
+            if (s.first.empty())
+                s.first = std::format("{:05X} data segment word not adjusted", at);
         }
     }
     return s;
@@ -508,7 +552,7 @@ inline VerifyResult verify_listing(UasmEmitter& em, const std::string& asm_bin,
                 const uint32_t nxt_lin = (j + 1 < tagged.size()) ? tagged[j + 1].first : n;
                 const int64_t nxt_off = (j + 1 < tagged.size())
                                             ? static_cast<int64_t>(tagged[j + 1].second)
-                                            : (r.have_bin ? static_cast<int64_t>(r.bin.size() + org)
+                                            : (r.have_bin ? static_cast<int64_t>(r.bin.size() + org - em.tail_len())
                                                           : -1);
                 if (nxt_off < 0)
                     continue;
@@ -524,8 +568,9 @@ inline VerifyResult verify_listing(UasmEmitter& em, const std::string& asm_bin,
         }
         if (dem.empty() && r.have_bin)
         {
-            const size_t want = n - lo;
-            if (r.bin.size() == want && std::equal(r.bin.begin(), r.bin.end(), img.begin() + lo))
+            const std::vector<uint8_t>& exp = em.expected();
+            const size_t want = exp.size();
+            if (r.bin == exp)
             {
                 if (!tentative.empty() && !repromoted)
                 {
@@ -543,9 +588,12 @@ inline VerifyResult verify_listing(UasmEmitter& em, const std::string& asm_bin,
             }
             for (size_t k = 0; k < std::min(r.bin.size(), want); ++k)
             {
-                if (r.bin[k] == img[lo + k])
+                if (r.bin[k] == exp[k])
                     continue;
-                const int ui = em.unit_covering(static_cast<uint32_t>(lo + k));
+                const int64_t lin = static_cast<int64_t>(org + k) - em.bias();
+                if (lin < lo || lin >= n)
+                    continue; // header or tail: literal bytes, handled by the floor
+                const int ui = em.unit_covering(static_cast<uint32_t>(lin));
                 if (ui >= 0 && U[static_cast<size_t>(ui)].code)
                     dem[static_cast<size_t>(ui)] = {"bytes differ", false};
             }
@@ -596,6 +644,20 @@ inline VerifyResult verify_listing(UasmEmitter& em, const std::string& asm_bin,
     }
     (void)em.render({});
     tally();
+    for (const EmitUnit& u : U)
+    {
+        if (!u.code)
+            continue;
+        for (const InsnRef& r : u.refs)
+        {
+            if (r.kind != RefKind::FarOff || r.target >= n)
+                continue;
+            ++v.far_xfers;
+            const int t = em.unit_at(r.target);
+            if (t >= 0 && U[static_cast<size_t>(t)].code)
+                ++v.far_reached;
+        }
+    }
     if (v.identical)
     {
         // Start: after the entry instruction. Mid: before the median code unit.
@@ -606,13 +668,67 @@ inline VerifyResult verify_listing(UasmEmitter& em, const std::string& asm_bin,
         const int ent = em.unit_at(em.input().entry);
         if (ent >= 0 && U[static_cast<size_t>(ent)].code &&
             static_cast<size_t>(ent) + 1 < U.size())
-            v.shift_start = shift_test(em, asm_bin, dir, ent + 1, "nop");
+            v.shift_start = shift_test(em, asm_bin, dir, U[static_cast<size_t>(ent) + 1].lin, "nop");
         else
             v.shift_start.why_not = "entry is not code";
         if (code.size() >= 4)
-            v.shift_mid = shift_test(em, asm_bin, dir, static_cast<int>(code[code.size() / 2]), "nop");
+            v.shift_mid = shift_test(em, asm_bin, dir, U[code[code.size() / 2]].lin, "nop");
         else
             v.shift_mid.why_not = "fewer than 4 instructions";
+        if (!em.input().com)
+        {
+            // DGROUP: the frame most often loaded by mov r16, seg X; mov ds, r16.
+            std::map<uint32_t, size_t> votes;
+            for (size_t j = 0; j + 1 < code.size(); ++j)
+            {
+                const EmitUnit& a = U[code[j]];
+                const EmitUnit& b = U[code[j + 1]];
+                if (a.lin + a.size != b.lin || a.size != 3 || b.size != 2)
+                    continue;
+                const uint8_t op = img[a.lin];
+                if (op < 0xB8 || op > 0xBF || img[b.lin] != 0x8E ||
+                    img[b.lin + 1] != static_cast<uint8_t>(0xD8 + (op - 0xB8)))
+                    continue;
+                for (const InsnRef& r : a.refs)
+                    if (r.kind == RefKind::Seg && r.frame < n)
+                        ++votes[r.frame];
+            }
+            uint32_t best = 0;
+            size_t bestv = 0;
+            for (const auto& [fr, c] : votes)
+                if (c > bestv)
+                {
+                    best = fr;
+                    bestv = c;
+                }
+            if (bestv != 0 && best != em.input().entry_frame && best > lo)
+            {
+                v.dgroup = best;
+                // Insert after the base: the base label stays, every later
+                // variable moves by one byte relative to it.
+                int64_t at = -1;
+                const int ui = em.unit_covering(best);
+                if (ui >= 0 && !U[static_cast<size_t>(ui)].code &&
+                    best + 2 < U[static_cast<size_t>(ui)].lin + U[static_cast<size_t>(ui)].size)
+                    at = best + 2;
+                else if (ui >= 0 && static_cast<size_t>(ui) + 1 < U.size())
+                    at = U[static_cast<size_t>(ui) + 1].lin;
+                v.shift_data = shift_test(em, asm_bin, dir, at, "db 0");
+            }
+            else
+            {
+                v.shift_data.why_not = "no separate DGROUP";
+            }
+            // Paragraph shift: 16 bytes before the median relocation-derived base.
+            std::vector<uint32_t> bases;
+            for (uint32_t b : em.all_bases())
+                if (b > lo && b < n && em.align_before(b))
+                    bases.push_back(b);
+            if (!bases.empty())
+                v.shift_para = shift_test(em, asm_bin, dir, bases[bases.size() / 2], "db 16 dup(0)");
+            else
+                v.shift_para.why_not = "no relocation-derived base";
+        }
         (void)em.render({});
     }
     return v;
