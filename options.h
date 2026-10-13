@@ -115,6 +115,9 @@ struct Options {
     /// --uasm-header: strategy C. The verified listing carries the MZ header
     /// (relocation table included) and the file tail, so it rebuilds the EXE.
     bool uasm_header = false;
+    /// --evidence=sim: P6. Run the simulator (silent, capped by --max-insns,
+    /// default 1000000) and seed executed addresses the graph left in data.
+    bool evidence_sim = false;
     /// --xrefs: flat edge list from the model, entry first (enable-only).
     bool xrefs = false;
     /// --uasm-bin PATH: assembler for --uasm-verify. Empty means $DUMPEXE_UASM,
@@ -454,6 +457,9 @@ struct Options {
             } else if (arg == "--uasm-stats") {
                 // Enable-only. Does not imply --uasm. There is no disable twin.
                 uasm_stats = true;
+            } else if (arg == "--evidence=sim") {
+                // Enable-only. Requires --uasm-verified.
+                evidence_sim = true;
             } else if (arg == "--uasm-header") {
                 // Enable-only. Requires --uasm-verified.
                 uasm_header = true;
@@ -729,6 +735,11 @@ struct Options {
             std::cerr << "Error: --uasm-stats requires --uasm\n";
             return false;
         }
+        if (evidence_sim && !uasm_verified)
+        {
+            std::cerr << "Error: --evidence=sim requires --uasm-verified\n";
+            return false;
+        }
         if (uasm_header && !uasm_verified)
         {
             std::cerr << "Error: --uasm-header requires --uasm-verified\n";
@@ -845,6 +856,10 @@ static inline void show_usage(const char* progname) {
         "                      the listing is identical. Branch targets, relocated\n"
         "                      segment words and far offsets stay expressions. Runs the\n"
         "                      start and mid shift tests. Requires --uasm. Enable-only.\n"
+        "  --evidence=sim      With --uasm-verified, run the simulator silently (cap\n"
+        "                      --max-insns, default 1000000; guest files in memory\n"
+        "                      only) and decode executed code the static graph missed.\n"
+        "                      Opt-in. Enable-only.\n"
         "  --uasm-header       With --uasm-verified, put the MZ header (relocation table\n"
         "                      as expressions) and the file tail in the listing, so\n"
         "                      uasm -bin rebuilds the whole EXE. Enable-only.\n"

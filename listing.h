@@ -4268,6 +4268,7 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
 }
 
 #include "verify.h"
+#include "sim.h"
 
 /**
  * @brief P2 verified UASM listing (--uasm --uasm-verified).
@@ -4324,10 +4325,55 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
     auto emp = std::make_unique<dx::UasmEmitter>(g, in);
     std::vector<CfgLin> seeds;
     size_t fix_rounds = 1;
-    while (rebuild && !emp->want_roots().empty() && fix_rounds < 16)
+    // P6: simulation evidence (opt-in). Executed addresses in the entry frame
+    // that the graph left in data become entries (Witnessed); executed
+    // addresses inside a decoded instruction are conflicts and are not used.
+    std::vector<std::pair<uint32_t, int32_t>> witnessed;
+    if (opts.evidence_sim && file != nullptr)
     {
+        const uint64_t cap = opts.maxInsnsSet ? opts.maxInsns : 1000000u;
+        witnessed = uasm_com ? sim_witness(opts, image, true, 0x100, relocs, cap)
+                             : sim_witness(opts, *file, false, 0, relocs, cap);
+    }
+    size_t sim_seeded = 0;
+    size_t sim_confirmed = 0;
+    size_t sim_conflicts = 0;
+    auto sim_roots = [&](const dx::UasmEmitter& e) -> std::vector<uint32_t>
+    {
+        std::vector<uint32_t> r;
+        sim_confirmed = sim_conflicts = 0;
+        const uint32_t n = static_cast<uint32_t>(image.size());
+        const int32_t ef = uasm_com ? 0 : static_cast<int32_t>(entry_frame);
+        for (const auto& [lin, fr] : witnessed)
+        {
+            if (lin < e.emit_lo() || lin >= n)
+                continue;
+            const int ui = e.unit_covering(lin);
+            if (ui < 0)
+                continue;
+            const dx::EmitUnit& u = e.units()[static_cast<size_t>(ui)];
+            if (u.code && u.lin == lin)
+                ++sim_confirmed;
+            else if (u.code)
+                ++sim_conflicts;
+            else if (fr == ef)
+                r.push_back(lin);
+        }
+        return r;
+    };
+    while (rebuild && fix_rounds < 16)
+    {
+        std::vector<uint32_t> want = emp->want_roots();
+        for (uint32_t t : sim_roots(*emp))
+        {
+            want.push_back(t);
+            if (std::find(seeds.begin(), seeds.end(), t) == seeds.end())
+                ++sim_seeded;
+        }
+        if (want.empty())
+            break;
         size_t added = 0;
-        for (uint32_t t : emp->want_roots())
+        for (uint32_t t : want)
             if (std::find(seeds.begin(), seeds.end(), t) == seeds.end())
             {
                 seeds.push_back(t);
@@ -4342,6 +4388,8 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
         ++fix_rounds;
     }
     dx::UasmEmitter& em = *emp;
+    if (opts.evidence_sim)
+        (void)sim_roots(em);
     const std::string bin = listing_uasm_resolve_bin(opts);
     ListingUasmScratch scratch;
     dx::VerifyResult v;
@@ -4401,9 +4449,14 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
     if (v.far_xfers != 0)
         hdr.push_back(std::format("far transfers into the image: {}, target decoded as code: {}",
                                   v.far_xfers, v.far_reached));
+    if (opts.evidence_sim)
+        hdr.push_back(std::format("simulation evidence: {} address(es) executed, {} confirm decoded heads, "
+                                  "{} seeded as entries (witnessed), {} inside a decoded instruction (conflict)",
+                                  witnessed.size(), sim_confirmed, sim_seeded, sim_conflicts));
     if (fix_rounds > 1)
-        hdr.push_back(std::format("fixpoint: {} round(s), {} jump-table target(s) seeded as entries (derived)",
-                                  fix_rounds, seeds.size()));
+        hdr.push_back(std::format("fixpoint: {} round(s), {} address(es) seeded as entries "
+                                  "({} from bounded jump tables, derived)",
+                                  fix_rounds, seeds.size(), seeds.size() - std::min(seeds.size(), sim_seeded)));
     if (em.value_tables() + em.value_strings() != 0)
         hdr.push_back(std::format("value references: {} bounded jump table(s) ({} entries), {} $-string pointer(s)",
                                   em.value_tables(), em.off_words().size(), em.value_strings()));

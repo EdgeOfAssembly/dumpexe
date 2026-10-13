@@ -16,6 +16,9 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <set>
+#include <span>
+#include <sstream>
 #include <vector>
 #include <cstdint>
 #include <algorithm>
@@ -148,6 +151,9 @@ struct SimState {
 
     /// Back-edge take counts: key = (CS << 32) | (from_ip << 16) | to_ip
     std::unordered_map<uint64_t, uint64_t> backedge_hits;
+
+    /// P6 evidence hook: when set, every executed instruction's (CS, IP).
+    std::vector<std::pair<uint16_t, uint16_t>>* witness = nullptr;
 };
 
 /// Decide whether a taken branch to @p target_ip should be suppressed (loop skip).
@@ -1783,8 +1789,10 @@ static inline void sim_run_mz(Options& opts,
                               const std::vector<uint8_t>& fileData,
                               const std::vector<RelocEntry>& relocs,
                               size_t header_size_bytes,
-                              int64_t load_image_size) {
+                              int64_t load_image_size,
+                              std::vector<std::pair<uint16_t, uint16_t>>* witness = nullptr) {
     SimState st;
+    st.witness = witness;
     st.image_seg = opts.loadBase;
     st.psp_seg = static_cast<uint16_t>(opts.loadBase - 0x0010);
     st.dta_seg = st.psp_seg;
@@ -1818,8 +1826,10 @@ static inline void sim_run_mz(Options& opts,
 /// file has no embedded PSP, or >= 0x100 when the file already contains one.
 static inline void sim_run_com(Options& opts,
                                const std::vector<uint8_t>& fileData,
-                               size_t entry_offset) {
+                               size_t entry_offset,
+                               std::vector<std::pair<uint16_t, uint16_t>>* witness = nullptr) {
     SimState st;
+    st.witness = witness;
     st.image_seg = opts.loadBase;
     st.psp_seg = opts.loadBase;
     st.dta_seg = st.psp_seg;
@@ -1932,6 +1942,9 @@ static inline void sim_execute(SimState& st, Options& opts) {
             break;
         }
 
+        if (st.witness != nullptr)
+            st.witness->emplace_back(CS, IP);
+
         if (!sim_exec_insn(st, opts)) {
             st.halted = true;
             st.unsupported_stop = true;
@@ -1965,6 +1978,59 @@ static inline void sim_execute(SimState& st, Options& opts) {
 
     cs_free(st.insn, 1);
     cs_close(&st.cs_handle);
+}
+
+/**
+ * @brief P6: run the simulator silently under caps and return the image
+ *        linears it executed, with the frame (CS*16 relative to the image).
+ *
+ * Guest file I/O stays in memory (the simulator's policy). Breakpoints and
+ * tracing are off; all simulator output is discarded. Deterministic.
+ *
+ * @param com          True for a COM image.
+ * @param max_insns    Instruction cap.
+ * @return (image linear, frame) pairs, deduplicated, in first-execution order.
+ */
+static inline std::vector<std::pair<uint32_t, int32_t>>
+sim_witness(const Options& opts_in, const std::vector<uint8_t>& fileData, bool com,
+            size_t com_entry_offset, std::span<const RelocEntry> relocs, uint64_t max_insns)
+{
+    Options o = opts_in;
+    o.breakpoints.clear();
+    o.simTrace = false;
+    o.simQuiet = true;
+    o.maxInsns = max_insns;
+    std::vector<std::pair<uint16_t, uint16_t>> raw;
+    std::ostringstream sink;
+    std::streambuf* old = std::cout.rdbuf(sink.rdbuf());
+    if (com)
+    {
+        sim_run_com(o, fileData, com_entry_offset, &raw);
+    }
+    else if (fileData.size() >= sizeof(MZHeader))
+    {
+        MZHeader h{};
+        std::memcpy(&h, fileData.data(), sizeof(h));
+        const size_t hdr = static_cast<size_t>(h.header_size) * 16u;
+        int64_t size = static_cast<int64_t>(h.num_blocks) * 512 -
+                       (h.final_len ? 512 - h.final_len : 0) - static_cast<int64_t>(hdr);
+        std::vector<RelocEntry> rv(relocs.begin(), relocs.end());
+        sim_run_mz(o, h, fileData, rv, hdr, size, &raw);
+    }
+    std::cout.rdbuf(old);
+    const uint32_t base = static_cast<uint32_t>(o.loadBase) * 16u;
+    std::vector<std::pair<uint32_t, int32_t>> out;
+    std::set<uint32_t> seen;
+    for (const auto& [cs, ip] : raw)
+    {
+        const int64_t phys = static_cast<int64_t>(cs) * 16 + ip;
+        if (phys < base)
+            continue;
+        const uint32_t lin = static_cast<uint32_t>(phys - base);
+        if (seen.insert(lin).second)
+            out.emplace_back(lin, static_cast<int32_t>(static_cast<int64_t>(cs) * 16 - base));
+    }
+    return out;
 }
 
 #endif // SIM_H

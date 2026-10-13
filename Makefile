@@ -204,6 +204,7 @@ test: dumpexe bin2exe tools/bin2exe/test_header test_p1_model test_p1_flow
 	@$(call run_suite,tests/test_p3_header.sh)
 	@$(call run_suite,tests/test_p4_values.sh)
 	@$(call run_suite,tests/test_p5_fixpoint.sh)
+	@$(call run_suite,tests/test_p6_sim.sh)
 	@./tools/bin2exe/test_header
 	@$(call run_suite,tools/bin2exe/tests/test_cli.sh)
 
@@ -220,6 +221,7 @@ test-uasm: dumpexe
 	@bash tests/test_p3_header.sh
 	@bash tests/test_p4_values.sh
 	@bash tests/test_p5_fixpoint.sh
+	@bash tests/test_p6_sim.sh
 
 tests: test
 
