@@ -194,6 +194,12 @@ private:
     std::string off_expr(uint32_t target, uint32_t frame);
     void collect_labels();
     void add_value_refs();
+    void type_string(uint32_t lin, uint32_t len, const char* prefix);
+    template <class FrameOk, class InData>
+    void add_pointer_refs(const std::vector<size_t>& code, FrameOk&& frame_ok, InData&& in_data);
+    std::map<uint32_t, uint32_t> str_len_;          ///< P4 typed strings
+    std::map<uint32_t, std::string> auto_names_;    ///< P4 names (hints win)
+    size_t n_pointers_ = 0;
     std::string data_lines(uint32_t lin, uint32_t len);
     const cs_insn* decode(const EmitUnit& u);
 
@@ -223,6 +229,7 @@ private:
     size_t data_seg_words_ = 0;
     std::string header_lines();
     std::string data_word(uint32_t at);
+    std::string string_text(uint32_t lin, uint32_t len) const;
 
 public:
     /** @brief Decoded instructions dropped because they straddle a segment base. */
@@ -231,7 +238,10 @@ public:
     std::string lbl(uint32_t lin) const
     {
         auto it = in_.label_names.find(lin);
-        return it != in_.label_names.end() ? it->second : uasm_label(lin);
+        if (it != in_.label_names.end())
+            return it->second;
+        auto a = auto_names_.find(lin);
+        return a != auto_names_.end() ? a->second : uasm_label(lin);
     }
     /// P4: words in data printed as near offsets (jump-table entries).
     const std::map<uint32_t, OffWord>& off_words() const { return off_words_; }
@@ -241,6 +251,8 @@ public:
     const std::vector<uint32_t>& want_roots() const { return want_roots_; }
     size_t value_tables() const { return n_tables_; }
     size_t value_strings() const { return n_strings_; }
+    size_t value_pointers() const { return n_pointers_; }
+    size_t typed_strings() const { return str_len_.size(); }
 };
 
 // ---------------------------------------------------------------------------
@@ -612,6 +624,7 @@ inline void UasmEmitter::add_value_refs()
                     u.refs.push_back(r);
                     for (size_t e = 0; e < tg.size(); ++e)
                         off_words_[T + static_cast<uint32_t>(e * 2)] = {tg[e], static_cast<uint32_t>(fr)};
+                    auto_names_.emplace(T, std::format("jt_{:05X}", T));
                     ++n_tables_;
                 }
             }
@@ -645,10 +658,12 @@ inline void UasmEmitter::add_value_refs()
             if (!in_data(t, 1))
                 continue;
             bool dollar = false;
+            uint32_t dpos = t;
             for (uint32_t q = t; q < n && q < t + 4096; ++q)
                 if (img[q] == '$')
                 {
                     dollar = true;
+                    dpos = q;
                     break;
                 }
             if (!dollar)
@@ -661,6 +676,164 @@ inline void UasmEmitter::add_value_refs()
             r.frame = static_cast<uint32_t>(ds);
             u.refs.push_back(r);
             ++n_strings_;
+            type_string(t, dpos + 1 - t, "str");
+        }
+    }
+    add_pointer_refs(code, frame_ok, in_data);
+}
+
+/**
+ * @brief Type [@p lin, lin+len) as a string and name it, when it lies in one
+ *        data unit and has no relocated word.
+ */
+inline void UasmEmitter::type_string(uint32_t lin, uint32_t len, const char* prefix)
+{
+    const int ui = unit_covering(lin);
+    if (ui < 0 || units_[static_cast<size_t>(ui)].code)
+        return;
+    const EmitUnit& d = units_[static_cast<size_t>(ui)];
+    if (lin + len > d.lin + d.size)
+        return;
+    for (uint32_t k = 0; k < len; ++k)
+        if (in_.reloc_at.count(lin + k) || off_words_.count(lin + k))
+            return;
+    str_len_[lin] = len;
+    auto_names_.emplace(lin, std::format("{}_{:05X}", prefix, lin));
+}
+
+/**
+ * @brief P4 pointer cases.
+ *
+ * S06: `mov si|di|bx, T` then `mov R, [base+d]` then `call|jmp R`, all in one
+ * contiguous run: the word at T+d is a code pointer. When its target is a
+ * decoded head, T becomes an offset and the word a `dw` offset (named
+ * ptrtab_); when the target is still data it is seeded (P5 fixpoint).
+ *
+ * S09 (consumer rule): `mov ax, T` / `push ax` / `call near F` where F
+ * dereferences its first stack argument (`mov bx, [bp+4]` within its first
+ * eight instructions) and T is a NUL-terminated printable string of at
+ * least three characters in data: T becomes an offset (named cstr_).
+ *
+ * COM only (DS = CS = frame 0), like the other value rules without a proven
+ * DS in an MZ.
+ */
+template <class FrameOk, class InData>
+inline void UasmEmitter::add_pointer_refs(const std::vector<size_t>& code, FrameOk&& frame_ok, InData&& in_data)
+{
+    if (!in_.com)
+        return;
+    (void)frame_ok;
+    const std::vector<uint8_t>& img = *in_.image;
+    const uint32_t n = static_cast<uint32_t>(img.size());
+    auto contiguous = [&](size_t a, size_t b) {
+        for (size_t k = a; k < b; ++k)
+            if (units_[code[k]].lin + units_[code[k]].size != units_[code[k + 1]].lin)
+                return false;
+        return true;
+    };
+    auto has_ref = [](const EmitUnit& u) { return !u.refs.empty(); };
+    for (size_t j = 0; j < code.size(); ++j)
+    {
+        EmitUnit& u = units_[code[j]];
+        const uint8_t* b = img.data() + u.lin;
+        // S06.
+        if (u.size == 3 && (b[0] == 0xBE || b[0] == 0xBF || b[0] == 0xBB) && !has_ref(u))
+        {
+            const uint8_t base_rm = b[0] == 0xBE ? 4 : (b[0] == 0xBF ? 5 : 7);
+            const uint32_t T = b[1] | (b[2] << 8);
+            for (size_t k = j + 1; k < code.size() && k <= j + 4; ++k)
+            {
+                const EmitUnit& ld = units_[code[k]];
+                const uint8_t* lb = img.data() + ld.lin;
+                if (!contiguous(j, k))
+                    break;
+                if (!(ld.size == 3 && lb[0] == 0x8B && (lb[1] >> 6) == 1 && (lb[1] & 7) == base_rm) &&
+                    !(ld.size == 2 && lb[0] == 0x8B && (lb[1] >> 6) == 0 && (lb[1] & 7) == base_rm &&
+                      base_rm != 6))
+                    continue;
+                const uint32_t d = ld.size == 3 ? lb[2] : 0;
+                const uint8_t R = (lb[1] >> 3) & 7;
+                bool used = false;
+                for (size_t c = k + 1; c < code.size() && c <= k + 3 && !used; ++c)
+                {
+                    if (!contiguous(k, c))
+                        break;
+                    const EmitUnit& cu = units_[code[c]];
+                    const uint8_t* cb = img.data() + cu.lin;
+                    if (cu.size == 2 && cb[0] == 0xFF && cb[1] == static_cast<uint8_t>(0xC0 | (2 << 3) | R))
+                        used = true;
+                    else if (cu.size == 2 && cb[0] == 0xFF && cb[1] == static_cast<uint8_t>(0xC0 | (4 << 3) | R))
+                        used = true;
+                }
+                if (!used)
+                    break;
+                const uint32_t at = T + d;
+                if (!in_data(T, 1) || !in_data(at, 2) || in_.reloc_at.count(at))
+                    break;
+                const uint32_t tgt = img[at] | (img[at + 1] << 8);
+                if (tgt < in_.emit_lo || tgt >= n)
+                    break;
+                const int ti = unit_at(tgt);
+                if (ti >= 0 && units_[static_cast<size_t>(ti)].code)
+                {
+                    InsnRef r;
+                    r.kind = RefKind::Off;
+                    r.off = 1;
+                    r.size = 2;
+                    r.target = T;
+                    r.frame = 0;
+                    u.refs.push_back(r);
+                    off_words_[at] = {tgt, 0};
+                    auto_names_.emplace(T, std::format("ptrtab_{:05X}", T));
+                    ++n_pointers_;
+                }
+                else if (unit_covering(tgt) >= 0 && !units_[static_cast<size_t>(unit_covering(tgt))].code)
+                {
+                    want_roots_.push_back(tgt);
+                }
+                break;
+            }
+            continue;
+        }
+        // S09: B8 iw / 50 / E8 rel16.
+        if (u.size == 3 && b[0] == 0xB8 && !has_ref(u) && j + 2 < code.size() && contiguous(j, j + 2))
+        {
+            const EmitUnit& p = units_[code[j + 1]];
+            const EmitUnit& c = units_[code[j + 2]];
+            if (!(p.size == 1 && img[p.lin] == 0x50 && c.size == 3 && img[c.lin] == 0xE8))
+                continue;
+            const uint32_t F = static_cast<uint32_t>(c.lin + 3 + static_cast<int16_t>(img[c.lin + 1] | (img[c.lin + 2] << 8))) & 0xFFFFu;
+            const int fi = unit_at(F);
+            if (fi < 0 || !units_[static_cast<size_t>(fi)].code)
+                continue;
+            bool deref = false;
+            for (size_t q = static_cast<size_t>(fi), cnt = 0; q < units_.size() && cnt < 8 && units_[q].code; ++q, ++cnt)
+            {
+                const uint8_t* qb = img.data() + units_[q].lin;
+                // mov bx|si|di, [bp+4]
+                if (units_[q].size == 3 && qb[0] == 0x8B && qb[2] == 0x04 &&
+                    (qb[1] == 0x5E || qb[1] == 0x76 || qb[1] == 0x7E))
+                    deref = true;
+            }
+            if (!deref)
+                continue;
+            const uint32_t T = b[1] | (b[2] << 8);
+            if (!in_data(T, 1))
+                continue;
+            uint32_t q = T;
+            while (q < n && q < T + 256 && img[q] >= 0x20 && img[q] < 0x7F)
+                ++q;
+            if (q >= n || img[q] != 0 || q - T < 3)
+                continue;
+            InsnRef r;
+            r.kind = RefKind::Off;
+            r.off = 1;
+            r.size = 2;
+            r.target = T;
+            r.frame = 0;
+            u.refs.push_back(r);
+            ++n_strings_;
+            type_string(T, q + 1 - T, "cstr");
         }
     }
 }
@@ -1239,6 +1412,33 @@ inline std::string UasmEmitter::data_lines(uint32_t lin, uint32_t len)
     return out;
 }
 
+/** @brief Bytes as a db operand list: printable runs quoted, the rest hex. */
+inline std::string UasmEmitter::string_text(uint32_t lin, uint32_t len) const
+{
+    const uint8_t* b = in_.image->data() + lin;
+    std::string out;
+    std::string run;
+    auto flush = [&]() {
+        if (run.empty())
+            return;
+        out += (out.empty() ? "" : ", ") + std::string("'") + run + "'";
+        run.clear();
+    };
+    for (uint32_t k = 0; k < len; ++k)
+    {
+        const uint8_t c = b[k];
+        if (c >= 0x20 && c < 0x7F && c != '\'' && c != '<' && c != '>' && c != '!' && c != '&' && c != '%' && c != ';')
+        {
+            run += static_cast<char>(c);
+            continue;
+        }
+        flush();
+        out += (out.empty() ? "" : ", ") + uasm_hex(c);
+    }
+    flush();
+    return out;
+}
+
 inline std::string UasmEmitter::data_word(uint32_t at)
 {
     const uint32_t seg = (*in_.image)[at] | ((*in_.image)[at + 1] << 8);
@@ -1561,6 +1761,9 @@ inline std::string UasmEmitter::render(const std::vector<std::string>& header, i
                 auto ot = off_words_.upper_bound(p);
                 if (ot != off_words_.end() && ot->first < q)
                     q = ot->first;
+                auto sit = str_len_.upper_bound(p);
+                if (sit != str_len_.end() && sit->first < q)
+                    q = sit->first;
                 if (shift_at > static_cast<int64_t>(p) && shift_at < static_cast<int64_t>(q))
                     q = static_cast<uint32_t>(shift_at);
                 if (static_cast<int64_t>(p) == shift_at)
@@ -1583,6 +1786,21 @@ inline std::string UasmEmitter::render(const std::vector<std::string>& header, i
                 {
                     put(data_word(p));
                     p += 2;
+                    continue;
+                }
+                if (auto s = str_len_.find(p); s != str_len_.end() && p + s->second <= end &&
+                                                  static_cast<int64_t>(p) != shift_at)
+                {
+                    // Stop at the next label or relocated/table word inside it.
+                    uint32_t se = p + s->second;
+                    if (auto nl = labels_.upper_bound(p); nl != labels_.end() && *nl < se)
+                        se = *nl;
+                    if (shift_at > static_cast<int64_t>(p) && shift_at < static_cast<int64_t>(se))
+                        se = static_cast<uint32_t>(shift_at);
+                    // Chunked: UASM rejects very long source lines.
+                    for (uint32_t c = p; c < se; c += 64)
+                        put(std::format("    db {}\t; {:05X}: string", string_text(c, std::min<uint32_t>(64, se - c)), c));
+                    p = se;
                     continue;
                 }
                 std::string d = data_lines(p, q - p);
