@@ -208,6 +208,7 @@ private:
     std::set<uint32_t> straddled_;
     std::map<uint32_t, OffWord> off_words_;  ///< P4 table words
     int64_t dgroup_ = -1;
+    std::vector<uint32_t> want_roots_;   ///< P5: table targets still in data
     size_t n_tables_ = 0;
     size_t n_strings_ = 0;
     std::set<uint32_t> bases_;
@@ -225,6 +226,8 @@ public:
     const std::map<uint32_t, OffWord>& off_words() const { return off_words_; }
     /// Inferred DGROUP base (mov r16, seg X; mov ds, r16), or -1.
     int64_t dgroup() const { return dgroup_; }
+    /// P5: bounded-table targets that the graph did not decode.
+    const std::vector<uint32_t>& want_roots() const { return want_roots_; }
     size_t value_tables() const { return n_tables_; }
     size_t value_strings() const { return n_strings_; }
 };
@@ -530,6 +533,7 @@ inline void UasmEmitter::add_value_refs()
                 const uint32_t T = static_cast<uint32_t>(fr + disp);
                 bool ok = in_data(T, static_cast<uint32_t>(count * 2));
                 std::vector<uint32_t> tg;
+                std::vector<uint32_t> undecoded;
                 for (int64_t e = 0; ok && e < count; ++e)
                 {
                     const uint32_t at = T + static_cast<uint32_t>(e * 2);
@@ -538,10 +542,34 @@ inline void UasmEmitter::add_value_refs()
                         ok = false;
                     const uint32_t t = static_cast<uint32_t>(fr + (img[at] | (img[at + 1] << 8)));
                     const int ti = unit_at(t);
-                    if (t >= n || ti < 0 || !units_[static_cast<size_t>(ti)].code ||
-                        frame_of_[t] != fr)
+                    if (t < n && t >= in_.emit_lo && ti < 0)
+                    {
+                        // Not a unit start: fine only if inside data (P5
+                        // fixpoint seeds it), never mid-instruction.
+                        const int ci = unit_covering(t);
+                        if (ci >= 0 && !units_[static_cast<size_t>(ci)].code)
+                            undecoded.push_back(t);
+                        else
+                            ok = false;
+                    }
+                    else if (t < n && ti >= 0 && !units_[static_cast<size_t>(ti)].code)
+                    {
+                        undecoded.push_back(t);
+                    }
+                    else if (t >= n || ti < 0 || frame_of_[t] != fr)
+                    {
                         ok = false;
+                    }
                     tg.push_back(t);
+                }
+                if (ok && !undecoded.empty())
+                {
+                    // Bounded table with entries in data: ask for a rebuild
+                    // with these as entries (same frame as the entry only).
+                    const auto ef = frame_of_.find(in_.entry);
+                    if (ef != frame_of_.end() && ef->second == fr)
+                        want_roots_.insert(want_roots_.end(), undecoded.begin(), undecoded.end());
+                    ok = false;
                 }
                 if (ok)
                 {

@@ -3546,7 +3546,8 @@ static inline CfgGraph cfg_build_annotated(const std::vector<uint8_t>& fileData,
                                            std::span<const RelocEntry> relocs = {},
                                            int32_t entry_frame = 0,
                                            dx::Fmt trace_fmt = dx::Fmt::Mz,
-                                           bool psp_in_bytes = false)
+                                           bool psp_in_bytes = false,
+                                           std::span<const CfgLin> extra_entries = {})
 {
     CfgGraph empty;
     if (image_file_off >= fileData.size())
@@ -3558,7 +3559,7 @@ static inline CfgGraph cfg_build_annotated(const std::vector<uint8_t>& fileData,
 
     CfgGraph g = cfg_build(image, entry_ip, cs_seg, file_cs, image_file_off,
                            opts.cfgFollowCalls, 20000, relocs, entry_frame,
-                           trace_fmt, psp_in_bytes);
+                           trace_fmt, psp_in_bytes, extra_entries);
     cfg_annotate(g, image);
     return g;
 }

@@ -4291,7 +4291,8 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
                                                      int* uasm_status,
                                                      const std::vector<uint8_t>* file = nullptr,
                                                      size_t image_file_off = 0,
-                                                     uint32_t entry_frame = 0)
+                                                     uint32_t entry_frame = 0,
+                                                     const std::function<CfgGraph(std::span<const CfgLin>)>& rebuild = {})
 {
     dx::EmitInput in;
     in.image = &image;
@@ -4317,7 +4318,30 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
     }
     // Test hook: every code line raw db, so the shift tests must break.
     in.negative_control = std::getenv("DUMPEXE_UASM_NEGCONTROL") != nullptr;
-    dx::UasmEmitter em(g, std::move(in));
+    // P5 fixpoint: a bounded jump table whose entries the graph left in data
+    // seeds them as entries of a rebuilt graph, until nothing new (cap 16).
+    std::optional<CfgGraph> g2;
+    auto emp = std::make_unique<dx::UasmEmitter>(g, in);
+    std::vector<CfgLin> seeds;
+    size_t fix_rounds = 1;
+    while (rebuild && !emp->want_roots().empty() && fix_rounds < 16)
+    {
+        size_t added = 0;
+        for (uint32_t t : emp->want_roots())
+            if (std::find(seeds.begin(), seeds.end(), t) == seeds.end())
+            {
+                seeds.push_back(t);
+                ++added;
+            }
+        if (added == 0)
+            break;
+        std::sort(seeds.begin(), seeds.end());
+        emp.reset();
+        g2 = rebuild(seeds);
+        emp = std::make_unique<dx::UasmEmitter>(*g2, in);
+        ++fix_rounds;
+    }
+    dx::UasmEmitter& em = *emp;
     const std::string bin = listing_uasm_resolve_bin(opts);
     ListingUasmScratch scratch;
     dx::VerifyResult v;
@@ -4377,6 +4401,9 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
     if (v.far_xfers != 0)
         hdr.push_back(std::format("far transfers into the image: {}, target decoded as code: {}",
                                   v.far_xfers, v.far_reached));
+    if (fix_rounds > 1)
+        hdr.push_back(std::format("fixpoint: {} round(s), {} jump-table target(s) seeded as entries (derived)",
+                                  fix_rounds, seeds.size()));
     if (em.value_tables() + em.value_strings() != 0)
         hdr.push_back(std::format("value references: {} bounded jump table(s) ({} entries), {} $-string pointer(s)",
                                   em.value_tables(), em.off_words().size(), em.value_strings()));
@@ -4482,7 +4509,14 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
             out_text = listing_emit_uasm_verified(g, image, entry_ip, opts, source_name,
                                                   uasm_com, uasm_com_psp, relocs, n_insns,
                                                   uasm_status, &fileData, image_file_off,
-                                                  static_cast<uint32_t>(entry_seg_base));
+                                                  static_cast<uint32_t>(entry_seg_base),
+                                                  [&](std::span<const CfgLin> extra) {
+                                                      return cfg_build_annotated(
+                                                          fileData, image_file_off, len, entry_ip, cs_seg,
+                                                          file_cs, cfg_opts, relocs, entry_seg_base,
+                                                          uasm_com ? dx::Fmt::Com : dx::Fmt::Mz, uasm_com,
+                                                          extra);
+                                                  });
         }
         else
         {
