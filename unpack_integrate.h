@@ -70,6 +70,22 @@ static inline std::string dx_stem_path(const std::string& input_path, const char
 }
 
 /**
+ * @brief Where the unpacked listing goes (G15).
+ *
+ * @param opts Options of the packed run.
+ * @return `<-o stem>_UNPACKED.asm` when -o names a file, otherwise
+ *         `<input stem>_UNPACKED.asm`.
+ */
+static inline std::string dx_unpacked_asm_path(const Options& opts)
+{
+    if (!opts.outputPath.empty() && opts.outputPath != "-")
+    {
+        return dx_stem_path(opts.outputPath, "_UNPACKED.asm");
+    }
+    return dx_stem_path(opts.filename, "_UNPACKED.asm");
+}
+
+/**
  * @brief Result of trying to create an unpacked image.
  */
 enum class DxWriteResult
@@ -129,7 +145,13 @@ static inline bool dx_list_unpacked(const Options& opts,
                                     const std::vector<uint8_t>& image)
 {
     Options uopts = opts;
-    uopts.outputPath.clear();
+    // G15: -o FILE names the packed listing; the unpacked one goes next to
+    // it as <FILE stem>_UNPACKED.asm. Without -o it stays next to the input.
+    uopts.outputPath = dx_unpacked_asm_path(opts);
+    if (!opts.writeAsmFile)
+        uopts.outputPath.clear();
+    if (uopts.outputPath == dx_stem_path(bin_path, ".asm"))
+        uopts.outputPath.clear();
     uopts.writeRepack = false;
     uopts.jsonOut = false;
 
@@ -165,9 +187,17 @@ static inline bool dx_list_unpacked(const Options& opts,
             std::vector<RelocEntry> unpacked_relocs;
             load_relocations(header, image, unpacked_relocs);
             const CfgLin entry_base = cfg_listing_entry_base(entry.frame);
+            // G15: toolchain detection reruns on the unpacked bytes.
+            ToolchainReport utc{};
+            if (opts.toolchainDetect)
+            {
+                utc = toolchain_analyze(image, header,
+                                        static_cast<size_t>(sizes.headerSizeBytes));
+            }
             const int listing_rc = listing_run(image, cfg_file_off, cfg_len, entry.linear, cs_seg,
                             static_cast<uint16_t>(header.cs),
-                            uopts, bin_path, nullptr, nullptr, false, false,
+                            uopts, bin_path, opts.toolchainDetect ? &utc : nullptr, nullptr,
+                            false, false,
                             entry.in_window, unpacked_relocs, nullptr,
                             entry_base);
             cfg_set_entry_frame_override(0);
@@ -280,7 +310,7 @@ static inline bool dx_after_packed_listing(const Options& opts,
     if (wrote == DxWriteResult::Kept)
     {
         // Do not pair the kept image with a disassembly of the fresh bytes.
-        const std::string asm_path = dx_stem_path(opts.filename, "_UNPACKED.asm");
+        const std::string asm_path = dx_unpacked_asm_path(opts);
         if (output_file_exists(asm_path))
         {
             std::cerr << "listing: refuse to overwrite '" << asm_path << "' (kept)\n";

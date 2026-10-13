@@ -3563,6 +3563,133 @@ static inline CfgGraph cfg_build_annotated(const std::vector<uint8_t>& fileData,
     return g;
 }
 
+
+/**
+ * @brief Lowercase name of a strength, for --xrefs.
+ */
+static inline const char* cfg_strength_name(dx::Strength s)
+{
+    switch (s)
+    {
+    case dx::Strength::Hint: return "hint";
+    case dx::Strength::Likely: return "likely";
+    case dx::Strength::Derived: return "derived";
+    case dx::Strength::Witnessed: return "witnessed";
+    case dx::Strength::Proven: return "proven";
+    }
+    return "?";
+}
+
+/**
+ * @brief Short name of a fact reason, for --xrefs.
+ */
+static inline const char* cfg_why_name(dx::Why w)
+{
+    switch (w)
+    {
+    case dx::Why::Entry: return "entry";
+    case dx::Why::DirectJmp: return "direct-jmp";
+    case dx::Why::DirectJcc: return "direct-jcc";
+    case dx::Why::DirectCall: return "direct-call";
+    case dx::Why::CallFallthroughSpec: return "call-fallthrough";
+    case dx::Why::HintIntScan: return "int-nearby";
+    case dx::Why::DirectFlow: return "flow";
+    case dx::Why::IntScan: return "int-scan";
+    case dx::Why::Fallthrough: return "fallthrough";
+    case dx::Why::Wrap: return "wrap";
+    }
+    return "?";
+}
+
+/**
+ * @brief Print the flat --xrefs view of a graph built with recording on.
+ *
+ * One ENTRY row per entry block, then one row per edge in breadth-first
+ * order from the entries (each block's edges in stored order), then edges
+ * of blocks no entry reaches, in address order. Columns: source (the
+ * block's last instruction), target, kind, evidence. Evidence is the
+ * model's fact for the target whose source is that instruction, otherwise
+ * the strongest leader fact at the target; `-` when the graph has no model.
+ *
+ * @param g    Graph. @c g.flow supplies the evidence.
+ * @param out  Stream.
+ */
+static inline void cfg_print_xrefs(const CfgGraph& g, std::ostream& out)
+{
+    auto hex = [](CfgLin v) { return std::format("{:05X}", v); };
+    auto evidence = [&](CfgLin from, CfgLin to) -> std::string
+    {
+        if (!g.flow.has_value())
+            return "-";
+        const dx::Fact* best = nullptr;
+        for (const dx::Fact& f : g.flow->facts().at(dx::Lin{to}))
+        {
+            if (f.why == dx::Why::DirectFlow)
+                continue;
+            if (f.source.v == from)
+                return std::format("{}({})", cfg_strength_name(f.strength), cfg_why_name(f.why));
+            if (best == nullptr || f.strength > best->strength)
+                best = &f;
+        }
+        if (best == nullptr)
+            return "-";
+        return std::format("{}({})", cfg_strength_name(best->strength), cfg_why_name(best->why));
+    };
+    out << "; dumpexe --xrefs   src    dst    kind       evidence (target)\n";
+    std::vector<CfgLin> order;
+    std::set<CfgLin> seen;
+    std::queue<CfgLin> q;
+    for (const auto& [ip, b] : g.blocks)
+    {
+        if (b.is_entry)
+        {
+            out << std::format("ENTRY  {}  entry      {}\n", hex(ip), evidence(ip, ip));
+            q.push(ip);
+            seen.insert(ip);
+        }
+    }
+    auto walk = [&]()
+    {
+        while (!q.empty())
+        {
+            const CfgLin ip = q.front();
+            q.pop();
+            order.push_back(ip);
+            const auto it = g.blocks.find(ip);
+            if (it == g.blocks.end())
+                continue;
+            for (const CfgEdge& e : it->second.outs)
+                if (e.has_target && g.blocks.count(e.to_ip) && seen.insert(e.to_ip).second)
+                    q.push(e.to_ip);
+        }
+    };
+    walk();
+    for (const auto& [ip, b] : g.blocks)
+    {
+        (void)b;
+        if (seen.insert(ip).second)
+        {
+            q.push(ip);
+            walk();
+        }
+    }
+    for (CfgLin ip : order)
+    {
+        const CfgBlock& b = g.blocks.at(ip);
+        const CfgLin src = b.insns.empty() ? b.start_ip : b.insns.back().ip;
+        for (const CfgEdge& e : b.outs)
+        {
+            if (!e.has_target)
+            {
+                out << std::format("{}  ?????  {:<9}  unresolved\n", hex(src), cfg_edge_name(e.kind));
+                continue;
+            }
+            out << std::format("{}  {}  {:<9}  {}\n", hex(src), hex(e.to_ip), cfg_edge_name(e.kind),
+                               evidence(src, e.to_ip));
+        }
+    }
+}
+
 /**
  * @brief Present an already-built CFG. Does not build another graph.
  *

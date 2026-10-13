@@ -108,6 +108,12 @@ struct Options {
     /// verified. Default off. There is no disable twin. Parse fails unless
     /// --uasm is set.
     bool uasm_verify = false;
+    /// --uasm-verified: P2 emitter. Whole listing assembled, compared and
+    /// demoted until identical; start and mid shift tests (enable-only).
+    /// Requires --uasm.
+    bool uasm_verified = false;
+    /// --xrefs: flat edge list from the model, entry first (enable-only).
+    bool xrefs = false;
     /// --uasm-bin PATH: assembler for --uasm-verify. Empty means $DUMPEXE_UASM,
     /// then an absolute directory on PATH. An empty or relative PATH
     /// component is ignored. Never a built-in absolute path.
@@ -445,6 +451,12 @@ struct Options {
             } else if (arg == "--uasm-stats") {
                 // Enable-only. Does not imply --uasm. There is no disable twin.
                 uasm_stats = true;
+            } else if (arg == "--uasm-verified") {
+                // Enable-only. Requires --uasm.
+                uasm_verified = true;
+            } else if (arg == "--xrefs") {
+                // Enable-only.
+                xrefs = true;
             } else if (arg == "--uasm-verify") {
                 // Enable-only. Default off. Does not imply --uasm.
                 uasm_verify = true;
@@ -711,6 +723,11 @@ struct Options {
             std::cerr << "Error: --uasm-stats requires --uasm\n";
             return false;
         }
+        if (uasm_verified && !uasm)
+        {
+            std::cerr << "Error: --uasm-verified requires --uasm\n";
+            return false;
+        }
         if (uasm_verify && !uasm)
         {
             std::cerr << "Error: --uasm-verify requires --uasm\n";
@@ -811,6 +828,14 @@ static inline void show_usage(const char* progname) {
         "                      --uasm. Does not imply --uasm-stats. The listing header says\n"
         "                      \"; verified: uasm … at PATH\" only when every offered line\n"
         "                      assembled, or \"; NOT VERIFIED\".\n"
+        "  --uasm-verified     With --uasm, print every decoded instruction, assemble the\n"
+        "                      whole listing, and demote a line that does not reproduce\n"
+        "                      its bytes (mnemonic, pin macro, symbolic db, raw db) until\n"
+        "                      the listing is identical. Branch targets, relocated\n"
+        "                      segment words and far offsets stay expressions. Runs the\n"
+        "                      start and mid shift tests. Requires --uasm. Enable-only.\n"
+        "  --xrefs             Flat edge list: entry first, then breadth-first from the\n"
+        "                      entries (source, target, kind, evidence). Enable-only.\n"
         "  --uasm-bin PATH     Assembler used by --uasm-verify. Otherwise $DUMPEXE_UASM,\n"
         "                      otherwise uasm on PATH. PATH search ignores empty and\n"
         "                      relative directories. No built-in assembler path.\n"

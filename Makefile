@@ -39,7 +39,7 @@ CAPSTONE_LIBS   := $(shell pkg-config --libs capstone 2>/dev/null)
 
 all: dumpexe bin2exe
 
-HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h listing.h cfg.h analysis.h sim.h sim_path.h sys.h sys_analysis.h com.h com_analysis.h ne.h ne_shift.h ne_analysis.h dos_extender.h dx_strings.h pascal_mt.h turbo_pascal.h toolchain.h symbols.h repack.h json_escape.h json_report.h unpack.h unpack_integrate.h image_model.h bytemap.h facts.h decode.h flow.h sha256.h
+HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h listing.h cfg.h analysis.h sim.h sim_path.h sys.h sys_analysis.h com.h com_analysis.h ne.h ne_shift.h ne_analysis.h dos_extender.h dx_strings.h pascal_mt.h turbo_pascal.h toolchain.h symbols.h repack.h json_escape.h json_report.h unpack.h unpack_integrate.h image_model.h bytemap.h facts.h decode.h flow.h sha256.h emit_uasm.h verify.h
 
 # Deark modules (MIT, Jason Summers). Host glue is unpack_host.c.
 # -I so <#include <deark-private.h>> in the modules resolves.
@@ -200,6 +200,7 @@ test: dumpexe bin2exe tools/bin2exe/test_header test_p1_model test_p1_flow
 	@$(call run_suite,tests/test_p0_shift.sh)
 	@$(call run_suite,tests/test_p0_cfg_once.sh)
 	@$(call run_suite,tests/test_p0_linear.sh)
+	@$(call run_suite,tests/test_p2_verified.sh)
 	@./tools/bin2exe/test_header
 	@$(call run_suite,tools/bin2exe/tests/test_cli.sh)
 
@@ -212,6 +213,7 @@ test-uasm: dumpexe
 	@bash tests/test_p0_shift.sh
 	@bash tests/test_p0_stats.sh
 	@bash tests/test_p0_reloc.sh
+	@bash tests/test_p2_verified.sh
 
 tests: test
 

@@ -4267,6 +4267,101 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
     return listing;
 }
 
+#include "verify.h"
+
+/**
+ * @brief P2 verified UASM listing (--uasm --uasm-verified).
+ *
+ * Every decoded instruction is printed by the rules of emit_uasm.h, the
+ * whole listing is assembled, and lines are demoted until the output is
+ * identical (verify.h). The header records the verdict, the rung counts,
+ * the relocation-set compare and the shift tests. Flat layout only.
+ *
+ * @param uasm_status Set to 1 when the listing is not verified identical.
+ */
+static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
+                                                     const std::vector<uint8_t>& image,
+                                                     CfgLin entry_ip,
+                                                     const Options& opts,
+                                                     const std::string& source_name,
+                                                     bool uasm_com,
+                                                     bool uasm_com_psp,
+                                                     std::span<const RelocEntry> relocs,
+                                                     size_t& n_insns,
+                                                     int* uasm_status)
+{
+    dx::EmitInput in;
+    in.image = &image;
+    in.com = uasm_com && !uasm_com_psp;
+    in.emit_lo = in.com ? 0x100u : 0u;
+    in.entry = entry_ip;
+    if (!uasm_com)
+        in.reloc_at = cfg_reloc_sites(image, relocs);
+    in.source_name = source_name;
+    // Test hook: every code line raw db, so the shift tests must break.
+    in.negative_control = std::getenv("DUMPEXE_UASM_NEGCONTROL") != nullptr;
+    dx::UasmEmitter em(g, std::move(in));
+    const std::string bin = listing_uasm_resolve_bin(opts);
+    ListingUasmScratch scratch;
+    dx::VerifyResult v;
+    if (!scratch.ready())
+    {
+        v = dx::verify_listing(em, std::string{}, std::string{});
+        v.error = "no scratch directory";
+    }
+    else
+    {
+        v = dx::verify_listing(em, bin, scratch.dir());
+    }
+    n_insns = v.n_mnemonic + v.n_pin;
+    if (uasm_status != nullptr)
+        *uasm_status = v.identical ? 0 : 1;
+    if (!v.identical)
+        std::cerr << "listing: --uasm-verified: NOT VERIFIED (" << v.error << ")\n";
+
+    std::string stem = source_name;
+    if (const size_t sl = stem.find_last_of('/'); sl != std::string::npos)
+        stem = stem.substr(sl + 1);
+    std::vector<std::string> hdr;
+    hdr.push_back("dumpexe --uasm --uasm-verified  " + stem + "  (flat layout, " +
+                  (uasm_com ? "COM file" : "EXE load image") + ")");
+    hdr.push_back("rebuild: uasm -bin -nologo -Fo OUT.bin THIS.asm");
+    if (v.identical)
+        hdr.push_back(std::format("VERIFIED identical by {} after {} round(s)", bin, v.rounds));
+    else
+        hdr.push_back("NOT VERIFIED: " + v.error);
+    hdr.push_back(std::format("lines: mnemonic {} ({} bytes), pin {} ({}), symbolic db {} ({}), raw db {} ({})",
+                              v.n_mnemonic, v.bytes_mnemonic, v.n_pin, v.bytes_pin, v.n_symdb,
+                              v.bytes_symdb, v.n_rawdb, v.bytes_rawdb));
+    if (!uasm_com)
+    {
+        hdr.push_back(std::format("relocations: {} of {} segment words symbolic, {} in undecoded data stay literal",
+                                  v.relocs_symbolic, v.relocs_total, v.relocs_in_data));
+        if (em.straddled() != 0)
+            hdr.push_back(std::format("{} decoded instruction(s) straddle a segment base and are printed as data",
+                                      em.straddled()));
+    }
+    auto shift_line = [](const char* name, const dx::ShiftResult& s) -> std::string
+    {
+        if (!s.ran)
+            return std::format("shift {}: not run ({})", name, s.why_not.empty() ? "not identical" : s.why_not);
+        std::string t = std::format("shift {}: {} references checked, {} broken", name, s.checked, s.broken);
+        if (!s.first.empty())
+            t += " (first: " + s.first + ")";
+        return t;
+    };
+    hdr.push_back(shift_line("start", v.shift_start));
+    hdr.push_back(shift_line("mid", v.shift_mid));
+    if (opts.uasm_stats)
+    {
+        std::cerr << std::format("uasm-stats: image={} mnemonic={} pin={} symdb={} rawdb={} identical={} shift_start_broken={} shift_mid_broken={}\n",
+                                 image.size(), v.bytes_mnemonic, v.bytes_pin, v.bytes_symdb,
+                                 v.bytes_rawdb, v.identical ? 1 : 0, v.shift_start.broken,
+                                 v.shift_mid.broken);
+    }
+    return em.render(hdr);
+}
+
 /**
  * @brief Build multi-pass listing text for a CS-relative image.
  * @param relocs MZ fixups into the load image. Passed to the CFG and to --uasm.
@@ -4350,9 +4445,18 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
     if (opts.uasm)
     {
         kind_out = ListingExportKind::Uasm;
-        out_text = listing_emit_uasm(g, image, entry_ip, opts, source_name, tc,
-                                     uasm_com, uasm_com_psp, n_procs, n_insns, ext,
-                                     entry_in_window, relocs, uasm_status);
+        if (opts.uasm_verified)
+        {
+            out_text = listing_emit_uasm_verified(g, image, entry_ip, opts, source_name,
+                                                  uasm_com, uasm_com_psp, relocs, n_insns,
+                                                  uasm_status);
+        }
+        else
+        {
+            out_text = listing_emit_uasm(g, image, entry_ip, opts, source_name, tc,
+                                         uasm_com, uasm_com_psp, n_procs, n_insns, ext,
+                                         entry_in_window, relocs, uasm_status);
+        }
         if (human_stdout && opts.showDisasm && !opts.jsonOut)
         {
             if (g.blocks.empty())
