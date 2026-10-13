@@ -4280,6 +4280,105 @@ static inline std::string listing_emit_uasm(const CfgGraph& g,
  *
  * @param uasm_status Set to 1 when the listing is not verified identical.
  */
+/**
+ * @brief P5 side outputs of the verified listing: --bytemap, --explain and
+ *        --hints-out. The verifier has not run yet; rungs are the emitter's
+ *        start rungs (the bytemap is written again after verification).
+ */
+static inline void listing_uasm_p5_outputs(const Options& opts, const dx::UasmEmitter& em, const CfgGraph& gr,
+                                           const std::vector<CfgLin>& seeds)
+{
+    if (!opts.hints_out.empty())
+    {
+        std::ofstream ho(opts.hints_out);
+        ho << "# dumpexe hints (" << em.input().source_name << ")\n";
+        for (CfgLin s : seeds)
+            ho << std::format("code {:05X}\n", s);
+        for (const auto& [lo, hi] : em.input().force_data)
+            ho << std::format("data {:05X} {:X}\n", lo, hi - lo);
+        for (const auto& [lin, name] : em.input().label_names)
+            ho << std::format("label {:05X} {}\n", lin, name);
+    }
+    for (uint32_t x : opts.explain)
+    {
+        std::string t = std::format("explain {:05X}: ", x);
+        const int ui = em.unit_covering(x);
+        if (ui < 0)
+        {
+            std::cerr << t << "outside the emitted image\n";
+            continue;
+        }
+        const dx::EmitUnit& u = em.units()[static_cast<size_t>(ui)];
+        t += std::format("{} unit {:05X}+{}", u.code ? "code" : "data", u.lin, u.size);
+        if (u.code)
+            t += std::format(" '{}'", u.decoded);
+        bool forced = em.input().weak_heads.count(x) != 0;
+        for (const auto& [lo, hi] : em.input().force_data)
+            if (x >= lo && x < hi)
+            {
+                t += " (data hint)";
+                forced = true;
+            }
+        if (em.input().weak_heads.count(x))
+            t += " (strict: Likely/Hint only)";
+        if (gr.flow.has_value())
+        {
+            const auto facts = gr.flow->facts().at(dx::Lin{u.code ? u.lin : x});
+            if (facts.empty())
+                t += "; no fact";
+            for (const dx::Fact& f : facts)
+                t += std::format("; {}({}) from {:05X}", cfg_strength_name(f.strength), cfg_why_name(f.why),
+                                 f.source.v);
+        }
+        else if (!u.code)
+        {
+            t += "; not decoded by any graph walk";
+        }
+        if (std::find(seeds.begin(), seeds.end(), u.lin) != seeds.end())
+            t += "; seeded entry (fixpoint/sim/hint)";
+        (void)forced;
+        std::cerr << t << "\n";
+    }
+}
+
+/** @brief Write --bytemap after verification: one line per run of equal kind and rung. */
+static inline void listing_uasm_write_bytemap(const Options& opts, const dx::UasmEmitter& em)
+{
+    if (opts.bytemap_path.empty())
+        return;
+    std::ofstream bm(opts.bytemap_path);
+    bm << "# dumpexe bytemap: LO-HI (inclusive, linear) kind rung\n";
+    auto rung_name = [](dx::Rung r) {
+        switch (r)
+        {
+        case dx::Rung::Mnemonic: return "mnemonic";
+        case dx::Rung::Pin: return "pin";
+        case dx::Rung::SymDb: return "symdb";
+        case dx::Rung::RawDb: return "rawdb";
+        }
+        return "?";
+    };
+    std::string cur;
+    uint32_t lo = 0;
+    uint32_t hi = 0;
+    for (const dx::EmitUnit& u : em.units())
+    {
+        const std::string k = u.code ? std::string("code ") + rung_name(u.rung) : std::string("data -");
+        if (k == cur && u.lin == hi)
+        {
+            hi = u.lin + u.size;
+            continue;
+        }
+        if (!cur.empty())
+            bm << std::format("{:05X}-{:05X} {}\n", lo, hi - 1, cur);
+        cur = k;
+        lo = u.lin;
+        hi = u.lin + u.size;
+    }
+    if (!cur.empty())
+        bm << std::format("{:05X}-{:05X} {}\n", lo, hi - 1, cur);
+}
+
 static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
                                                      const std::vector<uint8_t>& image,
                                                      CfgLin entry_ip,
@@ -4322,8 +4421,117 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
     // P5 fixpoint: a bounded jump table whose entries the graph left in data
     // seeds them as entries of a rebuilt graph, until nothing new (cap 16).
     std::optional<CfgGraph> g2;
-    auto emp = std::make_unique<dx::UasmEmitter>(g, in);
     std::vector<CfgLin> seeds;
+    // P5 hints file.
+    std::vector<CfgLin> hint_code;
+    if (!opts.hints_path.empty())
+    {
+        std::ifstream hf(opts.hints_path);
+        if (!hf)
+            std::cerr << "listing: --hints: cannot read " << opts.hints_path << "\n";
+        std::string line;
+        size_t ln = 0;
+        while (std::getline(hf, line))
+        {
+            ++ln;
+            if (const size_t h = line.find('#'); h != std::string::npos)
+                line.resize(h);
+            std::istringstream ss(line);
+            std::string kw;
+            if (!(ss >> kw))
+                continue;
+            std::string a;
+            ss >> a;
+            uint32_t lin = 0;
+            try
+            {
+                lin = static_cast<uint32_t>(std::stoul(a, nullptr, 16));
+            }
+            catch (...)
+            {
+                std::cerr << std::format("listing: --hints:{}: bad address '{}'\n", ln, a);
+                continue;
+            }
+            if (lin >= image.size())
+            {
+                std::cerr << std::format("listing: --hints:{}: {:05X} outside the image\n", ln, lin);
+                continue;
+            }
+            if (kw == "code")
+            {
+                hint_code.push_back(lin);
+            }
+            else if (kw == "data")
+            {
+                std::string len;
+                ss >> len;
+                uint32_t n = 1;
+                try
+                {
+                    n = static_cast<uint32_t>(std::stoul(len, nullptr, 16));
+                }
+                catch (...)
+                {
+                }
+                in.force_data.emplace_back(lin, lin + std::max<uint32_t>(n, 1));
+            }
+            else if (kw == "label")
+            {
+                std::string name;
+                ss >> name;
+                const bool ok = !name.empty() && name.size() <= 31 &&
+                                (std::isalpha(static_cast<unsigned char>(name[0])) || name[0] == '_') &&
+                                std::all_of(name.begin(), name.end(), [](char c) {
+                                    return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+                                }) &&
+                                !(name.size() == 6 && name[0] == 'L' &&
+                                  std::all_of(name.begin() + 1, name.end(), [](char c) { return std::isxdigit(static_cast<unsigned char>(c)); }));
+                bool dup = false;
+                for (const auto& [k, v] : in.label_names)
+                    if (v == name)
+                        dup = true;
+                if (!ok || dup)
+                    std::cerr << std::format("listing: --hints:{}: bad or duplicate label '{}'\n", ln, name);
+                else
+                    in.label_names[lin] = name;
+            }
+            else
+            {
+                std::cerr << std::format("listing: --hints:{}: unknown keyword '{}'\n", ln, kw);
+            }
+        }
+    }
+    // --strict: heads whose best model fact is below Derived are data.
+    size_t strict_dropped = 0;
+    auto make_em = [&](const CfgGraph& gr) {
+        in.weak_heads.clear();
+        if (opts.strict && gr.flow.has_value())
+        {
+            for (const auto& [ip, b] : gr.blocks)
+            {
+                // A block is as strong as its head: every instruction in it
+                // is reached from the head by fall-through.
+                if (b.insns.empty())
+                    continue;
+                const auto facts = gr.flow->facts().at(dx::Lin{b.insns.front().ip});
+                dx::Strength best = dx::Strength::Hint;
+                for (const dx::Fact& f : facts)
+                    if (f.strength > best)
+                        best = f.strength;
+                if (best < dx::Strength::Derived)
+                    for (const CfgInsn& ci : b.insns)
+                        in.weak_heads.insert(ci.ip);
+            }
+            strict_dropped = in.weak_heads.size();
+        }
+        return std::make_unique<dx::UasmEmitter>(gr, in);
+    };
+    for (CfgLin c : hint_code)
+        if (std::find(seeds.begin(), seeds.end(), c) == seeds.end())
+            seeds.push_back(c);
+    if (!seeds.empty() && rebuild)
+        g2 = rebuild(seeds);
+    auto emp = make_em(g2 ? *g2 : g);
     size_t fix_rounds = 1;
     // P6: simulation evidence (opt-in). Executed addresses in the entry frame
     // that the graph left in data become entries (Witnessed); executed
@@ -4384,10 +4592,11 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
         std::sort(seeds.begin(), seeds.end());
         emp.reset();
         g2 = rebuild(seeds);
-        emp = std::make_unique<dx::UasmEmitter>(*g2, in);
+        emp = make_em(*g2);
         ++fix_rounds;
     }
     dx::UasmEmitter& em = *emp;
+    listing_uasm_p5_outputs(opts, em, (g2 ? *g2 : g), seeds);
     if (opts.evidence_sim)
         (void)sim_roots(em);
     const std::string bin = listing_uasm_resolve_bin(opts);
@@ -4453,6 +4662,12 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
         hdr.push_back(std::format("simulation evidence: {} address(es) executed, {} confirm decoded heads, "
                                   "{} seeded as entries (witnessed), {} inside a decoded instruction (conflict)",
                                   witnessed.size(), sim_confirmed, sim_seeded, sim_conflicts));
+    if (!in.label_names.empty() || !in.force_data.empty() || !hint_code.empty())
+        hdr.push_back(std::format("hints: {} code, {} data range(s), {} label name(s) from {}", hint_code.size(),
+                                  in.force_data.size(), in.label_names.size(), opts.hints_path));
+    if (opts.strict)
+        hdr.push_back(std::format("strict: {} instruction(s) with only Likely/Hint evidence printed as data",
+                                  strict_dropped));
     if (fix_rounds > 1)
         hdr.push_back(std::format("fixpoint: {} round(s), {} address(es) seeded as entries "
                                   "({} from bounded jump tables, derived)",
@@ -4471,6 +4686,7 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
                                  v.shift_mid.broken, v.shift_data.broken, v.shift_para.broken,
                                  v.far_reached, v.far_xfers);
     }
+    listing_uasm_write_bytemap(opts, em);
     return em.render(hdr);
 }
 
@@ -4520,6 +4736,18 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
         return false;
 
     Options cfg_opts = opts;
+    // --strict and --explain read model facts: record the walk (recording
+    // only; the graph is the same).
+    struct FlowRecordScope
+    {
+        bool was;
+        explicit FlowRecordScope(bool on) : was(cfg_record_flow())
+        {
+            if (on)
+                cfg_set_record_flow(true);
+        }
+        ~FlowRecordScope() { cfg_set_record_flow(was); }
+    } flow_scope(opts.strict || !opts.explain.empty());
     cfg_opts.showCfg = false;
     CfgGraph g{};
     // An entry outside the image is not seeded. *cfg_out stays untouched

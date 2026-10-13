@@ -96,6 +96,11 @@ struct EmitInput
     uint32_t hdr_len = 0;                       ///< header bytes (e_cparhdr * 16)
     std::vector<RelocEntry> reloc_entries;      ///< relocation table, original order
     uint32_t entry_frame = 0;                   ///< CS * 16 of the entry
+    /// P5 hints: label names, forced data ranges [lo, hi), heads not to
+    /// print as code (--strict: no Derived-or-stronger fact).
+    std::map<uint32_t, std::string> label_names;
+    std::vector<std::pair<uint32_t, uint32_t>> force_data;
+    std::set<uint32_t> weak_heads;
 };
 
 /** @brief MASM hex: 0NNh with a leading 0 before A–F. */
@@ -222,6 +227,12 @@ private:
 public:
     /** @brief Decoded instructions dropped because they straddle a segment base. */
     size_t straddled() const { return straddled_.size(); }
+    /// Label text: a hinted name, else L%05X.
+    std::string lbl(uint32_t lin) const
+    {
+        auto it = in_.label_names.find(lin);
+        return it != in_.label_names.end() ? it->second : uasm_label(lin);
+    }
     /// P4: words in data printed as near offsets (jump-table entries).
     const std::map<uint32_t, OffWord>& off_words() const { return off_words_; }
     /// Inferred DGROUP base (mov r16, seg X; mov ds, r16), or -1.
@@ -260,6 +271,12 @@ inline UasmEmitter::UasmEmitter(const CfgGraph& g, EmitInput in)
             {
                 continue;
             }
+            bool forced = in_.weak_heads.count(ci.ip) != 0;
+            for (const auto& [lo, hi] : in_.force_data)
+                if (ci.ip < hi && ci.ip + ci.size > lo)
+                    forced = true;
+            if (forced)
+                continue;
             heads.emplace(ci.ip, &ci);
             frame_of_.emplace(ci.ip, ci.seg_base);
         }
@@ -711,11 +728,11 @@ inline std::string UasmEmitter::seg_expr(uint32_t frame)
         // paragraphs after the rounded-up image end.
         labels_.insert(n);
         const uint32_t k = frame / 16u - (n + 15u) / 16u;
-        return std::format("((({} - {} + 15) shr 4) + {})", uasm_label(n), uasm_label(in_.emit_lo),
+        return std::format("((({} - {} + 15) shr 4) + {})", lbl(n), lbl(in_.emit_lo),
                            uasm_hex(k));
     }
     labels_.insert(frame);
-    return std::format("(({} - {}) shr 4)", uasm_label(frame), uasm_label(in_.emit_lo));
+    return std::format("(({} - {}) shr 4)", lbl(frame), lbl(in_.emit_lo));
 }
 
 inline std::string UasmEmitter::off_expr(uint32_t target, uint32_t frame)
@@ -723,11 +740,11 @@ inline std::string UasmEmitter::off_expr(uint32_t target, uint32_t frame)
     if (in_.com && frame == 0)
     {
         labels_.insert(target);
-        return "offset " + uasm_label(target);
+        return "offset " + lbl(target);
     }
     labels_.insert(target);
     labels_.insert(frame);
-    return std::format("({} - {})", uasm_label(target), uasm_label(frame));
+    return std::format("({} - {})", lbl(target), lbl(frame));
 }
 
 inline void UasmEmitter::collect_labels()
@@ -736,6 +753,9 @@ inline void UasmEmitter::collect_labels()
     frame_bases_.clear();
     const uint32_t n = static_cast<uint32_t>(in_.image->size());
     labels_.insert(in_.entry);
+    for (const auto& [lin, name] : in_.label_names)
+        if (lin >= in_.emit_lo && lin < n)
+            labels_.insert(lin);
     // P3: every relocation-derived base is a label with an align 16 guard.
     for (uint32_t b : bases_)
     {
@@ -936,7 +956,7 @@ inline std::string UasmEmitter::mnemonic_text(const EmitUnit& u, const cs_insn* 
     {
         if (rel == nullptr || any_prefix)
             return {};
-        const std::string T = uasm_label(rel->target);
+        const std::string T = lbl(rel->target);
         if (op0 == 0xEB)
             return "jmp short " + T;
         if (op0 == 0xE9)
@@ -1049,7 +1069,7 @@ inline std::string UasmEmitter::mnemonic_text(const EmitUnit& u, const cs_insn* 
                             // A bare label in [] carries its segment: UASM
                             // would add a CS override. Use a constant.
                             labels_.insert(in_.emit_lo);
-                            ex = std::format("({} - {} + {})", ex.substr(7), uasm_label(in_.emit_lo),
+                            ex = std::format("({} - {} + {})", ex.substr(7), lbl(in_.emit_lo),
                                              uasm_hex(in_.emit_lo));
                         }
                         parts.push_back(ex);
@@ -1130,7 +1150,7 @@ inline std::vector<std::string> UasmEmitter::symdb_lines(const EmitUnit& u, bool
             {
                 labels_.insert(r.target);
                 const uint32_t rest = u.size - r.off - r.size;
-                f[r.off] = {r.size, std::format("{} - ($ + {})", uasm_label(r.target), r.size + rest)};
+                f[r.off] = {r.size, std::format("{} - ($ + {})", lbl(r.target), r.size + rest)};
             }
             else if (r.kind == RefKind::Off && in_.com && r.frame == 0)
             {
@@ -1237,8 +1257,8 @@ inline std::string UasmEmitter::header_lines()
     const uint32_t n = static_cast<uint32_t>(in_.image->size());
     const uint32_t H = in_.hdr_len;
     auto w = [&](uint32_t o) -> uint32_t { return o + 1 < f.size() ? (f[o] | (f[o + 1] << 8)) : 0; };
-    const std::string L0 = uasm_label(in_.emit_lo);
-    const std::string LE = uasm_label(n);
+    const std::string L0 = lbl(in_.emit_lo);
+    const std::string LE = lbl(n);
     std::string out;
     auto line = [&](const std::string& s) { out += "    " + s + "\n"; };
     auto field = [&](uint32_t o, const char* name, bool ok, const std::string& expr)
@@ -1268,8 +1288,8 @@ inline std::string UasmEmitter::header_lines()
     field(0x12, "e_csum", false, "");
     const uint32_t ef = in_.entry_frame;
     const bool entry_ok = ef < n && in_.entry < n && w(0x16) * 16u == ef && ef + w(0x14) == in_.entry;
-    field(0x14, "e_ip", entry_ok, std::format("({} - {})", uasm_label(in_.entry), uasm_label(ef)));
-    field(0x16, "e_cs", entry_ok, std::format("(({} - {}) shr 4)", uasm_label(ef), L0));
+    field(0x14, "e_ip", entry_ok, std::format("({} - {})", lbl(in_.entry), lbl(ef)));
+    field(0x16, "e_cs", entry_ok, std::format("(({} - {}) shr 4)", lbl(ef), L0));
     field(0x18, "e_lfarlc", table_ok, "(DXRELTAB - DXHDR)");
     field(0x1A, "e_ovno", false, "");
     // The literal fields above are expected: drop them from the report.
@@ -1314,8 +1334,8 @@ inline std::string UasmEmitter::header_lines()
             const uint32_t s = seg * 16u;
             const uint32_t at = s + off;
             if (s < n && at < n)
-                line(std::format("dw ({} - {}), (({} - {}) shr 4)", uasm_label(at), uasm_label(s),
-                                 uasm_label(s), L0));
+                line(std::format("dw ({} - {}), (({} - {}) shr 4)", lbl(at), lbl(s),
+                                 lbl(s), L0));
             else
             {
                 hdr_literal_.push_back(std::format("relocation {}", i));
@@ -1437,7 +1457,7 @@ inline std::string UasmEmitter::render(const std::vector<std::string>& header, i
     for (const std::string& h : header)
         put("; " + h);
     for (const auto& kv : equs_)
-        put(std::format("{} equ <({}+{})>", uasm_label(kv.first), uasm_label(kv.second.first),
+        put(std::format("{} equ <({}+{})>", lbl(kv.first), lbl(kv.second.first),
                         kv.second.second));
     // Pin macros actually used.
     if (!used_macros_.empty())
@@ -1549,7 +1569,7 @@ inline std::string UasmEmitter::render(const std::vector<std::string>& header, i
                 {
                     if (frame_bases_.count(p) && p > in_.emit_lo && p % 16 == 0)
                         put("align 16");
-                    put(uasm_label(p) + ":");
+                    put(lbl(p) + ":");
                 }
                 if (auto ow = off_words_.find(p);
                     ow != off_words_.end() && p + 2 <= end && labels_.count(p + 1) == 0)
@@ -1581,7 +1601,7 @@ inline std::string UasmEmitter::render(const std::vector<std::string>& header, i
         {
             if (frame_bases_.count(u.lin) && u.lin > in_.emit_lo && u.lin % 16 == 0)
                 put("align 16");
-            put(uasm_label(u.lin) + ":");
+            put(lbl(u.lin) + ":");
         }
         const uint8_t* b = in_.image->data() + u.lin;
         std::string bytes;
@@ -1602,7 +1622,7 @@ inline std::string UasmEmitter::render(const std::vector<std::string>& header, i
         }
     }
     if (labels_.count(n))
-        put(uasm_label(n) + ":");
+        put(lbl(n) + ":");
     if (in_.mz_header && in_.file != nullptr && tail_len_ != 0)
     {
         // File tail past the load image (overlay, debug info), verbatim.
@@ -1639,7 +1659,7 @@ inline std::string UasmEmitter::render(const std::vector<std::string>& header, i
     }
     put("_TEXT ends");
     if (labels_.count(in_.entry) && in_.entry >= in_.emit_lo && in_.entry < n)
-        put("end " + uasm_label(in_.entry));
+        put("end " + lbl(in_.entry));
     else
         put("end");
     return out;

@@ -118,6 +118,12 @@ struct Options {
     /// --evidence=sim: P6. Run the simulator (silent, capped by --max-insns,
     /// default 1000000) and seed executed addresses the graph left in data.
     bool evidence_sim = false;
+    /// P5 (all need --uasm-verified):
+    std::string hints_path;      ///< --hints=FILE: code/data/label hints
+    std::string hints_out;       ///< --hints-out=FILE: write the hints this run used
+    std::string bytemap_path;    ///< --bytemap=FILE: per-byte-run kind and rung
+    std::vector<uint32_t> explain; ///< --explain=HEX (repeatable): why a byte is what it is
+    bool strict = false;         ///< --strict: only Derived-or-stronger code is printed as code
     /// --xrefs: flat edge list from the model, entry first (enable-only).
     bool xrefs = false;
     /// --uasm-bin PATH: assembler for --uasm-verify. Empty means $DUMPEXE_UASM,
@@ -457,6 +463,21 @@ struct Options {
             } else if (arg == "--uasm-stats") {
                 // Enable-only. Does not imply --uasm. There is no disable twin.
                 uasm_stats = true;
+            } else if (arg.starts_with("--hints=")) {
+                hints_path = std::string(arg.substr(8));
+            } else if (arg.starts_with("--hints-out=")) {
+                hints_out = std::string(arg.substr(12));
+            } else if (arg.starts_with("--bytemap=")) {
+                bytemap_path = std::string(arg.substr(10));
+            } else if (arg.starts_with("--explain=")) {
+                try {
+                    explain.push_back(static_cast<uint32_t>(std::stoul(std::string(arg.substr(10)), nullptr, 16)));
+                } catch (...) {
+                    std::cerr << "Error: --explain needs a hex linear address\n";
+                    return false;
+                }
+            } else if (arg == "--strict") {
+                strict = true;
             } else if (arg == "--evidence=sim") {
                 // Enable-only. Requires --uasm-verified.
                 evidence_sim = true;
@@ -735,6 +756,12 @@ struct Options {
             std::cerr << "Error: --uasm-stats requires --uasm\n";
             return false;
         }
+        if ((!hints_path.empty() || !hints_out.empty() || !bytemap_path.empty() || !explain.empty() ||
+             strict) && !uasm_verified)
+        {
+            std::cerr << "Error: --hints, --hints-out, --bytemap, --explain and --strict require --uasm-verified\n";
+            return false;
+        }
         if (evidence_sim && !uasm_verified)
         {
             std::cerr << "Error: --evidence=sim requires --uasm-verified\n";
@@ -856,6 +883,14 @@ static inline void show_usage(const char* progname) {
         "                      the listing is identical. Branch targets, relocated\n"
         "                      segment words and far offsets stay expressions. Runs the\n"
         "                      start and mid shift tests. Requires --uasm. Enable-only.\n"
+        "  --hints=FILE        With --uasm-verified: lines 'code HEX', 'data HEX LEN',\n"
+        "                      'label HEX NAME' (# comments). Code hints become entries,\n"
+        "                      data hints are never printed as code, names replace L%05X.\n"
+        "  --hints-out=FILE    Write the hints this run used (seeded entries, names).\n"
+        "  --bytemap=FILE      Write one line per run: LO-HI code|data rung.\n"
+        "  --explain=HEX       Print why the byte at linear HEX is code or data (stderr).\n"
+        "  --strict            Print code only where the model has a Derived or stronger\n"
+        "                      fact; Likely-only heads become data.\n"
         "  --evidence=sim      With --uasm-verified, run the simulator silently (cap\n"
         "                      --max-insns, default 1000000; guest files in memory\n"
         "                      only) and decode executed code the static graph missed.\n"
