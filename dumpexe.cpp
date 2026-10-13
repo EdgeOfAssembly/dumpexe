@@ -11,7 +11,7 @@ static inline void print_version()
     int cap_major = 0;
     int cap_minor = 0;
     (void)cs_version(&cap_major, &cap_minor);
-    std::cout << "dumpexe 2.30 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
+    std::cout << "dumpexe 2.31 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
                  "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n"
                  "License: GPLv2 | Commercial (contact author)\n";
     std::cout << std::format(
@@ -539,6 +539,29 @@ int main(int argc, char* argv[]) {
                                               cfg_entry.in_window ? cfg_entry.frame : int32_t{0});
                     cfg_ran = true;
                 }
+            }
+        }
+
+        // --xrefs: one recorded build so every edge carries its model evidence.
+        if (opts.xrefs && !opts.jsonOut && !opts.uasm_stdout_only())
+        {
+            size_t x_off = 0, x_len = 0;
+            uint16_t x_cs = 0;
+            mz_cfg_window(header, sizes, x_off, x_len, x_cs, opts);
+            const MzEntryLoc x_entry = mz_entry_image_ip(header, x_len);
+            if (x_entry.in_window)
+            {
+                const bool was = cfg_record_flow();
+                cfg_set_record_flow(true);
+                const CfgGraph xg = cfg_build_annotated(fileData, x_off, x_len, x_entry.linear,
+                                                        x_cs, static_cast<uint16_t>(header.cs),
+                                                        opts, relocs, x_entry.frame);
+                cfg_set_record_flow(was);
+                cfg_print_xrefs(xg, std::cout);
+            }
+            else
+            {
+                std::cout << "; dumpexe --xrefs: entry outside the load image\n";
             }
         }
 

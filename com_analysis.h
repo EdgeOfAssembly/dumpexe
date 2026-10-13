@@ -317,6 +317,18 @@ static inline int analyze_com(const Options& opts,
         }
     }
 
+    if (opts.xrefs && !uasm_quiet && !opts.jsonOut) {
+        std::vector<uint8_t> ximage;
+        com_listing_image(data, has_psp, ximage);
+        const bool was = cfg_record_flow();
+        cfg_set_record_flow(true);
+        const CfgGraph xg = cfg_build_annotated(ximage, 0, ximage.size(), COM_ENTRY_IP,
+                                                opts.loadBase, opts.loadBase, opts, {}, 0,
+                                                dx::Fmt::Com, true);
+        cfg_set_record_flow(was);
+        cfg_print_xrefs(xg, std::cout);
+    }
+
     if (opts.simulate) {
         run_com_simulation(opts, data, entry_offset);
     }
