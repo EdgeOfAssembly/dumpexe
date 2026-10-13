@@ -113,6 +113,11 @@ check xrefs_entry_first bash -c "grep -A1 '^; dumpexe --xrefs' '$TD/x.txt' | tai
 check xrefs_call grep -qE '^[0-9A-F]{5}  [0-9A-F]{5}  call +proven\(direct-call\)' "$TD/x.txt"
 check xrefs_jcc grep -qE 'jcc-true +proven\(direct-jcc\)' "$TD/x.txt"
 
+# Review R1: --xrefs read a freed fact vector. ASan build, when present.
+if [[ -x "$ROOT/dumpexe-asan" ]]; then
+  check xrefs_asan_clean bash -c "'$ROOT/dumpexe-asan' --xrefs '$TD/s.com' >/dev/null 2>'$TD/asan.err'; ! grep -q AddressSanitizer '$TD/asan.err'"
+fi
+
 # G15: with -o FILE the unpacked listing is <FILE stem>_UNPACKED.asm.
 PK="$ROOT/games/psychic-war/PW.EXE"
 if [[ -f "$PK" ]]; then

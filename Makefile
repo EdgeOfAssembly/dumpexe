@@ -121,7 +121,8 @@ dumpexe: dumpexe.cpp ne_shift.o sim_path.o deark_bundle.o $(HEADERS)
 
 # ASan/UBSan cannot link -static. Capstone comes from pkg-config, shared.
 dumpexe-asan: dumpexe.cpp ne_shift-asan.o sim_path-asan.o deark_bundle-asan.o $(HEADERS)
-	$(CXX) $(ASAN_CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe-asan dumpexe.cpp ne_shift-asan.o sim_path-asan.o deark_bundle-asan.o $(CAPSTONE_LIBS)
+	$(CXX) $(ASAN_CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe-asan dumpexe.cpp ne_shift-asan.o sim_path-asan.o deark_bundle-asan.o $(CAPSTONE_LIBS) \
+		-Wl,-rpath,$(shell pkg-config --variable=libdir capstone 2>/dev/null)
 	@echo "Built dumpexe-asan (address,undefined)"
 
 asan: dumpexe-asan

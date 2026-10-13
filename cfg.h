@@ -3622,8 +3622,10 @@ static inline void cfg_print_xrefs(const CfgGraph& g, std::ostream& out)
     {
         if (!g.flow.has_value())
             return "-";
+        // at() returns by value: keep the vector alive while best points into it.
+        const auto facts = g.flow->facts().at(dx::Lin{to});
         const dx::Fact* best = nullptr;
-        for (const dx::Fact& f : g.flow->facts().at(dx::Lin{to}))
+        for (const dx::Fact& f : facts)
         {
             if (f.why == dx::Why::DirectFlow)
                 continue;

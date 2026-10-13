@@ -20,7 +20,10 @@
 #include <cerrno>
 #include <cstdio>
 #include <fcntl.h>
+#include <chrono>
+#include <csignal>
 #include <fstream>
+#include <thread>
 #include <map>
 #include <set>
 #include <spawn.h>
@@ -133,10 +136,28 @@ inline AsmRun run_uasm(const std::string& asm_bin, const std::string& dir,
         return r;
     r.spawned = true;
     int st = 0;
-    while (::waitpid(pid, &st, 0) < 0)
+    // Review R8: a hung assembler must not hang dumpexe. 300 s, then kill
+    // the exact child we spawned.
     {
-        if (errno != EINTR)
-            return r;
+        const auto t0 = std::chrono::steady_clock::now();
+        for (;;)
+        {
+            const pid_t w = ::waitpid(pid, &st, WNOHANG);
+            if (w == pid)
+                break;
+            if (w < 0 && errno != EINTR)
+                return r;
+            if (std::chrono::steady_clock::now() - t0 > std::chrono::seconds(300))
+            {
+                ::kill(pid, SIGKILL);
+                while (::waitpid(pid, &st, 0) < 0 && errno == EINTR)
+                {
+                }
+                r.exit_code = -1;
+                return r;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
     }
     r.exit_code = WIFEXITED(st) ? WEXITSTATUS(st) : -1;
 

@@ -406,6 +406,9 @@ static inline void ne_print_resources(const std::vector<uint8_t>& data,
     }
 }
 
+// P7 model (needs NEParsed and the segment helpers above).
+#include "ne_reloc.h"
+
 /**
  * @brief File window @c ne_disasm_segment passes to disassemble.
  *
@@ -419,8 +422,6 @@ static inline void ne_print_resources(const std::vector<uint8_t>& data,
  * @param flen Set to the decoded length when the return is true.
  * @return false when this segment is not disassembled.
  */
-#include "ne_reloc.h"
-
 static inline bool ne_code_disasm_window(const std::vector<uint8_t>& data,
                                          const NEParsed& ne,
                                          size_t seg_index_0based,
@@ -498,9 +499,16 @@ static inline void ne_disasm_segment(const std::vector<uint8_t>& data,
     o.showDisasm = true;
     o.noIntAnnot = true;
     o.writeAsmFile = false;
-    (void)o;
-    // P7: fixup-aware listing (relocation sites named).
-    ne_list_segment(data, ne, *model, seg_index_0based, 0, flen, std::cout);
+    const uint16_t cs = static_cast<uint16_t>(seg_index_0based + 1);
+    std::string text;
+    {
+        NeCoutCapture cap;
+        // flen starts at foff, which is IP 0 for this segment.
+        disassemble(data, foff, cs, /*ip=*/0, o, flen);
+        text = cap.buf.str();
+    }
+    // P7: relocation sites named on the multi-pass listing.
+    std::cout << (model ? ne_annotate_listing(text, *model, seg_index_0based) : text);
 }
 
 /**
@@ -660,11 +668,16 @@ static inline bool analyze_ne(const Options& opts,
                               << std::hex << ne.hdr.cs << ":" << ne.hdr.ip
                               << " (file " << entry_off << "h) ===\n"
                               << std::dec;
-                    // A small IP is listed from the segment start, so code
-                    // just before the entry (a jump back) stays visible.
-                    const uint16_t from = ne.hdr.ip < 256 ? 0 : ne.hdr.ip;
-                    ne_list_segment(fileData, ne, model, idx, from, dump_len + (ne.hdr.ip - from),
-                                    std::cout);
+                    Options o = opts;
+                    o.writeAsmFile = false;
+                    std::string text;
+                    {
+                        NeCoutCapture cap;
+                        // entry_off is foff+IP; flen is from foff because of the rewind.
+                        disassemble(fileData, entry_off, ne.hdr.cs, ne.hdr.ip, o, flen);
+                        text = cap.buf.str();
+                    }
+                    std::cout << ne_annotate_listing(text, model, idx);
                 }
             }
         }
