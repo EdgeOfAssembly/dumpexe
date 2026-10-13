@@ -174,6 +174,13 @@ public:
      */
     std::vector<EntryPoint>& entries();
 
+    /**
+     * @brief Unpack steps of the recorded image (G15). Recorded only.
+     *
+     * @return The image unpack chain, for the builder to fill.
+     */
+    std::vector<Image::UnpackStep>& unpack_chain();
+
 private:
     ByteMap bytes_;
     FactStore facts_;
@@ -244,6 +251,11 @@ inline const Image& FlowTrace::image() const
 inline std::vector<EntryPoint>& FlowTrace::entries()
 {
     return image_.entries;
+}
+
+inline std::vector<Image::UnpackStep>& FlowTrace::unpack_chain()
+{
+    return image_.unpack_chain;
 }
 
 } // namespace dx

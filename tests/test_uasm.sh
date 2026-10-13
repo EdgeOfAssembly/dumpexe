@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dumpexe --uasm: UASM source assembles back to the load image (v2.29).
+# dumpexe --uasm: UASM source assembles back to the load image (v2.30).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -200,7 +200,7 @@ check aximm_cmp cmp_note aximm "$tmp/aximm.bin" "$tmp/aximm.com"
 check help_uasm grep -q -- '--uasm' "$tmp/help.txt"
 check help_no_disable bash -c "! grep -q -- '--no-uasm' '$tmp/help.txt'"
 "$BIN" -v >"$tmp/ver.txt"
-check version_229 grep -q '2.29' "$tmp/ver.txt"
+check version_230 grep -q '2.30' "$tmp/ver.txt"
 
 echo "uasm tests: $pass passed, $fail failed"
 if [[ "$fail" -ne 0 ]]; then

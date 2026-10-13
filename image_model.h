@@ -192,7 +192,9 @@ struct Image
     std::string tail_kind;
 
     /**
-     * @brief One unpack step. P1 does not fill @c unpack_chain.
+     * @brief One unpack step: packer name and lowercase hex SHA-256 of the
+     *        packed input and the unpacked output. Filled by @c cfg_build from
+     *        the pending chain (G15); recorded only, never printed.
      */
     struct UnpackStep
     {
