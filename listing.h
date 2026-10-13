@@ -4674,7 +4674,10 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
                                   fix_rounds, seeds.size(), seeds.size() - std::min(seeds.size(), sim_seeded)));
     if (em.value_tables() + em.value_strings() != 0)
         hdr.push_back(std::format("value references: {} bounded jump table(s) ({} entries), {} $-string pointer(s)",
-                                  em.value_tables(), em.off_words().size(), em.value_strings()));
+                                  em.value_tables(), em.off_words().size() - em.value_pointers(), em.value_strings()));
+    if (em.value_pointers() + em.typed_strings() != 0)
+        hdr.push_back(std::format("pointers and types: {} code pointer(s) through a register, {} typed string(s)",
+                                  em.value_pointers(), em.typed_strings()));
     if (em.input().mz_header)
         hdr.push_back(std::format("strategy C: MZ header and file tail in the source; {} header field(s) literal",
                                   em.header_literals().size()));
