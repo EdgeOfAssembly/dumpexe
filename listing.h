@@ -4288,7 +4288,10 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
                                                      bool uasm_com_psp,
                                                      std::span<const RelocEntry> relocs,
                                                      size_t& n_insns,
-                                                     int* uasm_status)
+                                                     int* uasm_status,
+                                                     const std::vector<uint8_t>* file = nullptr,
+                                                     size_t image_file_off = 0,
+                                                     uint32_t entry_frame = 0)
 {
     dx::EmitInput in;
     in.image = &image;
@@ -4298,6 +4301,20 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
     if (!uasm_com)
         in.reloc_at = cfg_reloc_sites(image, relocs);
     in.source_name = source_name;
+    if (opts.uasm_header && !uasm_com && file != nullptr && file->size() >= 0x1C &&
+        (*file)[0] == 'M' && (*file)[1] == 'Z' && image_file_off != 0 &&
+        image_file_off == static_cast<size_t>((*file)[8] | ((*file)[9] << 8)) * 16u)
+    {
+        in.mz_header = true;
+        in.file = file;
+        in.hdr_len = static_cast<uint32_t>(image_file_off);
+        in.reloc_entries.assign(relocs.begin(), relocs.end());
+        in.entry_frame = entry_frame;
+    }
+    else if (opts.uasm_header)
+    {
+        std::cerr << "listing: --uasm-header: not an MZ image at its header end; image only\n";
+    }
     // Test hook: every code line raw db, so the shift tests must break.
     in.negative_control = std::getenv("DUMPEXE_UASM_NEGCONTROL") != nullptr;
     dx::UasmEmitter em(g, std::move(in));
@@ -4352,12 +4369,24 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
     };
     hdr.push_back(shift_line("start", v.shift_start));
     hdr.push_back(shift_line("mid", v.shift_mid));
+    if (v.shift_data.ran || !v.shift_data.why_not.empty())
+        hdr.push_back(shift_line("data", v.shift_data) +
+                      (v.dgroup >= 0 ? std::format(" (DGROUP L{:05X})", v.dgroup) : std::string{}));
+    if (v.shift_para.ran || !v.shift_para.why_not.empty())
+        hdr.push_back(shift_line("paragraph", v.shift_para));
+    if (v.far_xfers != 0)
+        hdr.push_back(std::format("far transfers into the image: {}, target decoded as code: {}",
+                                  v.far_xfers, v.far_reached));
+    if (em.input().mz_header)
+        hdr.push_back(std::format("strategy C: MZ header and file tail in the source; {} header field(s) literal",
+                                  em.header_literals().size()));
     if (opts.uasm_stats)
     {
-        std::cerr << std::format("uasm-stats: image={} mnemonic={} pin={} symdb={} rawdb={} identical={} shift_start_broken={} shift_mid_broken={}\n",
+        std::cerr << std::format("uasm-stats: image={} mnemonic={} pin={} symdb={} rawdb={} identical={} shift_start_broken={} shift_mid_broken={} shift_data_broken={} shift_para_broken={} far={}/{}\n",
                                  image.size(), v.bytes_mnemonic, v.bytes_pin, v.bytes_symdb,
                                  v.bytes_rawdb, v.identical ? 1 : 0, v.shift_start.broken,
-                                 v.shift_mid.broken);
+                                 v.shift_mid.broken, v.shift_data.broken, v.shift_para.broken,
+                                 v.far_reached, v.far_xfers);
     }
     return em.render(hdr);
 }
@@ -4449,7 +4478,8 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
         {
             out_text = listing_emit_uasm_verified(g, image, entry_ip, opts, source_name,
                                                   uasm_com, uasm_com_psp, relocs, n_insns,
-                                                  uasm_status);
+                                                  uasm_status, &fileData, image_file_off,
+                                                  static_cast<uint32_t>(entry_seg_base));
         }
         else
         {

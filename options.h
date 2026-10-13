@@ -112,6 +112,9 @@ struct Options {
     /// demoted until identical; start and mid shift tests (enable-only).
     /// Requires --uasm.
     bool uasm_verified = false;
+    /// --uasm-header: strategy C. The verified listing carries the MZ header
+    /// (relocation table included) and the file tail, so it rebuilds the EXE.
+    bool uasm_header = false;
     /// --xrefs: flat edge list from the model, entry first (enable-only).
     bool xrefs = false;
     /// --uasm-bin PATH: assembler for --uasm-verify. Empty means $DUMPEXE_UASM,
@@ -451,6 +454,9 @@ struct Options {
             } else if (arg == "--uasm-stats") {
                 // Enable-only. Does not imply --uasm. There is no disable twin.
                 uasm_stats = true;
+            } else if (arg == "--uasm-header") {
+                // Enable-only. Requires --uasm-verified.
+                uasm_header = true;
             } else if (arg == "--uasm-verified") {
                 // Enable-only. Requires --uasm.
                 uasm_verified = true;
@@ -723,6 +729,11 @@ struct Options {
             std::cerr << "Error: --uasm-stats requires --uasm\n";
             return false;
         }
+        if (uasm_header && !uasm_verified)
+        {
+            std::cerr << "Error: --uasm-header requires --uasm-verified\n";
+            return false;
+        }
         if (uasm_verified && !uasm)
         {
             std::cerr << "Error: --uasm-verified requires --uasm\n";
@@ -834,6 +845,9 @@ static inline void show_usage(const char* progname) {
         "                      the listing is identical. Branch targets, relocated\n"
         "                      segment words and far offsets stay expressions. Runs the\n"
         "                      start and mid shift tests. Requires --uasm. Enable-only.\n"
+        "  --uasm-header       With --uasm-verified, put the MZ header (relocation table\n"
+        "                      as expressions) and the file tail in the listing, so\n"
+        "                      uasm -bin rebuilds the whole EXE. Enable-only.\n"
         "  --xrefs             Flat edge list: entry first, then breadth-first from the\n"
         "                      entries (source, target, kind, evidence). Enable-only.\n"
         "  --uasm-bin PATH     Assembler used by --uasm-verify. Otherwise $DUMPEXE_UASM,\n"

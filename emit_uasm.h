@@ -81,6 +81,13 @@ struct EmitInput
     std::set<uint32_t> reloc_at; ///< in-image relocated words
     std::string source_name;
     bool negative_control = false; ///< every code unit raw db (shift must break)
+    /// Strategy C (P3): the listing carries the MZ header and the file tail,
+    /// so `uasm -bin` rebuilds the whole EXE. Needs @c file and @c hdr_len.
+    bool mz_header = false;
+    const std::vector<uint8_t>* file = nullptr; ///< whole file (strategy C)
+    uint32_t hdr_len = 0;                       ///< header bytes (e_cparhdr * 16)
+    std::vector<RelocEntry> reloc_entries;      ///< relocation table, original order
+    uint32_t entry_frame = 0;                   ///< CS * 16 of the entry
 };
 
 /** @brief MASM hex: 0NNh with a leading 0 before A–F. */
@@ -119,11 +126,12 @@ public:
      * @brief Render the listing.
      *
      * @param header   Comment lines placed first (each without the ';').
-     * @param shift_at Unit index before which @p shift_text is inserted, or -1.
+     * @param shift_at Linear before which @p shift_text is inserted (before
+     *                 its label and align guard), or -1.
      * @param shift_text One source line inserted by a shift test.
      * @return Source text. @c line_unit maps 1-based source lines to units.
      */
-    std::string render(const std::vector<std::string>& header, int shift_at = -1,
+    std::string render(const std::vector<std::string>& header, int64_t shift_at = -1,
                        std::string_view shift_text = {});
 
     std::vector<EmitUnit>& units() { return units_; }
@@ -131,6 +139,18 @@ public:
     const std::map<int, size_t>& line_unit() const { return line_unit_; }
     uint32_t emit_lo() const { return in_.emit_lo; }
     uint32_t org() const { return in_.com ? 0x100u : 0u; }
+    /// Listing address of image linear 0 minus the linear: header bytes in strategy C.
+    uint32_t bias() const { return in_.mz_header ? in_.hdr_len : 0u; }
+    /// Bytes `uasm -bin` must produce.
+    const std::vector<uint8_t>& expected() const { return expected_; }
+    /// Tail bytes after the load image (strategy C).
+    uint32_t tail_len() const { return tail_len_; }
+    /// Header fields printed as literals because no expression reproduces them.
+    const std::vector<std::string>& header_literals() const { return hdr_literal_; }
+    /// Relocated words printed in data units as segment expressions.
+    size_t data_seg_words() const { return data_seg_words_; }
+    /// Relocation-derived frames that sit inside a printed instruction.
+    std::set<uint32_t> all_bases() const { return bases_; }
     const EmitInput& input() const { return in_; }
 
     /** @brief Pin text for unit @p u, or empty when no pin family fits. */
@@ -177,6 +197,13 @@ private:
     std::map<int, size_t> line_unit_;
     std::set<uint32_t> sym_relocs_;
     std::set<uint32_t> straddled_;
+    std::set<uint32_t> bases_;
+    std::vector<uint8_t> expected_;
+    uint32_t tail_len_ = 0;
+    std::vector<std::string> hdr_literal_;
+    size_t data_seg_words_ = 0;
+    std::string header_lines();
+    std::string data_word(uint32_t at);
 
 public:
     /** @brief Decoded instructions dropped because they straddle a segment base. */
@@ -226,6 +253,14 @@ inline UasmEmitter::UasmEmitter(const CfgGraph& g, EmitInput in)
             if (at + 1 < n)
                 bases.insert((img[at] | (img[at + 1] << 8)) * 16u);
         }
+        for (const RelocEntry& r : in_.reloc_entries)
+        {
+            if (static_cast<uint32_t>(r.segment) * 16u < n)
+                bases.insert(static_cast<uint32_t>(r.segment) * 16u);
+        }
+        if (!in_.com && in_.entry_frame < n)
+            bases.insert(in_.entry_frame);
+        bases_ = bases;
         for (auto it = heads.begin(); it != heads.end();)
         {
             const uint32_t h = it->first;
@@ -241,6 +276,16 @@ inline UasmEmitter::UasmEmitter(const CfgGraph& g, EmitInput in)
                 ++it;
             }
         }
+    }
+
+    if (in_.mz_header && in_.file != nullptr)
+    {
+        expected_ = *in_.file;
+        tail_len_ = static_cast<uint32_t>(in_.file->size() - std::min<size_t>(in_.file->size(), in_.hdr_len + n));
+    }
+    else
+    {
+        expected_.assign(img.begin() + in_.emit_lo, img.end());
     }
 
     uint32_t a = in_.emit_lo;
@@ -400,8 +445,18 @@ inline int UasmEmitter::unit_covering(uint32_t lin) const
 
 inline std::string UasmEmitter::seg_expr(uint32_t frame)
 {
-    labels_.insert(frame);
+    const uint32_t n = static_cast<uint32_t>(in_.image->size());
     labels_.insert(in_.emit_lo);
+    if (frame >= n)
+    {
+        // A segment past the load image (BSS, stack) follows the image:
+        // paragraphs after the rounded-up image end.
+        labels_.insert(n);
+        const uint32_t k = frame / 16u - (n + 15u) / 16u;
+        return std::format("((({} - {} + 15) shr 4) + {})", uasm_label(n), uasm_label(in_.emit_lo),
+                           uasm_hex(k));
+    }
+    labels_.insert(frame);
     return std::format("(({} - {}) shr 4)", uasm_label(frame), uasm_label(in_.emit_lo));
 }
 
@@ -418,6 +473,48 @@ inline void UasmEmitter::collect_labels()
     frame_bases_.clear();
     const uint32_t n = static_cast<uint32_t>(in_.image->size());
     labels_.insert(in_.entry);
+    // P3: every relocation-derived base is a label with an align 16 guard.
+    for (uint32_t b : bases_)
+    {
+        if (b >= in_.emit_lo && b < n && unit_covering(b) >= 0 &&
+            !units_[static_cast<size_t>(unit_covering(b))].code)
+        {
+            labels_.insert(b);
+            frame_bases_.insert(b);
+        }
+        else if (b < n && unit_at(b) >= 0)
+        {
+            labels_.insert(b);
+            frame_bases_.insert(b);
+        }
+    }
+    // Relocated words in data: their frames (or the image end) are labels.
+    for (uint32_t at : in_.reloc_at)
+    {
+        const int ui = unit_covering(at);
+        if (ui < 0 || units_[static_cast<size_t>(ui)].code || at + 1 >= n)
+            continue;
+        const uint32_t fr = ((*in_.image)[at] | ((*in_.image)[at + 1] << 8)) * 16u;
+        labels_.insert(in_.emit_lo);
+        labels_.insert(fr < n ? fr : n);
+    }
+    if (in_.mz_header)
+    {
+        labels_.insert(in_.emit_lo);
+        labels_.insert(n);
+        if (in_.entry_frame < n)
+            labels_.insert(in_.entry_frame);
+        for (const RelocEntry& r : in_.reloc_entries)
+        {
+            const uint32_t s = static_cast<uint32_t>(r.segment) * 16u;
+            const uint32_t at = s + r.offset;
+            if (s < n && at < n)
+            {
+                labels_.insert(s);
+                labels_.insert(at);
+            }
+        }
+    }
     for (const EmitUnit& u : units_)
     {
         if (!u.code || u.rung == Rung::RawDb)
@@ -429,6 +526,11 @@ inline void UasmEmitter::collect_labels()
             if (r.kind == RefKind::Rel)
             {
                 labels_.insert(r.target);
+            }
+            else if (r.kind == RefKind::Seg && r.frame >= n)
+            {
+                labels_.insert(n);
+                labels_.insert(in_.emit_lo);
             }
             else if (r.frame >= in_.emit_lo && r.frame < n &&
                      (r.kind != RefKind::FarOff || r.target < n))
@@ -529,12 +631,11 @@ inline std::string UasmEmitter::mnemonic_text(const EmitUnit& u, const cs_insn* 
         else
             return {};
     }
-    const uint32_t n = static_cast<uint32_t>(in_.image->size());
     if (seg != nullptr)
     {
         // mov r16, seg X (B8-BF iw) is the only mnemonic form with a segment word.
         if (u.refs.size() == 1 && op0 >= 0xB8 && op0 <= 0xBF && u.size == 3 && !any_prefix &&
-            seg->frame >= in_.emit_lo && seg->frame < n)
+            seg->frame >= in_.emit_lo)
         {
             sym_relocs_.insert(u.lin + seg->off);
             return std::format("mov {}, {}", cs_reg_name(cs_, x.operands[0].reg),
@@ -737,6 +838,11 @@ inline std::vector<std::string> UasmEmitter::symdb_lines(const EmitUnit& u, bool
                 const uint32_t rest = u.size - r.off - r.size;
                 f[r.off] = {r.size, std::format("{} - ($ + {})", uasm_label(r.target), r.size + rest)};
             }
+            else if (r.kind == RefKind::Seg && r.frame >= n)
+            {
+                f[r.off] = {2, seg_expr(r.frame)};
+                sym_relocs_.insert(u.lin + r.off);
+            }
             else if (r.frame >= in_.emit_lo && r.frame < n)
             {
                 if (r.kind == RefKind::Seg)
@@ -815,11 +921,122 @@ inline std::string UasmEmitter::data_lines(uint32_t lin, uint32_t len)
     return out;
 }
 
-inline std::string UasmEmitter::render(const std::vector<std::string>& header, int shift_at,
+inline std::string UasmEmitter::data_word(uint32_t at)
+{
+    const uint32_t seg = (*in_.image)[at] | ((*in_.image)[at + 1] << 8);
+    sym_relocs_.insert(at);
+    ++data_seg_words_;
+    return std::format("    dw {}\t; {:05X}: segment word", seg_expr(seg * 16u), at);
+}
+
+inline std::string UasmEmitter::header_lines()
+{
+    // Strategy C: the MZ header as source. A field is an expression only
+    // when that expression reproduces the original value; otherwise it is
+    // the literal and is listed in header_literals().
+    hdr_literal_.clear();
+    const std::vector<uint8_t>& f = *in_.file;
+    const uint32_t n = static_cast<uint32_t>(in_.image->size());
+    const uint32_t H = in_.hdr_len;
+    auto w = [&](uint32_t o) -> uint32_t { return o + 1 < f.size() ? (f[o] | (f[o + 1] << 8)) : 0; };
+    const std::string L0 = uasm_label(in_.emit_lo);
+    const std::string LE = uasm_label(n);
+    std::string out;
+    auto line = [&](const std::string& s) { out += "    " + s + "\n"; };
+    auto field = [&](uint32_t o, const char* name, bool ok, const std::string& expr)
+    {
+        if (ok)
+            line(std::format("dw {}\t\t; {}", expr, name));
+        else
+        {
+            hdr_literal_.push_back(name);
+            line(std::format("dw {}\t\t; {} (literal)", uasm_hex(w(o)), name));
+        }
+    };
+    const uint32_t lfarlc = w(0x18);
+    const uint32_t crlc = w(0x06);
+    const bool table_ok = lfarlc >= 0x1C && lfarlc + crlc * 4 <= H;
+    out += "DXHDR:\n";
+    line(std::format("db {}, {}\t\t; signature", uasm_hex(f[0]), uasm_hex(f[1])));
+    const uint32_t fsz = H + n;
+    field(0x02, "e_cblp", w(0x02) == fsz % 512, std::format("(({} - DXHDR) mod 512)", LE));
+    field(0x04, "e_cp", w(0x04) == (fsz + 511) / 512, std::format("((({} - DXHDR) + 511) shr 9)", LE));
+    field(0x06, "e_crlc", table_ok, "((DXRELEND - DXRELTAB) shr 2)");
+    field(0x08, "e_cparhdr", w(0x08) * 16 == H, std::format("(({} - DXHDR) shr 4)", L0));
+    field(0x0A, "e_minalloc", false, "");
+    field(0x0C, "e_maxalloc", false, "");
+    field(0x0E, "e_ss", false, "");
+    field(0x10, "e_sp", false, "");
+    field(0x12, "e_csum", false, "");
+    const uint32_t ef = in_.entry_frame;
+    const bool entry_ok = ef < n && in_.entry < n && w(0x16) * 16u == ef && ef + w(0x14) == in_.entry;
+    field(0x14, "e_ip", entry_ok, std::format("({} - {})", uasm_label(in_.entry), uasm_label(ef)));
+    field(0x16, "e_cs", entry_ok, std::format("(({} - {}) shr 4)", uasm_label(ef), L0));
+    field(0x18, "e_lfarlc", table_ok, "(DXRELTAB - DXHDR)");
+    field(0x1A, "e_ovno", false, "");
+    // The literal fields above are expected: drop them from the report.
+    hdr_literal_.erase(std::remove_if(hdr_literal_.begin(), hdr_literal_.end(),
+                                      [](const std::string& s)
+                                      {
+                                          return s == "e_minalloc" || s == "e_maxalloc" ||
+                                                 s == "e_ss" || s == "e_sp" || s == "e_csum" ||
+                                                 s == "e_ovno";
+                                      }),
+                       hdr_literal_.end());
+    auto raw = [&](uint32_t from, uint32_t to)
+    {
+        for (uint32_t p = from; p < to;)
+        {
+            uint32_t q = p;
+            while (q < to && f[q] == f[p])
+                ++q;
+            if (q - p >= 8)
+            {
+                line(std::format("db {} dup({})", q - p, uasm_hex(f[p])));
+                p = q;
+                continue;
+            }
+            std::string row;
+            const uint32_t r = std::min(to, p + 16);
+            for (uint32_t k = p; k < r; ++k)
+                row += (k > p ? ", " : "") + uasm_hex(f[k]);
+            line("db " + row);
+            p = r;
+        }
+    };
+    const uint32_t tab = table_ok ? lfarlc : 0x1C;
+    raw(0x1C, tab);
+    out += "DXRELTAB:\n";
+    if (table_ok)
+    {
+        for (uint32_t i = 0; i < crlc; ++i)
+        {
+            const uint32_t off = w(lfarlc + 4 * i);
+            const uint32_t seg = w(lfarlc + 4 * i + 2);
+            const uint32_t s = seg * 16u;
+            const uint32_t at = s + off;
+            if (s < n && at < n)
+                line(std::format("dw ({} - {}), (({} - {}) shr 4)", uasm_label(at), uasm_label(s),
+                                 uasm_label(s), L0));
+            else
+            {
+                hdr_literal_.push_back(std::format("relocation {}", i));
+                line(std::format("dw {}, {}", uasm_hex(off), uasm_hex(seg)));
+            }
+        }
+    }
+    out += "DXRELEND:\n";
+    raw(table_ok ? lfarlc + crlc * 4 : 0x1C, H);
+    out += "align 16\n";
+    return out;
+}
+
+inline std::string UasmEmitter::render(const std::vector<std::string>& header, int64_t shift_at,
                                        std::string_view shift_text)
 {
     used_macros_.clear();
     sym_relocs_.clear();
+    data_seg_words_ = 0;
     collect_labels();
     const uint32_t n = static_cast<uint32_t>(in_.image->size());
 
@@ -994,16 +1211,24 @@ inline std::string UasmEmitter::render(const std::vector<std::string>& header, i
     put(in_.com ? "org 100h" : "org 0");
     if (in_.emit_lo != (in_.com ? 0x100u : 0u))
         put(std::format("org {}", uasm_hex(in_.emit_lo)));
+    if (in_.mz_header && in_.file != nullptr)
+    {
+        const std::string h = header_lines();
+        for (char c : h)
+            if (c == '\n')
+                ++line;
+        out += h;
+    }
 
     line_unit_.clear();
     for (size_t i = 0; i < units_.size(); ++i)
     {
         const EmitUnit& u = units_[i];
-        if (static_cast<int>(i) == shift_at)
+        if (u.code && static_cast<int64_t>(u.lin) == shift_at)
             put("    " + std::string(shift_text) + "\t; inserted by shift test");
         if (!u.code)
         {
-            // Split data at labels.
+            // Split data at labels and at relocated words.
             uint32_t p = u.lin;
             const uint32_t end = u.lin + u.size;
             while (p < end)
@@ -1012,11 +1237,24 @@ inline std::string UasmEmitter::render(const std::vector<std::string>& header, i
                 uint32_t q = end;
                 if (it != labels_.end() && *it < end)
                     q = *it;
+                auto rt = in_.reloc_at.upper_bound(p);
+                if (rt != in_.reloc_at.end() && *rt < q)
+                    q = *rt;
+                if (shift_at > static_cast<int64_t>(p) && shift_at < static_cast<int64_t>(q))
+                    q = static_cast<uint32_t>(shift_at);
+                if (static_cast<int64_t>(p) == shift_at)
+                    put("    " + std::string(shift_text) + "\t; inserted by shift test");
                 if (labels_.count(p))
                 {
                     if (frame_bases_.count(p) && p > in_.emit_lo && p % 16 == 0)
                         put("align 16");
                     put(uasm_label(p) + ":");
+                }
+                if (in_.reloc_at.count(p) && p + 2 <= end && labels_.count(p + 1) == 0)
+                {
+                    put(data_word(p));
+                    p += 2;
+                    continue;
                 }
                 std::string d = data_lines(p, q - p);
                 // Tag the first line so the verifier can map this chunk.
@@ -1056,6 +1294,40 @@ inline std::string UasmEmitter::render(const std::vector<std::string>& header, i
     }
     if (labels_.count(n))
         put(uasm_label(n) + ":");
+    if (in_.mz_header && in_.file != nullptr && tail_len_ != 0)
+    {
+        // File tail past the load image (overlay, debug info), verbatim.
+        const std::vector<uint8_t>& f = *in_.file;
+        const uint32_t from = in_.hdr_len + n;
+        bool first = true;
+        for (uint32_t p = from; p < f.size();)
+        {
+            uint32_t q = p;
+            while (q < f.size() && f[q] == f[p])
+                ++q;
+            std::string ln;
+            if (q - p >= 8)
+            {
+                ln = std::format("    db {} dup({})", q - p, uasm_hex(f[p]));
+                p = q;
+            }
+            else
+            {
+                const uint32_t r = std::min<uint32_t>(static_cast<uint32_t>(f.size()), p + 16);
+                std::string row;
+                for (uint32_t k = p; k < r; ++k)
+                    row += (k > p ? ", " : "") + uasm_hex(f[k]);
+                ln = "    db " + row;
+                p = r;
+            }
+            if (first)
+            {
+                ln += std::format("\t; {:05X}: file tail", n);
+                first = false;
+            }
+            put(ln);
+        }
+    }
     put("_TEXT ends");
     if (labels_.count(in_.entry) && in_.entry >= in_.emit_lo && in_.entry < n)
         put("end " + uasm_label(in_.entry));
