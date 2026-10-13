@@ -364,6 +364,19 @@ inline ShiftResult shift_test(UasmEmitter& em, const std::string& asm_bin, const
                 }
                 else
                 {
+                    const bool com0 = em.input().com && ref.frame == 0 && ref.kind == RefKind::Off;
+                    if (com0)
+                    {
+                        ++s.checked;
+                        ok = (newlin(ref.target) & 0xFFFF) == got;
+                        if (!ok)
+                        {
+                            ++s.broken;
+                            if (s.first.empty())
+                                s.first = std::format("{:05X} offset to {:05X} not adjusted", u.lin, ref.target);
+                        }
+                        continue;
+                    }
                     if (ref.frame < em.emit_lo() || ref.frame >= n)
                         continue; // literal by design (far target outside the image)
                     ++s.checked;
@@ -383,6 +396,23 @@ inline ShiftResult shift_test(UasmEmitter& em, const std::string& asm_bin, const
                                           : ref.kind == RefKind::Seg ? "segment word"
                                                                      : "far offset");
             }
+        }
+    }
+    // P4 table words.
+    for (const auto& [at, w] : em.off_words())
+    {
+        if (r.off_of.count(at) == 0)
+            continue;
+        const int64_t got = rd(r.off_of[at], 2);
+        const int64_t want = (em.input().com && w.frame == 0)
+                                 ? newlin(w.target)
+                                 : newlin(w.target) - newlin(w.frame);
+        ++s.checked;
+        if ((want & 0xFFFF) != got)
+        {
+            ++s.broken;
+            if (s.first.empty())
+                s.first = std::format("{:05X} table word not adjusted", at);
         }
     }
     // Relocated words printed in data as segment expressions.

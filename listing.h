@@ -4377,6 +4377,9 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
     if (v.far_xfers != 0)
         hdr.push_back(std::format("far transfers into the image: {}, target decoded as code: {}",
                                   v.far_xfers, v.far_reached));
+    if (em.value_tables() + em.value_strings() != 0)
+        hdr.push_back(std::format("value references: {} bounded jump table(s) ({} entries), {} $-string pointer(s)",
+                                  em.value_tables(), em.off_words().size(), em.value_strings()));
     if (em.input().mz_header)
         hdr.push_back(std::format("strategy C: MZ header and file tail in the source; {} header field(s) literal",
                                   em.header_literals().size()));
