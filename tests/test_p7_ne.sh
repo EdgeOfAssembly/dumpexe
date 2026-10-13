@@ -89,6 +89,39 @@ check shared_fast bash -c "timeout 10 '$BIN' -a --no-asm-file '$TD/shared.exe' >
 check shared_alias grep -q 'Relocations segment 2: same table as segment 1' "$TD/shared.txt"
 check shared_capped test "$(stat -c %s "$TD/shared.txt")" -lt 50000000
 
+# P7 round trip: per-segment --uasm, uasm -bin, bin2ne, byte-identical.
+# shellcheck source=lib_uasm.sh
+source "$ROOT/tests/lib_uasm.sh"
+B2N="$ROOT/bin2ne"
+roundtrip() { # $1 = NE file; prints IDENT or a reason
+  local w; w=$(mktemp -d "$TD/rt-XXXXXX"); cp "$1" "$w/IN.EXE"
+  (cd "$w" && "$BIN" --uasm --uasm-bin "$UASM_BIN" IN.EXE >/dev/null 2>err.txt) || { echo "dumpexe rc"; return; }
+  grep -q 'NOT VERIFIED' "$w/err.txt" && { echo "not verified"; return; }
+  for a in "$w"/IN_seg*.asm; do
+    (cd "$w" && env -u UASM -u INCLUDE "$UASM_BIN" -bin -nologo -Fo"$(basename "${a%.asm}").bin" "$(basename "$a")" >/dev/null 2>&1) || { echo "uasm $a"; return; }
+  done
+  (cd "$w" && "$B2N" IN.nemap OUT.EXE) || { echo "bin2ne"; return; }
+  cmp -s "$w/OUT.EXE" "$w/IN.EXE" && echo IDENT || echo DIFF
+}
+if UASM_BIN="$(uasm_resolve)" && [[ -x "$B2N" ]]; then
+  check bin2ne_usage bash -c "'$B2N' | grep -q '^usage: bin2ne MAP OUT'"
+  [[ -f "$WS" ]] && check rt_winsmall test "$(roundtrip "$WS")" = IDENT
+  [[ -f "$SL" ]] && check rt_simlifew test "$(roundtrip "$SL")" = IDENT
+  if [[ -f "$WS" ]]; then
+    w=$(mktemp -d "$TD/sk-XXXXXX"); cp "$WS" "$w/IN.EXE"
+    (cd "$w" && "$BIN" --uasm --uasm-bin "$UASM_BIN" IN.EXE >/dev/null 2>&1) || true
+    check skel_has_no_code bash -c "! cmp -s '$w/IN.neskel' '$w/IN.EXE'"
+    check seg1_mnemonic grep -qE '^; lines: mnemonic [1-9][0-9]* ' "$w/IN_seg1.asm"
+  fi
+  if [[ -n "${DUMPEXE_NE_FIXTURES:-}" && -d "$DUMPEXE_NE_FIXTURES" ]]; then
+    for f in "$DUMPEXE_NE_FIXTURES"/*.exe "$DUMPEXE_NE_FIXTURES"/*.dll "$DUMPEXE_NE_FIXTURES"/*.drv; do
+      [[ -f "$f" ]] && check "rt_$(basename "$f" | cut -c1-8)" test "$(roundtrip "$f")" = IDENT
+    done
+  fi
+else
+  echo "SKIP round trip (no uasm or bin2ne)"
+fi
+
 FX="${DUMPEXE_NE_FIXTURES:-}"
 if [[ -n "$FX" && -d "$FX" ]]; then
   OP="$FX/c46f49eb21f9a789670358563cb2f2107d35737f04d94c26b76b877f684a9623.exe"

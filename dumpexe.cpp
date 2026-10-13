@@ -11,7 +11,7 @@ static inline void print_version()
     int cap_major = 0;
     int cap_minor = 0;
     (void)cs_version(&cap_major, &cap_minor);
-    std::cout << "dumpexe 2.38 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
+    std::cout << "dumpexe 2.39 — 16/32-bit MS-DOS (extender) + Win16 NE Analyzer\n"
                  "Copyright (c) 2026 EdgeOfAssembly <haxbox2000@gmail.com>\n"
                  "License: GPLv2 | Commercial (contact author)\n";
     std::cout << std::format(
@@ -314,10 +314,7 @@ int main(int argc, char* argv[]) {
                 {
                     NEParsed ne_tmp;
                     if (ne_parse(fileData, ne_tmp))
-                    {
-                        std::cerr << "dumpexe: --uasm is implemented for MZ and COM\n";
-                        return 1;
-                    }
+                        return ne_emit_uasm(opts, fileData); // P7: per-segment listings
                 }
                 std::string ne_error;
                 if (analyze_ne(opts, fileData, fileSize, ne_error))
