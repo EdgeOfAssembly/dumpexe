@@ -1,6 +1,11 @@
 // ne_names.h - built-in ordinal-to-name tables for KERNEL, USER and GDI
 // Generated from the Wine 16-bit spec files (krnl386.exe16, user.exe16,
 // gdi.exe16): ordinal numbers and export names only.
+//
+// Provenance and licence: Wine is LGPL-2.1-or-later. Only interface facts
+// (which ordinal a documented Windows 3.x export has) are taken; no Wine code.
+// Wine-internal pseudo-exports (__wine_*) are removed. See
+// THIRD_PARTY_NOTICES.md.
 #ifndef NE_NAMES_H
 #define NE_NAMES_H
 
@@ -473,23 +478,6 @@ inline constexpr NeOrdName kNeKernelNames[] = {
     {702, "SSCall"},
     {703, "CallProc32WFix"},
     {704, "SSConfirmSmallStack"},
-    {901, "__wine_vxd_vmm"},
-    {905, "__wine_vxd_timer"},
-    {909, "__wine_vxd_reboot"},
-    {910, "__wine_vxd_vdd"},
-    {912, "__wine_vxd_vmd"},
-    {914, "__wine_vxd_comm"},
-    {923, "__wine_vxd_shell"},
-    {933, "__wine_vxd_pagefile"},
-    {938, "__wine_vxd_apm"},
-    {939, "__wine_vxd_vxdloader"},
-    {945, "__wine_vxd_win32s"},
-    {951, "__wine_vxd_configmg"},
-    {955, "__wine_vxd_enable"},
-    {1990, "__wine_vxd_timerapi"},
-    {2000, "__wine_call_int_handler"},
-    {2001, "__wine_snoop_entry"},
-    {2002, "__wine_snoop_return"},
 };
 
 inline constexpr NeOrdName kNeUserNames[] = {
@@ -1030,7 +1018,6 @@ inline constexpr NeOrdName kNeUserNames[] = {
     {930, "MessageBoxEx"},
     {1000, "SetProcessDefaultLayout"},
     {1001, "GetProcessDefaultLayout"},
-    {1010, "__wine_call_wndproc"},
 };
 
 inline constexpr NeOrdName kNeGdiNames[] = {

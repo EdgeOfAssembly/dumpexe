@@ -15,7 +15,8 @@ check() { local name=$1; shift; if "$@"; then echo "PASS $name"; pass=$((pass + 
 WS="$ROOT/SOURCER/WINSMALL.EXE"
 if [[ -f "$WS" ]]; then
   "$BIN" -d "$WS" > "$TD/ws.txt" 2>&1
-  check ws_inittask grep -qE '^1:0000  9AFFFF0000 +call +far KERNEL\.91  ; InitTask \[reloc 0\]' "$TD/ws.txt"
+  check ws_inittask grep -qE '^ +0000  9AFFFF0000 +call +far KERNEL\.91  ; InitTask \[reloc 0\]' "$TD/ws.txt"
+  check ws_labels_kept grep -qE '^func_[0-9A-F]{4}:' "$TD/ws.txt"
   check ws_reloc_table grep -qE '^ +0  far +import +KERNEL\.91 \(InitTask\) +1:0001' "$TD/ws.txt"
   check ws_no_placeholder bash -c "! grep -qE 'lcall +0, 0xffff' '$TD/ws.txt'"
   # Header, not extension: the same bytes named .COM and .SYS are still NE.
@@ -30,12 +31,37 @@ if [[ -f "$SL" ]]; then
   check sl_exports grep -qE '^ +1  MAINWNDPROC +nonresident +11:CC3A' "$TD/sl.txt"
 fi
 
+# Review R3: 65535 records sharing one 32K-site chain must stay cheap.
+python3 - "$TD/chain.exe" <<'PY'
+import struct, sys
+seglen = 0xFFF0
+seg = bytearray(seglen)
+for i in range(0, seglen - 2, 2):
+    struct.pack_into("<H", seg, i, i + 2)
+struct.pack_into("<H", seg, seglen - 2, 0xFFFF)
+n = 65535
+rel = struct.pack("<H", n) + struct.pack("<BBHHH", 5, 0, 0, 1, 0) * n
+blob = bytearray(0x100) + seg + rel
+blob[0:2] = b"MZ"
+struct.pack_into("<I", blob, 0x3C, 0x40)
+struct.pack_into("<H", blob, 0x40, 0x454E)
+struct.pack_into("<H", blob, 0x40 + 0x16, 1)
+struct.pack_into("<H", blob, 0x40 + 0x1C, 1)
+struct.pack_into("<H", blob, 0x40 + 0x22, 0x40)
+struct.pack_into("<H", blob, 0x40 + 0x26, 0x48)
+struct.pack_into("<H", blob, 0x40 + 0x32, 4)
+blob[0x40 + 0x36] = 2
+struct.pack_into("<HHHH", blob, 0x80, 0x10, seglen, 0x100, seglen)
+open(sys.argv[1], "wb").write(blob)
+PY
+check chain_bounded bash -c "timeout 20 '$BIN' -d '$TD/chain.exe' >/dev/null 2>&1; test \$? -ne 124"
+
 FX="${DUMPEXE_NE_FIXTURES:-}"
 if [[ -n "$FX" && -d "$FX" ]]; then
   OP="$FX/c46f49eb21f9a789670358563cb2f2107d35737f04d94c26b76b877f684a9623.exe"
   if [[ -f "$OP" ]]; then
     "$BIN" -d "$OP" > "$TD/op.txt" 2>&1
-    check outpost_inittask grep -qE '^1:2303  9AFFFF0000 +call +far KERNEL\.91  ; InitTask \[reloc 27\]' "$TD/op.txt"
+    check outpost_inittask grep -qE '^ +2303  9AFFFF0000 +call +far KERNEL\.91  ; InitTask \[reloc 27\]' "$TD/op.txt"
     check outpost_reloc27 bash -c "awk '/Relocations segment 1 /{f=1} f&&/^ +27 /{print;exit}' '$TD/op.txt' | grep -qE 'far +import +KERNEL\.91 \(InitTask\) +1:2304'"
   fi
   for f in "$FX"/*.drv; do

@@ -13,7 +13,9 @@
 #include <cstdint>
 #include <format>
 #include <map>
+#include <iostream>
 #include <ostream>
+#include <sstream>
 #include <set>
 #include <string>
 #include <vector>
@@ -64,6 +66,15 @@ struct NeModel
     std::vector<std::map<uint16_t, size_t>> site_of; ///< per segment: site -> reloc vector index
 };
 
+static inline std::string ne_entry_loc(uint8_t seg, uint16_t off)
+{
+    if (seg == 0)
+        return "-";
+    if (seg == 0xFE)
+        return std::format("const {:04X}", off);
+    return std::format("{}:{:04X}", seg, off);
+}
+
 static inline const char* ne_atype_name(uint8_t t)
 {
     switch (t)
@@ -107,11 +118,13 @@ static inline void ne_parse_entries(const std::vector<uint8_t>& d, const NEParse
             break;
         if (ind == 0)
         {
+            if (static_cast<unsigned>(ord) + cnt > 0xFFFF)
+                break;
             ord = static_cast<uint16_t>(ord + cnt);
             continue;
         }
         const size_t sz = (ind == 0xFF) ? 6 : 3;
-        for (unsigned k = 0; k < cnt && p + sz <= end; ++k, p += sz, ++ord)
+        for (unsigned k = 0; k < cnt && p + sz <= end && ord != 0xFFFF; ++k, p += sz, ++ord)
         {
             NeEntry e;
             e.ord = ord;
@@ -212,8 +225,13 @@ static inline void ne_parse_relocs(const std::vector<uint8_t>& d, const NEParsed
         size_t p = foff + flen;
         if (p + 2 > d.size())
             continue;
-        const uint16_t cnt = static_cast<uint16_t>(d[p] | (d[p + 1] << 8));
+        uint16_t cnt = static_cast<uint16_t>(d[p] | (d[p + 1] << 8));
         p += 2;
+        // Records that fit in the file only.
+        cnt = static_cast<uint16_t>(std::min<size_t>(cnt, (d.size() - p) / 8));
+        // One visited set per segment: chains that merge are walked once,
+        // so total work is bounded by the segment length (review R3).
+        std::vector<uint8_t> visited(flen + 1, 0);
         for (size_t i = 0; i < cnt && p + 8 <= d.size(); ++i, p += 8)
         {
             NeReloc r;
@@ -233,13 +251,15 @@ static inline void ne_parse_relocs(const std::vector<uint8_t>& d, const NEParsed
                     auto it = m.entries.find(r.b);
                     r.target = std::format("entry {}", r.b);
                     if (it != m.entries.end())
-                        r.target += std::format(" ({}:{:04X})", it->second.seg, it->second.off);
+                        r.target += " (" + ne_entry_loc(it->second.seg, it->second.off) + ")";
                     if (auto n = exp_name.find(r.b); n != exp_name.end())
                         r.note = n->second;
                 }
                 else
                 {
                     r.target = std::format("{}:{:04X}", sn, r.b);
+                    if (sn == 0 || sn > ne.segs.size())
+                        r.note = "segment out of range";
                 }
                 break;
             }
@@ -267,10 +287,10 @@ static inline void ne_parse_relocs(const std::vector<uint8_t>& d, const NEParsed
             }
             // Sites: additive records patch one place; others walk the chain.
             uint16_t site = r.head;
-            std::set<uint16_t> seen;
             const size_t sz = ne_atype_size(r.atype);
-            while (site != 0xFFFF && site + sz <= flen && seen.insert(site).second)
+            while (site != 0xFFFF && site + sz <= flen && !visited[site])
             {
+                visited[site] = 1;
                 r.sites.push_back(site);
                 if (r.rtype & 4)
                     break;
@@ -305,7 +325,7 @@ static inline void ne_print_exports(const NeModel& m, std::ostream& os)
     for (const NeExport& e : m.exports)
         os << std::format("{:>4}  {:<32}  {:<12}  {}\n", e.ord, e.name,
                           e.resident ? "resident" : "nonresident",
-                          e.seg ? std::format("{}:{:04X}", e.seg, e.off) : std::string("-"));
+                          ne_entry_loc(e.seg, e.off));
 }
 
 static inline void ne_print_relocs(const NeModel& m, std::ostream& os)
@@ -398,5 +418,101 @@ static inline void ne_list_segment(const std::vector<uint8_t>& d, const NEParsed
     cs_free(in, 1);
     cs_close(&h);
 }
+
+/**
+ * @brief Name relocation sites in an already rendered multi-pass listing
+ *        (lines "    IIII  BYTES  mnemonic ops"). A far-pointer fixup on
+ *        9A/EA becomes `call far KERNEL.91`; other sites get a comment.
+ *        Labels, INT notes and procedure gaps stay as they were.
+ */
+static inline std::string ne_annotate_listing(const std::string& text, const NeModel& m, size_t seg)
+{
+    if (seg >= m.site_of.size() || m.site_of[seg].empty())
+        return text;
+    const auto& sites = m.site_of[seg];
+    std::string out;
+    out.reserve(text.size() + text.size() / 8);
+    size_t pos = 0;
+    while (pos < text.size())
+    {
+        size_t nl = text.find('\n', pos);
+        const size_t e = nl == std::string::npos ? text.size() : nl;
+        std::string line = text.substr(pos, e - pos);
+        pos = nl == std::string::npos ? text.size() : nl + 1;
+        // Parse "    IIII  HEX...  rest".
+        size_t i = 0;
+        while (i < line.size() && line[i] == ' ')
+            ++i;
+        auto ishex = [](char c) { return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F'); };
+        size_t j = i;
+        while (j < line.size() && ishex(line[j]))
+            ++j;
+        size_t k = j;
+        while (k < line.size() && line[k] == ' ')
+            ++k;
+        size_t b = k;
+        while (b < line.size() && ishex(line[b]))
+            ++b;
+        if (i < 4 || j - i != 4 || k - j < 2 || b == k || (b - k) % 2 != 0 || b >= line.size() ||
+            line[b] != ' ')
+        {
+            out += line;
+            out += '\n';
+            continue;
+        }
+        const uint16_t ip = static_cast<uint16_t>(std::stoul(line.substr(i, 4), nullptr, 16));
+        const size_t nbytes = (b - k) / 2;
+        std::string note;
+        bool far_named = false;
+        std::string far_text;
+        for (size_t q = 0; q < nbytes; ++q)
+        {
+            auto it = sites.find(static_cast<uint16_t>(ip + q));
+            if (it == sites.end())
+                continue;
+            const NeReloc& r = m.relocs[seg][it->second];
+            const std::string op = line.substr(k, 2);
+            if (q == 1 && r.atype == 3 && nbytes == 5 && (op == "9A" || op == "EA"))
+            {
+                far_named = true;
+                far_text = std::format("{:<8} far {}", op == "9A" ? "call" : "jmp", r.target);
+            }
+            else
+            {
+                note += std::format("{}fixup {} {} at +{}", note.empty() ? "" : "; ",
+                                    ne_atype_name(r.atype), r.target, q);
+            }
+            if (!r.note.empty())
+                note += note.empty() ? r.note : " (" + r.note + ")";
+            note += std::format(" [reloc {}]", r.index);
+        }
+        if (far_named)
+        {
+            size_t mpos = b;
+            while (mpos < line.size() && line[mpos] == ' ')
+                ++mpos;
+            // Keep any trailing comment of the original line.
+            const size_t sc = line.find(';', mpos);
+            const std::string tail = sc == std::string::npos ? "" : "  " + line.substr(sc);
+            line = line.substr(0, mpos) + far_text + tail;
+        }
+        if (!note.empty())
+            line += "  ; " + note;
+        out += line;
+        out += '\n';
+    }
+    return out;
+}
+
+/** @brief Restores std::cout's buffer on scope exit (exception-safe). */
+struct NeCoutCapture
+{
+    std::ostringstream buf;
+    std::streambuf* old;
+    NeCoutCapture() : old(std::cout.rdbuf(buf.rdbuf())) {}
+    ~NeCoutCapture() { std::cout.rdbuf(old); }
+    NeCoutCapture(const NeCoutCapture&) = delete;
+    NeCoutCapture& operator=(const NeCoutCapture&) = delete;
+};
 
 #endif // NE_RELOC_H

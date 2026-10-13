@@ -2002,7 +2002,11 @@ sim_witness(const Options& opts_in, const std::vector<uint8_t>& fileData, bool c
     o.maxInsns = max_insns;
     std::vector<std::pair<uint16_t, uint16_t>> raw;
     std::ostringstream sink;
-    std::streambuf* old = std::cout.rdbuf(sink.rdbuf());
+    struct CoutRestore
+    {
+        std::streambuf* old;
+        ~CoutRestore() { std::cout.rdbuf(old); }
+    } restore{std::cout.rdbuf(sink.rdbuf())};
     if (com)
     {
         sim_run_com(o, fileData, com_entry_offset, &raw);
@@ -2017,7 +2021,6 @@ sim_witness(const Options& opts_in, const std::vector<uint8_t>& fileData, bool c
         std::vector<RelocEntry> rv(relocs.begin(), relocs.end());
         sim_run_mz(o, h, fileData, rv, hdr, size, &raw);
     }
-    std::cout.rdbuf(old);
     const uint32_t base = static_cast<uint32_t>(o.loadBase) * 16u;
     std::vector<std::pair<uint32_t, int32_t>> out;
     std::set<uint32_t> seen;
