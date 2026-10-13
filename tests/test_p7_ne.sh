@@ -56,6 +56,39 @@ open(sys.argv[1], "wb").write(blob)
 PY
 check chain_bounded bash -c "timeout 20 '$BIN' -d '$TD/chain.exe' >/dev/null 2>&1; test \$? -ne 124"
 
+# Review R3 (fuzz class): 1024 segments sharing one window and one big
+# relocation table. The table is parsed once and the listing is capped.
+python3 - "$TD/shared.exe" <<'PY'
+import struct, sys
+nseg = 1024
+seglen = 0x4000
+seg = bytearray(seglen)
+for i in range(0, seglen - 2, 2):
+    struct.pack_into("<H", seg, i, i + 2)
+struct.pack_into("<H", seg, seglen - 2, 0xFFFF)
+n = 9000
+rel = struct.pack("<H", n) + b"".join(struct.pack("<BBHHH", 3, 1, (i * 4) % seglen, 1, i % 900 + 1) for i in range(n))
+segtab_off = 0x40
+data_off = 0x40 + 0x40 + nseg * 8 + 0x40
+data_off = (data_off + 15) & ~15
+blob = bytearray(data_off) + seg + rel
+blob[0:2] = b"MZ"
+struct.pack_into("<I", blob, 0x3C, 0x40)
+struct.pack_into("<H", blob, 0x40, 0x454E)
+struct.pack_into("<H", blob, 0x40 + 0x16, 1)
+struct.pack_into("<H", blob, 0x40 + 0x1C, nseg)
+struct.pack_into("<H", blob, 0x40 + 0x22, 0x40)
+struct.pack_into("<H", blob, 0x40 + 0x26, 0x40 + nseg * 8)
+struct.pack_into("<H", blob, 0x40 + 0x32, 4)
+blob[0x40 + 0x36] = 2
+for k in range(nseg):
+    struct.pack_into("<HHHH", blob, 0x80 + k * 8, data_off >> 4, seglen, 0x100, seglen)
+open(sys.argv[1], "wb").write(blob)
+PY
+check shared_fast bash -c "timeout 10 '$BIN' -a --no-asm-file '$TD/shared.exe' >'$TD/shared.txt' 2>&1"
+check shared_alias grep -q 'Relocations segment 2: same table as segment 1' "$TD/shared.txt"
+check shared_capped test "$(stat -c %s "$TD/shared.txt")" -lt 50000000
+
 FX="${DUMPEXE_NE_FIXTURES:-}"
 if [[ -n "$FX" && -d "$FX" ]]; then
   OP="$FX/c46f49eb21f9a789670358563cb2f2107d35737f04d94c26b76b877f684a9623.exe"

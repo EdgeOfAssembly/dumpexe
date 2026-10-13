@@ -135,5 +135,14 @@ if [[ -f "$PK" ]]; then
   check unpacked_default_path test -f "$TD/pk2/PW_UNPACKED.asm"
 fi
 
+# Review R2 (intended since 2.31): toolchain detection reruns on the
+# unpacked image, so an unpacked listing whose toolchain is recognised is
+# the JWASM export. The sample is not redistributable: DUMPEXE_R2_SAMPLE.
+if [[ -n "${DUMPEXE_R2_SAMPLE:-}" && -f "${DUMPEXE_R2_SAMPLE}" ]]; then
+  mkdir -p "$TD/r2"; cp "$DUMPEXE_R2_SAMPLE" "$TD/r2/IN.EXE"
+  (cd "$TD/r2" && "$BIN" -d --no-repack IN.EXE >out.txt 2>&1) || true
+  check r2_unpacked_jwasm bash -c "sed -n '/=== UNPACKED ===/,\$p' '$TD/r2/out.txt' | grep -q 'JWASM-assemblable export'"
+fi
+
 echo "p2_verified passed=$pass failed=$fail"
 [[ $fail -eq 0 ]]

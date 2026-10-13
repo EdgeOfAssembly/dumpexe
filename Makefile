@@ -37,6 +37,9 @@ CAPSTONE_LIBS   := $(shell pkg-config --libs capstone 2>/dev/null)
 
 .PHONY: all clean install asan
 
+# Review R10: tests find the capstone the binaries were linked against.
+export LD_LIBRARY_PATH := $(shell pkg-config --variable=libdir capstone 2>/dev/null):$(LD_LIBRARY_PATH)
+
 all: dumpexe bin2exe
 
 HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h listing.h cfg.h analysis.h sim.h sim_path.h sys.h sys_analysis.h com.h com_analysis.h ne.h ne_shift.h ne_analysis.h dos_extender.h dx_strings.h pascal_mt.h turbo_pascal.h toolchain.h symbols.h repack.h json_escape.h json_report.h unpack.h unpack_integrate.h image_model.h bytemap.h facts.h decode.h flow.h sha256.h ne_names.h ne_reloc.h emit_uasm.h verify.h
