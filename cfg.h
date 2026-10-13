@@ -739,6 +739,54 @@ static inline void cfg_find_near_jmp_tables(const std::vector<uint8_t>& image,
 //=============================================================================
 
 /**
+ * @brief Record the entries of one build on its trace.
+ *
+ * Entry 0 is already on the trace. For @c dx::Fmt::Sys it becomes
+ * @c SysStrategy and each extra entry is added as @c SysInterrupt. For any
+ * other format an extra entry keeps the kind of entry 0. An extra entry that
+ * the walk skips (outside the image or the frame) is not recorded. A
+ * duplicate of an earlier entry is recorded once.
+ *
+ * @param trace         Trace built for this cfg_build.
+ * @param fmt           Format the caller passed.
+ * @param entry_ip      Main entry linear.
+ * @param entry_frame   Frame shared by every entry.
+ * @param image_size    Load-image size.
+ * @param extra_entries Extra entries in walk order.
+ */
+static inline void cfg_trace_add_entries(dx::FlowTrace& trace, dx::Fmt fmt, CfgLin entry_ip,
+                                         int32_t entry_frame, size_t image_size,
+                                         std::span<const CfgLin> extra_entries)
+{
+    std::vector<dx::EntryPoint>& entries = trace.entries();
+    if (entries.empty())
+    {
+        return;
+    }
+    const bool sys = fmt == dx::Fmt::Sys;
+    if (sys)
+    {
+        entries[0].kind = dx::EntryPoint::Kind::SysStrategy;
+    }
+    std::set<CfgLin> seen{entry_ip};
+    for (const CfgLin extra : extra_entries)
+    {
+        if (!cfg_ip_in_image(extra, image_size) || !cfg_in_frame(extra, entry_frame))
+        {
+            continue;
+        }
+        if (!seen.insert(extra).second)
+        {
+            continue;
+        }
+        dx::EntryPoint ep = entries[0];
+        ep.kind = sys ? dx::EntryPoint::Kind::SysInterrupt : entries[0].kind;
+        ep.where.off = static_cast<uint16_t>(extra & 0xffffu);
+        entries.push_back(ep);
+    }
+}
+
+/**
  * @brief Build a CFG over a load image using image-linear addresses.
  *
  * image[0] is linear 0. A work item is `{linear, frame}` with
@@ -772,6 +820,13 @@ static inline void cfg_find_near_jmp_tables(const std::vector<uint8_t>& image,
  * @param psp_in_bytes  True when @p image already contains the 256-byte PSP
  *                      or the zero hole. COM then records @c virtual_below 0.
  *                      Default false. Ignored when recording is off.
+ * @param extra_entries More Proven entries walked in the same build, in
+ *                      order, after @p entry_ip and before any heuristic
+ *                      leader. Each uses @p entry_frame. An entry outside the
+ *                      image or the frame is skipped. Empty (the default)
+ *                      leaves the build unchanged. A SYS driver passes its
+ *                      interrupt routine here so both entries share one
+ *                      graph and one trace (G17).
  * @return Control-flow graph. Empty when the entry is outside the image.
  *         @c flow is set only when @c cfg_record_flow is true and this
  *         returns the completed graph. Early returns leave it disengaged.
@@ -786,7 +841,8 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                                  std::span<const RelocEntry> relocs = {},
                                  int32_t entry_frame = 0,
                                  dx::Fmt trace_fmt = dx::Fmt::Mz,
-                                 bool psp_in_bytes = false)
+                                 bool psp_in_bytes = false,
+                                 std::span<const CfgLin> extra_entries = {})
 {
     CfgGraph g;
     g.cs_seg = cs_seg;
@@ -865,6 +921,8 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
         trace.emplace(trace_n, trace_fmt, dx::FileOff{trace_base}, dx::Lin{entry_ip},
                       entry_frame, std::span<const uint8_t>(image.data(), trace_n),
                       psp_in_bytes);
+        cfg_trace_add_entries(*trace, trace_fmt, entry_ip, entry_frame, image.size(),
+                              extra_entries);
     }
     dx::Strength active_strength = dx::Strength::Proven;
     CfgLin active_origin = entry_ip;
@@ -1308,6 +1366,13 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
 
     // --- Pass 1a: trusted flow from the entry, then call/jmp/jcc targets ---
     enqueue(entry_ip, entry_frame, dx::Why::Entry, dx::Strength::Proven, entry_ip);
+    for (const CfgLin extra : extra_entries)
+    {
+        if (cfg_ip_in_image(extra, image.size()) && cfg_in_frame(extra, entry_frame))
+        {
+            enqueue(extra, entry_frame, dx::Why::Entry, dx::Strength::Proven, extra);
+        }
+    }
     drain();
 
     // Jump tables only where the E9 is not an immediate inside owned code.
@@ -1541,7 +1606,9 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
         blk.start_ip = L;
         blk.seg_base = sb;
         blk.file_off = file_base + static_cast<size_t>(L);
-        blk.is_entry = (L == entry_ip);
+        blk.is_entry = (L == entry_ip) ||
+                       std::find(extra_entries.begin(), extra_entries.end(), L) !=
+                           extra_entries.end();
         blk.is_table_entry = table_slots.count(L) != 0;
 
         CfgLin limit = next_leader_after(L);
@@ -3330,6 +3397,34 @@ static inline bool cfg_write_dot(const CfgGraph& g,
             path, emit.size(), edges_out, g.blocks.size());
     }
     return true;
+}
+
+/**
+ * @brief One graph and one P1 model for a DOS device driver (G17).
+ *
+ * The strategy routine is the main entry and the interrupt routine is an
+ * extra entry of the same walk, so code reached from both is decoded once
+ * and the trace holds one @c dx::Image with @c Fmt::Sys and both entries.
+ * Recording is on for this build only; the previous flag is restored.
+ * @c analyze_sys does not call this, so SYS output is unchanged.
+ *
+ * @param data      Whole driver file. Offsets are file offsets; frame 0.
+ * @param strategy  Strategy routine offset from the device header.
+ * @param interrupt Interrupt routine offset from the device header.
+ * @return The graph with @c flow engaged, or an empty graph (flow
+ *         disengaged) when the strategy offset is outside the file.
+ */
+static inline CfgGraph cfg_build_sys(const std::vector<uint8_t>& data,
+                                     uint16_t strategy,
+                                     uint16_t interrupt)
+{
+    const bool was = cfg_record_flow();
+    cfg_set_record_flow(true);
+    const CfgLin extra[1] = {static_cast<CfgLin>(interrupt)};
+    CfgGraph g = cfg_build(data, strategy, 0, 0, 0, true, 20000, {}, 0, dx::Fmt::Sys,
+                           false, std::span<const CfgLin>(extra, 1));
+    cfg_set_record_flow(was);
+    return g;
 }
 
 /**

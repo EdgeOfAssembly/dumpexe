@@ -355,3 +355,72 @@ TEST_CASE("image_from_load psp_in_bytes true clears the COM hole", "[image]")
     REQUIRE(image.virtual_below == 0u);
     REQUIRE(image.bytes.size() == 1u);
 }
+
+TEST_CASE("empty extra entries leave cfg_build unchanged", "[flow][sys]")
+{
+    const RecordFlow guard(false);
+    const std::vector<uint8_t> image{0x74, 0x01, 0x90, 0xC3, 0x90, 0xC3};
+    const CfgGraph plain = cfg_build(image, 0, 0, 0, 0, true);
+    const CfgGraph empty = cfg_build(image, 0, 0, 0, 0, true, 20000, {}, 0, dx::Fmt::Mz,
+                                     false, {});
+    REQUIRE(block_starts(plain) == block_starts(empty));
+}
+
+TEST_CASE("SYS strategy and interrupt share one graph and one model", "[flow][sys]")
+{
+    // 0x00: 18-byte device header (zeros). Strategy at 0x12: jmp 0x16.
+    // Interrupt at 0x14: jmp 0x16. Shared tail 0x16: retf.
+    std::vector<uint8_t> data(0x17, 0);
+    data[0x12] = 0xEB;
+    data[0x13] = 0x02;
+    data[0x14] = 0xEB;
+    data[0x15] = 0x00;
+    data[0x16] = 0xCB;
+    REQUIRE_FALSE(cfg_record_flow());
+    const CfgGraph g = cfg_build_sys(data, 0x12, 0x14);
+    REQUIRE_FALSE(cfg_record_flow());
+    REQUIRE(block_starts(g) == std::vector<CfgLin>{0x12u, 0x14u, 0x16u});
+    REQUIRE(g.blocks.at(0x12).is_entry);
+    REQUIRE(g.blocks.at(0x14).is_entry);
+    REQUIRE_FALSE(g.blocks.at(0x16).is_entry);
+    REQUIRE(g.flow.has_value());
+    const dx::Image& img = g.flow->image();
+    REQUIRE(img.fmt == dx::Fmt::Sys);
+    REQUIRE(img.entries.size() == 2u);
+    REQUIRE(img.entries[0].kind == dx::EntryPoint::Kind::SysStrategy);
+    REQUIRE(img.entries[0].where.off == 0x12u);
+    REQUIRE(img.entries[1].kind == dx::EntryPoint::Kind::SysInterrupt);
+    REQUIRE(img.entries[1].where.off == 0x14u);
+    REQUIRE(has_fact_at(*g.flow, dx::Why::Entry, dx::Strength::Proven, 0x12u));
+    REQUIRE(has_fact_at(*g.flow, dx::Why::Entry, dx::Strength::Proven, 0x14u));
+    // The shared retf is claimed once, Proven.
+    const dx::ByteCell& tail = g.flow->bytes().at(dx::Lin{0x16});
+    REQUIRE(tail.state == dx::BState::CodeHead);
+    REQUIRE(tail.strength == static_cast<uint8_t>(dx::Strength::Proven));
+    std::size_t retf_facts = 0;
+    for (const dx::Fact& f : g.flow->facts().at(dx::Lin{0x16}))
+    {
+        if (f.why == dx::Why::DirectFlow)
+        {
+            ++retf_facts;
+        }
+    }
+    REQUIRE(retf_facts == 1u);
+}
+
+TEST_CASE("SYS equal or out-of-file interrupt adds no second entry", "[flow][sys]")
+{
+    std::vector<uint8_t> data(0x13, 0);
+    data[0x12] = 0xCB;
+    const CfgGraph same = cfg_build_sys(data, 0x12, 0x12);
+    REQUIRE(same.flow.has_value());
+    REQUIRE(same.flow->image().entries.size() == 1u);
+    REQUIRE(same.flow->image().entries[0].kind == dx::EntryPoint::Kind::SysStrategy);
+    const CfgGraph out = cfg_build_sys(data, 0x12, 0x40);
+    REQUIRE(out.flow.has_value());
+    REQUIRE(out.flow->image().entries.size() == 1u);
+    REQUIRE(block_starts(out) == std::vector<CfgLin>{0x12u});
+    const CfgGraph none = cfg_build_sys(data, 0x40, 0x12);
+    REQUIRE_FALSE(none.flow.has_value());
+    REQUIRE(none.blocks.empty());
+}

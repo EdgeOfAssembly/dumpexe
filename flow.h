@@ -164,6 +164,16 @@ public:
      */
     const Image& image() const;
 
+    /**
+     * @brief Entry points of the recorded image, for the builder to extend.
+     *
+     * The constructor stores one entry. @c cfg_build appends any extra
+     * entry it walks in the same build (a SYS interrupt routine).
+     *
+     * @return The image entry list.
+     */
+    std::vector<EntryPoint>& entries();
+
 private:
     ByteMap bytes_;
     FactStore facts_;
@@ -229,6 +239,11 @@ inline const FactStore& FlowTrace::facts() const
 inline const Image& FlowTrace::image() const
 {
     return image_;
+}
+
+inline std::vector<EntryPoint>& FlowTrace::entries()
+{
+    return image_.entries;
 }
 
 } // namespace dx
