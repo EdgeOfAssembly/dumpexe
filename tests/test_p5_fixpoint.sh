@@ -55,7 +55,7 @@ ASM
 gen fx 1
 O="$TD/fx_out.asm"
 check fx_verified grep -q '^; VERIFIED identical' "$O"
-check fx_rounds grep -qE '^; fixpoint: 2 round\(s\), 1 jump-table target\(s\) seeded' "$O"
+check fx_rounds grep -qE '^; fixpoint: 2 round\(s\), 1 address\(es\) seeded as entries \(1 from bounded jump tables' "$O"
 check fx_table_symbolic test "$(grep -c 'table word' "$O")" -eq 3
 check fx_shift_clean grep -qE '^; shift mid: [0-9]+ references checked, 0 broken' "$O"
 check fx_reassembles bash -c "cd '$TD' && env -u UASM '$UASM_BIN' -bin -nologo -Fore.bin fx_out.asm >/dev/null 2>&1 && cmp -s re.bin fx.com"
