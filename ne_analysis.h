@@ -419,6 +419,8 @@ static inline void ne_print_resources(const std::vector<uint8_t>& data,
  * @param flen Set to the decoded length when the return is true.
  * @return false when this segment is not disassembled.
  */
+#include "ne_reloc.h"
+
 static inline bool ne_code_disasm_window(const std::vector<uint8_t>& data,
                                          const NEParsed& ne,
                                          size_t seg_index_0based,
@@ -478,7 +480,8 @@ static inline uint64_t ne_a_disasm_budget(uint64_t file_size)
 /// Disassemble one CODE segment for its on-disk length, not a preview cap.
 static inline void ne_disasm_segment(const std::vector<uint8_t>& data,
                                      const NEParsed& ne,
-                                     size_t seg_index_0based)
+                                     size_t seg_index_0based,
+                                     const NeModel* model)
 {
     size_t foff = 0;
     size_t flen = 0;
@@ -495,9 +498,9 @@ static inline void ne_disasm_segment(const std::vector<uint8_t>& data,
     o.showDisasm = true;
     o.noIntAnnot = true;
     o.writeAsmFile = false;
-    const uint16_t cs = static_cast<uint16_t>(seg_index_0based + 1);
-    // flen starts at foff, which is IP 0 for this segment.
-    disassemble(data, foff, cs, /*ip=*/0, o, flen);
+    (void)o;
+    // P7: fixup-aware listing (relocation sites named).
+    ne_list_segment(data, ne, *model, seg_index_0based, 0, flen, std::cout);
 }
 
 /**
@@ -520,7 +523,8 @@ static inline void ne_disasm_segment(const std::vector<uint8_t>& data,
  * @param ne Parsed NE image.
  */
 static inline void ne_disasm_all_code(const std::vector<uint8_t>& fileData,
-                                      const NEParsed& ne)
+                                      const NEParsed& ne,
+                                      const NeModel& model)
 {
     const uint64_t budget = ne_a_disasm_budget(static_cast<uint64_t>(fileData.size()));
     uint64_t used = 0;
@@ -563,7 +567,7 @@ static inline void ne_disasm_all_code(const std::vector<uint8_t>& fileData,
         }
         seen.emplace(std::pair<size_t, size_t>{foff, flen}, i + 1);
         used += static_cast<uint64_t>(flen);
-        ne_disasm_segment(fileData, ne, i);
+        ne_disasm_segment(fileData, ne, i, &model);
     }
     if (more > 0)
     {
@@ -625,7 +629,11 @@ static inline bool analyze_ne(const Options& opts,
     ne_print_header(ne, fileSize);
     ne_print_segments(ne);
     ne_print_modules(ne);
+    const NeModel model = ne_build_model(fileData, ne);
+    ne_print_exports(model, std::cout);
     ne_print_resources(fileData, ne);
+    if (opts.showDisasm || opts.showAll)
+        ne_print_relocs(model, std::cout);
 
     if (opts.showDisasm || opts.showAll)
     {
@@ -652,16 +660,17 @@ static inline bool analyze_ne(const Options& opts,
                               << std::hex << ne.hdr.cs << ":" << ne.hdr.ip
                               << " (file " << entry_off << "h) ===\n"
                               << std::dec;
-                    Options o = opts;
-                    o.writeAsmFile = false;
-                    // entry_off is foff+IP; flen is from foff because of the rewind.
-                    disassemble(fileData, entry_off, ne.hdr.cs, ne.hdr.ip, o, flen);
+                    // A small IP is listed from the segment start, so code
+                    // just before the entry (a jump back) stays visible.
+                    const uint16_t from = ne.hdr.ip < 256 ? 0 : ne.hdr.ip;
+                    ne_list_segment(fileData, ne, model, idx, from, dump_len + (ne.hdr.ip - from),
+                                    std::cout);
                 }
             }
         }
         if (opts.showAll)
         {
-            ne_disasm_all_code(fileData, ne);
+            ne_disasm_all_code(fileData, ne, model);
         }
     }
 
