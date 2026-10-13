@@ -34,6 +34,7 @@
 #include "decode.h"
 #include "exe.h"
 #include "flow.h"
+#include "sha256.h"
 #include "options.h"
 
 //=============================================================================
@@ -178,6 +179,38 @@ static inline int32_t& cfg_entry_frame_slot()
 {
     static int32_t frame = 0;
     return frame;
+}
+
+/**
+ * @brief Unpack chain the next recorded builds copy onto their image (G15).
+ *
+ * @c dx_after_packed_listing sets it while the unpacked bytes are listed and
+ * clears it afterwards. Recorded only: no listing reads it.
+ */
+static inline std::vector<dx::Image::UnpackStep>& cfg_pending_unpack_chain()
+{
+    static std::vector<dx::Image::UnpackStep> chain;
+    return chain;
+}
+
+/**
+ * @brief Record one unpack step for the builds that follow.
+ *
+ * @param packer Structural packer name.
+ * @param in     Packed file bytes.
+ * @param out    Unpacked file bytes.
+ */
+static inline void cfg_push_unpack_step(const std::string& packer,
+                                        std::span<const uint8_t> in,
+                                        std::span<const uint8_t> out)
+{
+    cfg_pending_unpack_chain().push_back({packer, dx::sha256_hex(in), dx::sha256_hex(out)});
+}
+
+/// Forget the pending unpack chain.
+static inline void cfg_clear_unpack_chain()
+{
+    cfg_pending_unpack_chain().clear();
 }
 
 /**
@@ -554,6 +587,84 @@ static inline bool cfg_ip_in_image(CfgLin ip, size_t image_size)
 inline constexpr uint32_t kCfgUnowned = 0xFFFFFFFFu;
 
 /**
+ * @brief Byte ownership for one cfg_build, stored in the P1 byte map.
+ *
+ * Each claimed instruction is one @c dx::ByteMap code claim whose item is
+ * its head linear, so the model, not a side array, answers "which start
+ * owns this byte". Claims never overlap here: every caller checks that the
+ * span is unowned first. A partial claim (some bytes already owned) is
+ * counted in @c partial and keeps the old first-come rule by claiming only
+ * when the head byte is free; the corpus never hits it.
+ */
+class CfgOwnerMap
+{
+public:
+    explicit CfgOwnerMap(size_t n)
+        : map_(static_cast<uint32_t>(std::min<size_t>(n, UINT32_MAX)))
+    {
+    }
+
+    size_t size() const { return map_.size(); }
+
+    /// Head linear of the instruction covering @p i, or @c kCfgUnowned.
+    uint32_t operator[](size_t i) const
+    {
+        const dx::ByteCell& c = map_.at(dx::Lin{static_cast<uint32_t>(i)});
+        if (c.state == dx::BState::CodeHead || c.state == dx::BState::CodeTail)
+        {
+            return c.item;
+        }
+        return kCfgUnowned;
+    }
+
+    /**
+     * @brief Claim [@p linear, @p linear + @p size) for the start @p linear.
+     * @return true when at least one byte was newly claimed.
+     */
+    bool claim(uint32_t linear, uint16_t size)
+    {
+        uint32_t n_free = 0;
+        uint32_t n_in = 0;
+        for (uint16_t k = 0; k < size; ++k)
+        {
+            const size_t idx = static_cast<size_t>(linear) + k;
+            if (idx >= map_.size())
+            {
+                break;
+            }
+            ++n_in;
+            if ((*this)[idx] == kCfgUnowned)
+            {
+                ++n_free;
+            }
+        }
+        if (n_free == 0)
+        {
+            return false;
+        }
+        if (n_free != n_in)
+        {
+            ++partial;
+        }
+        dx::Fact f;
+        f.why = dx::Why::DirectFlow;
+        f.strength = dx::Strength::Proven;
+        f.subject = dx::Lin{linear};
+        f.source = dx::Lin{linear};
+        const uint8_t len = static_cast<uint8_t>(std::min<uint32_t>(n_in, 15u));
+        (void)map_.claim_code(dx::Lin{linear}, len, linear, f);
+        return true;
+    }
+
+    const dx::ByteMap& map() const { return map_; }
+
+    uint32_t partial = 0;
+
+private:
+    dx::ByteMap map_;
+};
+
+/**
  * @brief True when @p ip sits strictly inside an instruction another start owns.
  *
  * @param owner Per-byte map; owner[i] is the instruction start that covers
@@ -561,7 +672,7 @@ inline constexpr uint32_t kCfgUnowned = 0xFFFFFFFFu;
  * @param ip    Candidate leader or decode address.
  * @return true if disassembly must not restart at @p ip.
  */
-static inline bool cfg_ip_inside_owned(const std::vector<uint32_t>& owner, CfgLin ip)
+static inline bool cfg_ip_inside_owned(const CfgOwnerMap& owner, CfgLin ip)
 {
     if (static_cast<size_t>(ip) >= owner.size())
     {
@@ -648,7 +759,7 @@ static inline void cfg_find_near_jmp_tables(const std::vector<uint8_t>& image,
                                             std::set<CfgLin>& leaders,
                                             std::set<CfgLin>& table_slots,
                                             size_t min_slots,
-                                            const std::vector<uint32_t>* owner,
+                                            const CfgOwnerMap* owner,
                                             int32_t frame,
                                             std::map<CfgLin, int32_t>& seg_of,
                                             std::set<int32_t>& frames)
@@ -901,7 +1012,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
     seg_frames.insert(entry_frame);
     // Byte ownership: trusted decode claims [linear, linear+size) before any
     // heuristic leader (INT scan, ip-8/ip-16, jump table) may split a block.
-    std::vector<uint32_t> owner(image.size(), kCfgUnowned);
+    CfgOwnerMap owner(image.size());
     std::set<CfgLin> decoded_from;
     std::queue<CfgSeed> work;
     // Straight-line noreturn sites. A tracked CD is its own leader, so the
@@ -923,6 +1034,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                       psp_in_bytes);
         cfg_trace_add_entries(*trace, trace_fmt, entry_ip, entry_frame, image.size(),
                               extra_entries);
+        trace->unpack_chain() = cfg_pending_unpack_chain();
     }
     dx::Strength active_strength = dx::Strength::Proven;
     CfgLin active_origin = entry_ip;
@@ -996,20 +1108,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
 
     auto claim = [&](CfgLin linear, uint16_t size)
     {
-        bool claimed_new = false;
-        for (uint16_t k = 0; k < size; ++k)
-        {
-            const size_t idx = static_cast<size_t>(linear) + k;
-            if (idx >= owner.size())
-            {
-                break;
-            }
-            if (owner[idx] == kCfgUnowned)
-            {
-                owner[idx] = linear;
-                claimed_new = true;
-            }
-        }
+        const bool claimed_new = owner.claim(linear, size);
         if (claimed_new)
         {
             const uint8_t noted =
@@ -1684,16 +1783,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             {
                 break;
             }
-            bool claimed_new = false;
-            for (uint16_t k = 0; k < insn->size; ++k)
-            {
-                const size_t idx = static_cast<size_t>(linear) + k;
-                if (owner[idx] == kCfgUnowned)
-                {
-                    owner[idx] = linear;
-                    claimed_new = true;
-                }
-            }
+            const bool claimed_new = owner.claim(linear, insn->size);
             if (claimed_new)
             {
                 const uint8_t noted = static_cast<uint8_t>(

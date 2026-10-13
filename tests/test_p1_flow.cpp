@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <set>
 #include <span>
+#include <string>
 #include <vector>
 
 TEST_CASE("stop_opcode00 is false for the first instruction of the walk", "[flow]")
@@ -423,4 +424,69 @@ TEST_CASE("SYS equal or out-of-file interrupt adds no second entry", "[flow][sys
     const CfgGraph none = cfg_build_sys(data, 0x40, 0x12);
     REQUIRE_FALSE(none.flow.has_value());
     REQUIRE(none.blocks.empty());
+}
+
+TEST_CASE("sha256 matches the FIPS 180-4 vectors", "[sha256]")
+{
+    REQUIRE(dx::sha256_hex({}) ==
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    const std::string abc = "abc";
+    REQUIRE(dx::sha256_hex(std::span<const uint8_t>(
+                reinterpret_cast<const uint8_t*>(abc.data()), abc.size())) ==
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    const std::string two = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
+    REQUIRE(dx::sha256_hex(std::span<const uint8_t>(
+                reinterpret_cast<const uint8_t*>(two.data()), two.size())) ==
+            "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
+    const std::vector<uint8_t> million(1000000, 'a');
+    REQUIRE(dx::sha256_hex(million) ==
+            "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
+}
+
+TEST_CASE("pending unpack chain is copied onto the recorded image", "[flow][unpack]")
+{
+    const RecordFlow guard(true);
+    const std::vector<uint8_t> in{1, 2, 3};
+    const std::vector<uint8_t> out{0xC3};
+    cfg_push_unpack_step("exepack", in, out);
+    const CfgGraph g = cfg_build(out, 0, 0, 0, 0, true);
+    cfg_clear_unpack_chain();
+    REQUIRE(g.flow.has_value());
+    const auto& chain = g.flow->image().unpack_chain;
+    REQUIRE(chain.size() == 1u);
+    REQUIRE(chain[0].packer == "exepack");
+    REQUIRE(chain[0].sha_in == dx::sha256_hex(in));
+    REQUIRE(chain[0].sha_out == dx::sha256_hex(out));
+    const CfgGraph h = cfg_build(out, 0, 0, 0, 0, true);
+    REQUIRE(h.flow->image().unpack_chain.empty());
+}
+
+TEST_CASE("CfgOwnerMap answers ownership from the byte map", "[flow][owner]")
+{
+    CfgOwnerMap own(8);
+    REQUIRE(own[0] == kCfgUnowned);
+    REQUIRE(own.claim(2, 3));
+    REQUIRE(own[2] == 2u);
+    REQUIRE(own[4] == 2u);
+    REQUIRE(own[5] == kCfgUnowned);
+    REQUIRE(cfg_ip_inside_owned(own, 3));
+    REQUIRE_FALSE(cfg_ip_inside_owned(own, 2));
+    REQUIRE_FALSE(own.claim(2, 3));
+    REQUIRE(own.map().at(dx::Lin{2}).state == dx::BState::CodeHead);
+    REQUIRE(own.partial == 0u);
+}
+
+TEST_CASE("cfg_build ownership agrees with the recorded model", "[flow][owner]")
+{
+    const RecordFlow guard(true);
+    const std::vector<uint8_t> image{0xB4, 0x09, 0x74, 0x01, 0x90, 0xC3};
+    const CfgGraph g = cfg_build(image, 0, 0, 0, 0, true);
+    REQUIRE(g.flow.has_value());
+    for (const auto& [start, blk] : g.blocks)
+    {
+        for (const CfgInsn& ci : blk.insns)
+        {
+            REQUIRE(g.flow->bytes().at(dx::Lin{ci.ip}).state == dx::BState::CodeHead);
+        }
+    }
 }

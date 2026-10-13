@@ -39,7 +39,7 @@ CAPSTONE_LIBS   := $(shell pkg-config --libs capstone 2>/dev/null)
 
 all: dumpexe bin2exe
 
-HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h listing.h cfg.h analysis.h sim.h sim_path.h sys.h sys_analysis.h com.h com_analysis.h ne.h ne_shift.h ne_analysis.h dos_extender.h dx_strings.h pascal_mt.h turbo_pascal.h toolchain.h symbols.h repack.h json_escape.h json_report.h unpack.h unpack_integrate.h image_model.h bytemap.h facts.h decode.h flow.h
+HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h listing.h cfg.h analysis.h sim.h sim_path.h sys.h sys_analysis.h com.h com_analysis.h ne.h ne_shift.h ne_analysis.h dos_extender.h dx_strings.h pascal_mt.h turbo_pascal.h toolchain.h symbols.h repack.h json_escape.h json_report.h unpack.h unpack_integrate.h image_model.h bytemap.h facts.h decode.h flow.h sha256.h
 
 # Deark modules (MIT, Jason Summers). Host glue is unpack_host.c.
 # -I so <#include <deark-private.h>> in the modules resolves.
@@ -159,7 +159,7 @@ test_p1_model: tests/test_p1_model.cpp image_model.h bytemap.h facts.h
 	$(CXX) $(P1_TEST_CXXFLAGS) -I. $(CATCH_CFLAGS) -o $@ \
 		tests/test_p1_model.cpp $(CATCH_LIBS) -Wl,-rpath,$(HOME)/.local/lib64
 
-test_p1_flow: tests/test_p1_flow.cpp cfg.h decode.h flow.h image_model.h bytemap.h facts.h options.h exe.h
+test_p1_flow: tests/test_p1_flow.cpp cfg.h sha256.h decode.h flow.h image_model.h bytemap.h facts.h options.h exe.h
 	$(CXX) $(P1_TEST_CXXFLAGS) -I. $(CAPSTONE_CFLAGS) $(CATCH_CFLAGS) -o $@ \
 		tests/test_p1_flow.cpp $(CAPSTONE_LIBS) $(CATCH_LIBS) -Wl,-rpath,$(HOME)/.local/lib64
 

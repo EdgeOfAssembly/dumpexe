@@ -243,6 +243,13 @@ static inline bool dx_after_packed_listing(const Options& opts,
     std::vector<uint8_t> image(unpacked.data, unpacked.data + unpacked.size);
     dx_unpack_free(&unpacked);
 
+    // G15: builds of the unpacked bytes record this step. Cleared on return.
+    cfg_push_unpack_step(packer, fileData, image);
+    struct ClearChain
+    {
+        ~ClearChain() { cfg_clear_unpack_chain(); }
+    } clear_chain;
+
     // -o - is stdout only: no .asm and no _UNPACKED image. Both listings
     // still go to stdout (the packed one already did), then one separator.
     const bool stdout_only = (opts.outputPath == "-");
