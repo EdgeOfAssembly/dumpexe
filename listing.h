@@ -4823,7 +4823,8 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
     {
         g = cfg_build_annotated(fileData, image_file_off, len, entry_ip, cs_seg,
                                 file_cs, cfg_opts, relocs, entry_seg_base,
-                                uasm_com ? dx::Fmt::Com : dx::Fmt::Mz, uasm_com);
+                                uasm_com ? dx::Fmt::Com : dx::Fmt::Mz, uasm_com,
+                                std::span<const CfgLin>(opts.extraEntries));
         if (cfg_out != nullptr)
         {
             // Printers do not read flow. Move it aside so the copy does not

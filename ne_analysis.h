@@ -499,7 +499,32 @@ static inline void ne_disasm_segment(const std::vector<uint8_t>& data,
     o.showDisasm = true;
     o.noIntAnnot = true;
     o.writeAsmFile = false;
+    // One segment is at most 64 KiB, so its listing is bounded: no block cap.
+    o.cfgMaxBlocks = 65536;
     const uint16_t cs = static_cast<uint16_t>(seg_index_0based + 1);
+    // S2: the same roots as per-segment --uasm (entry, exports, internal far
+    // fixup targets), not only offset 0.
+    if (model != nullptr)
+        for (CfgLin r : ne_segment_roots(data, ne, *model, seg_index_0based, flen))
+            if (r != 0)
+                o.extraEntries.push_back(static_cast<uint32_t>(r));
+    // A relocation that patches the operand of a 9A (far call) marks that
+    // call as an instruction: seed it, so code reached only from there and
+    // its far calls (named below) are listed.
+    if (model != nullptr)
+    {
+        const size_t own = ne_reloc_owner(*model, seg_index_0based);
+        if (own < model->relocs.size())
+            for (const NeReloc& r : model->relocs[own])
+                for (uint16_t site : r.sites)
+                {
+                    const size_t back = r.atype == 3 ? 1 : (r.atype == 2 ? 3 : 0);
+                    if (back == 0 || site < back || site + 4 - back > flen)
+                        continue;
+                    if (data[foff + site - back] == 0x9A)
+                        o.extraEntries.push_back(static_cast<uint32_t>(site - back));
+                }
+    }
     std::string text;
     {
         NeCoutCapture cap;

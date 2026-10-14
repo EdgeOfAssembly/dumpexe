@@ -117,6 +117,47 @@ PY
 "$BIN" -d --no-asm-file "$TD/many.exe" > "$TD/many.txt" 2>&1 || true
 check relocs_no_cap bash -c "! grep -q 'output cap' '$TD/many.txt' && grep -q 'Relocations segment 3 (8000 records)' '$TD/many.txt' && grep -qE '^ *7999 ' '$TD/many.txt'"
 
+# S2: -a seeds exports and far-call relocation sites, not only offset 0.
+python3 - "$TD/roots.exe" <<'PY'
+import struct, sys
+blob = bytearray(0x400)
+blob[0:2] = b"MZ"; struct.pack_into("<I", blob, 0x3C, 0x40)
+h = 0x40
+blob[h:h+2] = b"NE"
+seg_tab, res_tab, mod_tab, imp_tab, ent_tab = 0x40, 0x48, 0x58, 0x5A, 0x62
+struct.pack_into("<H", blob, h + 0x04, ent_tab)      # entry table
+struct.pack_into("<H", blob, h + 0x06, 6)            # entry table length
+struct.pack_into("<H", blob, h + 0x1C, 1)            # segments
+struct.pack_into("<H", blob, h + 0x1E, 1)            # module refs
+struct.pack_into("<H", blob, h + 0x22, seg_tab)
+struct.pack_into("<H", blob, h + 0x26, res_tab)
+struct.pack_into("<H", blob, h + 0x28, mod_tab)
+struct.pack_into("<H", blob, h + 0x2A, imp_tab)
+struct.pack_into("<H", blob, h + 0x32, 4)            # shift 16
+blob[h + 0x36] = 2
+struct.pack_into("<HH", blob, h + 0x14, 0, 1)        # CS:IP = 1:0000
+code = bytearray(0x40)
+code[0x00] = 0xC3                                    # ret (entry)
+code[0x10:0x16] = bytes([0x9A, 0xFF, 0xFF, 0, 0, 0xC3])  # reached by nothing: far call KERNEL.91
+code[0x20:0x22] = bytes([0x90, 0xC3])                # export 1
+seg_off = 0x200
+blob[seg_off:seg_off + len(code)] = code
+struct.pack_into("<HHHH", blob, h + seg_tab, seg_off >> 4, len(code), 0x0100, len(code))
+blob[h + res_tab:h + res_tab + 6] = b"\x05ROOTS"
+struct.pack_into("<H", blob, h + res_tab + 6, 0)
+blob[h + res_tab + 8] = 0
+struct.pack_into("<H", blob, h + mod_tab, 1)         # module 1 -> imported names +1
+blob[h + imp_tab:h + imp_tab + 8] = b"\x00\x06KERNEL"
+blob[h + ent_tab:h + ent_tab + 6] = bytes([1, 1, 3, 0x20, 0, 0])  # 1 fixed entry in seg 1 at 0020h
+r = seg_off + len(code)
+struct.pack_into("<H", blob, r, 1)
+struct.pack_into("<BBHHH", blob, r + 2, 3, 1, 0x11, 1, 91)  # far, import ordinal, KERNEL.91
+open(sys.argv[1], "wb").write(blob[:r + 16])
+PY
+"$BIN" -a --no-asm-file "$TD/roots.exe" > "$TD/roots.txt" 2>&1 || true
+check s2_reloc_root grep -qE '^ +0010  9AFFFF0000 +call +far KERNEL\.91  ; InitTask' "$TD/roots.txt"
+check s2_export_root grep -qE '^ +0020  90 ' "$TD/roots.txt"
+
 # P7 round trip: per-segment --uasm, uasm -bin, bin2ne, byte-identical.
 # shellcheck source=lib_uasm.sh
 source "$ROOT/tests/lib_uasm.sh"
@@ -167,6 +208,9 @@ if [[ -n "$FX" && -d "$FX" ]]; then
   if [[ -f "$OP" ]]; then
     "$BIN" -d "$OP" > "$TD/op.txt" 2>&1
     check outpost_inittask grep -qE '^ +2303  9AFFFF0000 +call +far KERNEL\.91  ; InitTask \[reloc 27\]' "$TD/op.txt"
+    "$BIN" -a --no-asm-file "$OP" > "$TD/op_a.txt" 2>&1
+    check outpost_a_sites test "$(grep -o '\[reloc [0-9]*\]' "$TD/op_a.txt" | wc -l)" -ge 10000
+    check outpost_a_no_omit bash -c "! grep -q 'more blocks omitted' '$TD/op_a.txt'"
     check outpost_reloc27 bash -c "awk '/Relocations segment 1 /{f=1} f&&/^ +27 /{print;exit}' '$TD/op.txt' | grep -qE 'far +import +KERNEL\.91 \(InitTask\) +1:2304'"
   fi
   for f in "$FX"/*.drv; do

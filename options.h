@@ -118,6 +118,9 @@ struct Options {
     /// --evidence=sim: P6. Run the simulator (silent, capped by --max-insns,
     /// default 1000000) and seed executed addresses the graph left in data.
     bool evidence_sim = false;
+    /// Internal (no CLI): extra code roots for the listing graph, image
+    /// offsets. NE -d/-a pass entry-table exports and internal fixup targets.
+    std::vector<uint32_t> extraEntries;
     /// P5 (all need --uasm-verified):
     std::string hints_path;      ///< --hints=FILE: code/data/label hints
     std::string hints_out;       ///< --hints-out=FILE: write the hints this run used
