@@ -8,6 +8,7 @@
 //   STEM_segN.asm; it is laid onto the skeleton (STEM.neskel) at OFFSET.
 // Run with no arguments it prints usage and exits 0.
 
+#include <set>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -48,6 +49,9 @@ int main(int argc, char** argv)
     size_t want_size = 0;
     std::string line;
     size_t lineno = 0;
+    std::set<unsigned> seen;
+    std::set<unsigned> required;
+    bool have_required = false;
     while (std::getline(map, line))
     {
         ++lineno;
@@ -66,6 +70,14 @@ int main(int argc, char** argv)
                 return 1;
             }
         }
+        else if (kw == "segs")
+        {
+            // The segments dumpexe zeroed in the skeleton: all must be laid back.
+            have_required = true;
+            unsigned n = 0;
+            while (ss >> n)
+                required.insert(n);
+        }
         else if (kw == "size")
         {
             ss >> want_size;
@@ -76,7 +88,16 @@ int main(int argc, char** argv)
             size_t off = 0;
             size_t len = 0;
             std::string f;
-            ss >> n >> off >> len >> f;
+            if (!(ss >> n >> off >> len >> f))
+            {
+                std::cerr << "bin2ne: " << map_path << ":" << lineno << ": bad seg line\n";
+                return 1;
+            }
+            if (!seen.insert(n).second)
+            {
+                std::cerr << "bin2ne: segment " << n << " listed twice\n";
+                return 1;
+            }
             std::vector<uint8_t> b;
             if (!read_file(dir / f, b))
             {
@@ -89,7 +110,7 @@ int main(int argc, char** argv)
                           << " bytes, map says " << len << "\n";
                 return 1;
             }
-            if (off + len > out.size())
+            if (off > out.size() || len > out.size() - off)
             {
                 std::cerr << "bin2ne: segment " << n << " past the skeleton end\n";
                 return 1;
@@ -102,6 +123,17 @@ int main(int argc, char** argv)
             return 1;
         }
     }
+    if (!have_required)
+    {
+        std::cerr << "bin2ne: map has no segs line (written by dumpexe 2.43 and later)\n";
+        return 1;
+    }
+    for (unsigned n : required)
+        if (!seen.count(n))
+        {
+            std::cerr << "bin2ne: segment " << n << " is zeroed in the skeleton but missing from the map\n";
+            return 1;
+        }
     if (want_size != 0 && out.size() != want_size)
     {
         std::cerr << "bin2ne: skeleton size mismatch\n";

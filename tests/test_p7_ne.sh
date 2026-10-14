@@ -112,6 +112,17 @@ if UASM_BIN="$(uasm_resolve)" && [[ -x "$B2N" ]]; then
     (cd "$w" && "$BIN" --uasm --uasm-bin "$UASM_BIN" IN.EXE >/dev/null 2>&1) || true
     check skel_has_no_code bash -c "! cmp -s '$w/IN.neskel' '$w/IN.EXE'"
     check seg1_mnemonic grep -qE '^; lines: mnemonic [1-9][0-9]* ' "$w/IN_seg1.asm"
+    # S3: hostile offsets and a missing segment are errors, not silent output.
+    for a in "$w"/IN_seg*.asm; do
+      (cd "$w" && env -u UASM -u INCLUDE "$UASM_BIN" -bin -nologo -Fo"$(basename "${a%.asm}").bin" "$(basename "$a")" >/dev/null 2>&1) || true
+    done
+    check map_has_segs grep -qE '^segs( [0-9]+)+$' "$w/IN.nemap"
+    sed -E 's/^seg ([0-9]+) [0-9]+ /seg \1 18446744073709551615 /' "$w/IN.nemap" > "$w/wrap.nemap"
+    check bin2ne_off_wrap bash -c "cd '$w' && ! '$B2N' wrap.nemap W.EXE 2>err && grep -q 'past the skeleton end' err"
+    grep -v '^seg ' "$w/IN.nemap" > "$w/miss.nemap"
+    check bin2ne_missing_seg bash -c "cd '$w' && ! '$B2N' miss.nemap M.EXE 2>err && grep -q 'missing from the map' err"
+    grep -v '^segs' "$w/IN.nemap" > "$w/old.nemap"
+    check bin2ne_needs_segs bash -c "cd '$w' && ! '$B2N' old.nemap O.EXE 2>/dev/null"
   fi
   if [[ -n "${DUMPEXE_NE_FIXTURES:-}" && -d "$DUMPEXE_NE_FIXTURES" ]]; then
     for f in "$DUMPEXE_NE_FIXTURES"/*.exe "$DUMPEXE_NE_FIXTURES"/*.dll "$DUMPEXE_NE_FIXTURES"/*.drv; do
