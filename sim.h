@@ -10,6 +10,7 @@
 #define SIM_H
 
 #include <array>
+#include <deque>
 #include <cstring>
 #include <format>
 #include <iostream>
@@ -124,6 +125,24 @@ struct SimFile {
     uint32_t rec_size = 128;
 };
 
+/// P6 S-5: the CPU registers as one value, so a path can be saved and resumed.
+/// The live CPU is still the registers.h globals; a fork snapshots them here.
+struct CpuRegs {
+    uint16_t ax = 0, bx = 0, cx = 0, dx = 0, si = 0, di = 0, bp = 0, sp = 0;
+    uint16_t cs = 0, ds = 0, es = 0, ss = 0, ip = 0, flags = 0x0202;
+};
+
+static inline CpuRegs sim_save_regs() {
+    return CpuRegs{AX, BX, CX, DX, SI, DI, BP, SP, CS, DS, ES, SS, IP, FLAGS};
+}
+
+static inline void sim_load_regs(const CpuRegs& r) {
+    AX = r.ax; BX = r.bx; CX = r.cx; DX = r.dx; SI = r.si; DI = r.di; BP = r.bp; SP = r.sp;
+    CS = r.cs; DS = r.ds; ES = r.es; SS = r.ss; IP = r.ip; FLAGS = r.flags;
+}
+
+struct SimExplore;
+
 struct SimState {
     SimMemory mem;
     uint16_t image_seg = 0;
@@ -154,7 +173,59 @@ struct SimState {
 
     /// P6 evidence hook: when set, every executed instruction's (CS, IP).
     std::vector<std::pair<uint16_t, uint16_t>>* witness = nullptr;
+    /// P6: executions on a path that is no longer faithful (Likely evidence).
+    /// Null: they go to @ref witness like faithful ones.
+    std::vector<std::pair<uint16_t, uint16_t>>* witness_likely = nullptr;
+
+    /// S-6: false once a loop skip, injected key, forced branch or scheduled
+    /// dispatch happened upstream on this path.
+    bool faithful = true;
+    /// S-7: per-run allocator (was a function-static, shared across runs).
+    uint16_t next_alloc = 0x9000;
+    /// S-4: vectors the program installed (INT 21h/25h).
+    std::array<bool, 256> vec_set{};
+    /// P6 exploration context (null: single path, today's behaviour).
+    SimExplore* explore = nullptr;
+    int fork_depth = 0;
 };
+
+/// A path waiting to run: state and registers at the fork point.
+struct SimFork {
+    SimState st;
+    CpuRegs regs;
+};
+
+/// P6 exploration: deterministic FIFO of forks, bounded by caps.
+struct SimExplore {
+    std::deque<SimFork> queue;
+    std::set<uint64_t> seen;     ///< fork keys (CS, IP, chosen target)
+    size_t max_paths = 1;        ///< --sim-paths (including the first path)
+    int max_depth = 40;          ///< --sim-fork-depth
+    bool dispatch_int = true;    ///< schedule installed vectors as paths
+    size_t forks_made = 0;
+    size_t dispatches = 0;
+    /// True when one more pending path still fits under max_paths.
+    bool room(size_t started) const { return started + queue.size() < max_paths; }
+    size_t started = 1;
+};
+
+/// Queue a fork of @p st that resumes at @p cs:@p ip (registers otherwise as now).
+static inline bool sim_fork(SimState& st, uint16_t cs, uint16_t ip, uint64_t key) {
+    SimExplore* ex = st.explore;
+    if (ex == nullptr || st.fork_depth >= ex->max_depth || !ex->room(ex->started))
+        return false;
+    if (!ex->seen.insert(key).second)
+        return false;
+    SimFork f{st, sim_save_regs()};
+    f.regs.cs = cs;
+    f.regs.ip = ip;
+    f.st.faithful = false;
+    f.st.fork_depth = st.fork_depth + 1;
+    f.st.halted = false;
+    ex->queue.push_back(std::move(f));
+    ++ex->forks_made;
+    return true;
+}
 
 /// Decide whether a taken branch to @p target_ip should be suppressed (loop skip).
 /// Backward edges (target_ip <= insn_ip) are counted; after loopLimit takes,
@@ -183,6 +254,7 @@ static inline bool sim_should_skip_backedge(SimState& st, const Options& opts,
         return false;
 
     st.loops_skipped++;
+    st.faithful = false;
     // Log only the first time we break this edge (avoid spam on hot spins).
     if (hits == opts.loopLimit + 1) {
         std::cout << std::format(
@@ -587,7 +659,7 @@ static inline void sim_int21(SimState& st, const Options& opts) {
             if (st.kbd_polls > 30) {
                 AL = ' '; ZF = 0;
                 st.kbd_polls = 0;
-                st.keys_injected++;
+                st.keys_injected++; st.faithful = false;
             } else {
                 AL = 0; ZF = 1;
             }
@@ -599,7 +671,7 @@ static inline void sim_int21(SimState& st, const Options& opts) {
     case 0x07: // char input no echo
     case 0x08: // char input no echo
         AL = ' ';
-        st.keys_injected++;
+        st.keys_injected++; st.faithful = false;
         return;
 
     case 0x0A: { // buffered input DS:DX
@@ -619,7 +691,7 @@ static inline void sim_int21(SimState& st, const Options& opts) {
 
     case 0x0C: // flush + invoke AL
         AL = ' ';
-        st.keys_injected++;
+        st.keys_injected++; st.faithful = false;
         return;
 
     case 0x1A: // set DTA
@@ -633,6 +705,19 @@ static inline void sim_int21(SimState& st, const Options& opts) {
         // Store in IVT
         st.mem.write16(0, static_cast<uint16_t>(AL * 4), DX);
         st.mem.write16(0, static_cast<uint16_t>(AL * 4 + 2), DS);
+        st.vec_set[AL] = true;
+        // P6: schedule the handler as its own path (returns into PSP:0, INT 20h).
+        if (st.explore != nullptr && st.explore->dispatch_int && AL != 0x20 && AL != 0x21) {
+            const CpuRegs keep = sim_save_regs();
+            const uint16_t sp0 = SP;
+            sim_push(st, FLAGS);
+            sim_push(st, st.psp_seg);
+            sim_push(st, 0x0000);
+            if (sim_fork(st, DS, DX, (0xFFFFull << 48) | (static_cast<uint64_t>(DS) << 16) | DX))
+                ++st.explore->dispatches;
+            sim_load_regs(keep);
+            SP = sp0;
+        }
         return;
 
     case 0x30: // DOS version
@@ -650,14 +735,13 @@ static inline void sim_int21(SimState& st, const Options& opts) {
 
     case 0x48: { // allocate paragraphs BX
         // Toy allocator: hand out from high conventional mem downward
-        static uint16_t next_alloc = 0x9000;
         uint16_t paras = BX;
-        if (next_alloc < paras) {
-            CF = 1; AX = 8; BX = next_alloc; // not enough
+        if (st.next_alloc < paras) {
+            CF = 1; AX = 8; BX = st.next_alloc; // not enough
             log_int(std::format("alloc {:04X}h paras → FAIL", paras));
         } else {
-            next_alloc = static_cast<uint16_t>(next_alloc - paras);
-            AX = next_alloc;
+            st.next_alloc = static_cast<uint16_t>(st.next_alloc - paras);
+            AX = st.next_alloc;
             CF = 0;
             log_int(std::format("alloc {:04X}h paras → {:04X}h", paras, AX));
         }
@@ -945,7 +1029,7 @@ static inline void sim_int(SimState& st, const Options& opts, uint8_t num) {
         }
         if (AH == 0x00) {
             AX = (st.keys_injected & 1) ? 0x1C0D : 0x3920;
-            st.keys_injected++;
+            st.keys_injected++; st.faithful = false;
             st.kbd_polls = 0;
             return;
         }
@@ -1482,6 +1566,16 @@ static inline bool sim_exec_insn(SimState& st, Options& opts) {
     if (mnem.size() >= 2 && mnem[0] == 'j' && mnem != "jmp" && mnem != "jecxz") {
         int t = sim_jcc(mnem);
         if (t < 0) return false;
+        // P6: fork the other outcome once per (CS, IP, target).
+        if (st.explore != nullptr && op(0).type == X86_OP_IMM) {
+            const uint16_t tgt = static_cast<uint16_t>(op(0).imm - static_cast<uint64_t>(CS) * 16u);
+            const uint16_t other = t == 1 ? next_ip : tgt;
+            sim_fork(st, CS, other,
+                     (static_cast<uint64_t>(CS) << 32) | (static_cast<uint64_t>(IP) << 16) | other);
+            // Mark the taken edge as seen so a forked path does not re-fork it.
+            st.explore->seen.insert((static_cast<uint64_t>(CS) << 32) |
+                                    (static_cast<uint64_t>(IP) << 16) | (t == 1 ? tgt : next_ip));
+        }
         if (t == 1 && op(0).type == X86_OP_IMM) {
             uint16_t target = static_cast<uint16_t>(
                 op(0).imm - static_cast<uint64_t>(CS) * 16u);
@@ -1568,6 +1662,17 @@ static inline bool sim_exec_insn(SimState& st, Options& opts) {
         // Log/hit BPs at the INT instruction, then run the stub so FCB opens etc.
         // still happen (useful for --dump after read). Stop after the handler.
         bool stop_bp = sim_fire_bps_int(st, opts, n);
+        // S-4: a vector the program installed runs its own handler.
+        if (st.vec_set[n] && n != 0x20 && n != 0x21 && !opts.simNoDispatchInt && !stop_bp) {
+            sim_push(st, FLAGS);
+            sim_push(st, CS);
+            sim_push(st, next_ip);
+            IP = st.mem.read16(0, static_cast<uint16_t>(n * 4));
+            CS = st.mem.read16(0, static_cast<uint16_t>(n * 4 + 2));
+            IF = 0;
+            TF = 0;
+            return true;
+        }
         sim_int(st, opts, n);
         if (stop_bp && !st.halted) {
             st.halted = true;
@@ -1765,8 +1870,105 @@ static inline bool sim_exec_insn(SimState& st, Options& opts) {
         IP = next_ip; return true;
     }
 
+    // ---- S-8: simple instructions that used to stop the run ----
+    if (mnem == "xlatb" || mnem == "xlat") {
+        const uint16_t seg = st.seg_override != 0xFFFF ? st.seg_override : DS;
+        AL = st.mem.read8(seg, static_cast<uint16_t>(BX + AL));
+        IP = next_ip; return true;
+    }
+    if (mnem == "aam") {
+        const uint8_t base = x86.op_count >= 1 && op(0).type == X86_OP_IMM
+                                 ? static_cast<uint8_t>(op(0).imm) : 10;
+        if (base == 0) { st.halted = true; st.halt_reason = "divide by zero (aam)"; return true; }
+        const uint8_t a = AL;
+        AH = static_cast<uint8_t>(a / base);
+        AL = static_cast<uint8_t>(a % base);
+        sim_set_szp8(AL);
+        IP = next_ip; return true;
+    }
+    if (mnem == "aad") {
+        const uint8_t base = x86.op_count >= 1 && op(0).type == X86_OP_IMM
+                                 ? static_cast<uint8_t>(op(0).imm) : 10;
+        AL = static_cast<uint8_t>(AL + AH * base);
+        AH = 0;
+        sim_set_szp8(AL);
+        IP = next_ip; return true;
+    }
+    if (mnem == "daa" || mnem == "das") {
+        const bool add = mnem == "daa";
+        uint8_t a = AL;
+        const uint8_t old = a;
+        const bool oldcf = CF;
+        bool cf = false;
+        if ((a & 0x0F) > 9 || AF) {
+            a = static_cast<uint8_t>(add ? a + 6 : a - 6);
+            cf = oldcf || (add ? old > 0xF9 : old < 6);
+            AF = 1;
+        } else {
+            AF = 0;
+        }
+        if (old > 0x99 || oldcf) {
+            a = static_cast<uint8_t>(add ? a + 0x60 : a - 0x60);
+            cf = true;
+        }
+        AL = a;
+        CF = cf ? 1 : 0;
+        sim_set_szp8(AL);
+        IP = next_ip; return true;
+    }
+    if (mnem == "aaa" || mnem == "aas") {
+        if ((AL & 0x0F) > 9 || AF) {
+            if (mnem == "aaa") { AL = static_cast<uint8_t>(AL + 6); AH = static_cast<uint8_t>(AH + 1); }
+            else { AL = static_cast<uint8_t>(AL - 6); AH = static_cast<uint8_t>(AH - 1); }
+            AF = CF = 1;
+        } else {
+            AF = CF = 0;
+        }
+        AL = static_cast<uint8_t>(AL & 0x0F);
+        IP = next_ip; return true;
+    }
+    if (mnem == "enter" && x86.op_count == 2) {
+        const uint16_t size = static_cast<uint16_t>(op(0).imm);
+        const uint8_t level = static_cast<uint8_t>(op(1).imm & 31);
+        sim_push(st, BP);
+        const uint16_t frame = SP;
+        for (uint8_t k = 1; k < level; ++k) {
+            BP = static_cast<uint16_t>(BP - 2);
+            sim_push(st, st.mem.read16(SS, BP));
+        }
+        if (level > 0) sim_push(st, frame);
+        BP = frame;
+        SP = static_cast<uint16_t>(SP - size);
+        IP = next_ip; return true;
+    }
+    if (mnem == "leave") {
+        SP = BP;
+        BP = sim_pop(st);
+        IP = next_ip; return true;
+    }
+    if (mnem == "bound") { IP = next_ip; return true; } // no #BR in the sandbox
+    if (mnem == "insb" || mnem == "insw" || mnem == "outsb" || mnem == "outsw") {
+        // Port I/O is not modelled; advance the index registers like the CPU.
+        bool rep = rep_prefix || repne_prefix;
+        const uint16_t w = (mnem.back() == 'w') ? 2 : 1;
+        const uint16_t n = rep ? CX : 1;
+        const int16_t step = static_cast<int16_t>(DF ? -w : w);
+        if (mnem[0] == 'i') {
+            for (uint16_t k = 0; k < n; ++k) {
+                if (w == 2) st.mem.write16(ES, DI, 0xFFFF); else st.mem.write8(ES, DI, 0xFF);
+                DI = static_cast<uint16_t>(DI + step);
+            }
+        } else {
+            SI = static_cast<uint16_t>(SI + step * n);
+        }
+        if (rep) CX = 0;
+        st.faithful = false; // port input is tainted
+        IP = next_ip; return true;
+    }
+
     // ---- in / out ignore ----
-    if (mnem == "in" || mnem == "out") { IP = next_ip; return true; }
+    if (mnem == "in") { st.faithful = false; IP = next_ip; return true; } // tainted port value
+    if (mnem == "out") { IP = next_ip; return true; }
 
     // ---- hlt ----
     if (mnem == "hlt") {
@@ -1782,7 +1984,7 @@ static inline bool sim_exec_insn(SimState& st, Options& opts) {
 // Main run loop
 //=============================================================================
 
-static inline void sim_execute(SimState& st, Options& opts);
+static inline uint64_t sim_execute(SimState& st, Options& opts);
 
 static inline void sim_run_mz(Options& opts,
                               const MZHeader& header,
@@ -1790,9 +1992,14 @@ static inline void sim_run_mz(Options& opts,
                               const std::vector<RelocEntry>& relocs,
                               size_t header_size_bytes,
                               int64_t load_image_size,
-                              std::vector<std::pair<uint16_t, uint16_t>>* witness = nullptr) {
+                              std::vector<std::pair<uint16_t, uint16_t>>* witness = nullptr,
+                              std::vector<std::pair<uint16_t, uint16_t>>* witness_likely = nullptr,
+                              SimExplore* explore = nullptr,
+                              uint64_t* executed = nullptr) {
     SimState st;
     st.witness = witness;
+    st.witness_likely = witness_likely;
+    st.explore = explore;
     st.image_seg = opts.loadBase;
     st.psp_seg = static_cast<uint16_t>(opts.loadBase - 0x0010);
     st.dta_seg = st.psp_seg;
@@ -1818,7 +2025,8 @@ static inline void sim_run_mz(Options& opts,
     SI = DI = BP = 0;
     FLAGS = 0x0202; // IF set-ish + reserved bit1
 
-    sim_execute(st, opts);
+    const uint64_t n = sim_execute(st, opts);
+    if (executed != nullptr) *executed = n;
 }
 
 /// Load a .COM image (PSP at the load segment, code at IP 0100h) and execute.
@@ -1827,9 +2035,14 @@ static inline void sim_run_mz(Options& opts,
 static inline void sim_run_com(Options& opts,
                                const std::vector<uint8_t>& fileData,
                                size_t entry_offset,
-                               std::vector<std::pair<uint16_t, uint16_t>>* witness = nullptr) {
+                               std::vector<std::pair<uint16_t, uint16_t>>* witness = nullptr,
+                               std::vector<std::pair<uint16_t, uint16_t>>* witness_likely = nullptr,
+                               SimExplore* explore = nullptr,
+                               uint64_t* executed = nullptr) {
     SimState st;
     st.witness = witness;
+    st.witness_likely = witness_likely;
+    st.explore = explore;
     st.image_seg = opts.loadBase;
     st.psp_seg = opts.loadBase;
     st.dta_seg = st.psp_seg;
@@ -1859,10 +2072,11 @@ static inline void sim_run_com(Options& opts,
     SI = DI = BP = 0;
     FLAGS = 0x0202;
 
-    sim_execute(st, opts);
+    const uint64_t n = sim_execute(st, opts);
+    if (executed != nullptr) *executed = n;
 }
 
-static inline void sim_execute(SimState& st, Options& opts) {
+static inline uint64_t sim_execute(SimState& st, Options& opts) {
     if (!opts.simQuiet) {
         std::cout << "Load Image Segment: " << hex_format(st.image_seg, 4) << "\n";
         std::cout << "PSP Segment:        " << hex_format(st.psp_seg, 4) << "\n";
@@ -1889,14 +2103,14 @@ static inline void sim_execute(SimState& st, Options& opts) {
 
     if (cs_open(CS_ARCH_X86, CS_MODE_16, &st.cs_handle) != CS_ERR_OK) {
         std::cerr << "Error: Capstone init failed\n";
-        return;
+        return 0;
     }
     cs_option(st.cs_handle, CS_OPT_DETAIL, CS_OPT_ON);
     st.insn = cs_malloc(st.cs_handle);
     if (!st.insn) {
         cs_close(&st.cs_handle);
         std::cerr << "Error: Capstone malloc failed\n";
-        return;
+        return 0;
     }
 
     while (!st.halted && st.insn_count < opts.maxInsns) {
@@ -1942,7 +2156,9 @@ static inline void sim_execute(SimState& st, Options& opts) {
             break;
         }
 
-        if (st.witness != nullptr)
+        if (!st.faithful && st.witness_likely != nullptr)
+            st.witness_likely->emplace_back(CS, IP);
+        else if (st.witness != nullptr)
             st.witness->emplace_back(CS, IP);
 
         if (!sim_exec_insn(st, opts)) {
@@ -1977,22 +2193,37 @@ static inline void sim_execute(SimState& st, Options& opts) {
     sim_print_regs();
 
     cs_free(st.insn, 1);
+    st.insn = nullptr;
     cs_close(&st.cs_handle);
+    return st.insn_count;
 }
+
+/// P6 result: executed image linears with their frame, split by evidence strength.
+struct SimWitness {
+    std::vector<std::pair<uint32_t, int32_t>> faithful; ///< Witnessed (first path, unforced)
+    std::vector<std::pair<uint32_t, int32_t>> likely;   ///< only on forced/dispatched paths
+    size_t paths = 0;        ///< paths run (first one included)
+    size_t forks = 0;        ///< forks queued
+    size_t dispatches = 0;   ///< installed-vector paths queued
+    size_t pending = 0;      ///< forks left when a cap stopped exploration
+    uint64_t insns = 0;      ///< instructions over all paths
+    bool total_cap = false;  ///< --sim-total-insns stopped exploration
+};
 
 /**
  * @brief P6: run the simulator silently under caps and return the image
  *        linears it executed, with the frame (CS*16 relative to the image).
  *
- * Guest file I/O stays in memory (the simulator's policy). Breakpoints and
- * tracing are off; all simulator output is discarded. Deterministic.
- *
- * @param com          True for a COM image.
- * @param max_insns    Instruction cap.
- * @return (image linear, frame) pairs, deduplicated, in first-execution order.
+ * Path 1 is today's single run. With opts.simPaths > 1 the other outcome of
+ * each conditional branch (once per site and target) and each handler the
+ * program installs with INT 21h/25h become queued paths, run first-in
+ * first-out; a queued path whose start was already executed is skipped.
+ * Everything a forked path executes is Likely, never Witnessed (S-6).
+ * Guest file I/O stays in memory. Breakpoints and tracing are off; all
+ * simulator output is discarded. Deterministic.
  */
-static inline std::vector<std::pair<uint32_t, int32_t>>
-sim_witness(const Options& opts_in, const std::vector<uint8_t>& fileData, bool com,
+static inline SimWitness
+sim_explore(const Options& opts_in, const std::vector<uint8_t>& fileData, bool com,
             size_t com_entry_offset, std::span<const RelocEntry> relocs, uint64_t max_insns)
 {
     Options o = opts_in;
@@ -2001,15 +2232,24 @@ sim_witness(const Options& opts_in, const std::vector<uint8_t>& fileData, bool c
     o.simQuiet = true;
     o.maxInsns = max_insns;
     std::vector<std::pair<uint16_t, uint16_t>> raw;
+    std::vector<std::pair<uint16_t, uint16_t>> raw_likely;
     std::ostringstream sink;
     struct CoutRestore
     {
         std::streambuf* old;
         ~CoutRestore() { std::cout.rdbuf(old); }
     } restore{std::cout.rdbuf(sink.rdbuf())};
+    const CpuRegs saved = sim_save_regs();
+    SimExplore ex;
+    ex.max_paths = static_cast<size_t>(std::max<uint64_t>(1, o.simPaths));
+    ex.max_depth = static_cast<int>(o.simForkDepth);
+    ex.dispatch_int = !o.simNoDispatchInt;
+    SimExplore* exp = ex.max_paths > 1 ? &ex : nullptr;
+    SimWitness w;
+    uint64_t n = 0;
     if (com)
     {
-        sim_run_com(o, fileData, com_entry_offset, &raw);
+        sim_run_com(o, fileData, com_entry_offset, &raw, &raw_likely, exp, &n);
     }
     else if (fileData.size() >= sizeof(MZHeader))
     {
@@ -2019,21 +2259,68 @@ sim_witness(const Options& opts_in, const std::vector<uint8_t>& fileData, bool c
         int64_t size = static_cast<int64_t>(h.num_blocks) * 512 -
                        (h.final_len ? 512 - h.final_len : 0) - static_cast<int64_t>(hdr);
         std::vector<RelocEntry> rv(relocs.begin(), relocs.end());
-        sim_run_mz(o, h, fileData, rv, hdr, size, &raw);
+        sim_run_mz(o, h, fileData, rv, hdr, size, &raw, &raw_likely, exp, &n);
     }
-    const uint32_t base = static_cast<uint32_t>(o.loadBase) * 16u;
-    std::vector<std::pair<uint32_t, int32_t>> out;
-    std::set<uint32_t> seen;
+    w.paths = 1;
+    w.insns = n;
+    std::set<uint32_t> ran;
     for (const auto& [cs, ip] : raw)
+        ran.insert(SimMemory::linear(cs, ip));
+    while (exp != nullptr && !ex.queue.empty())
     {
-        const int64_t phys = static_cast<int64_t>(cs) * 16 + ip;
-        if (phys < base)
-            continue;
-        const uint32_t lin = static_cast<uint32_t>(phys - base);
-        if (seen.insert(lin).second)
-            out.emplace_back(lin, static_cast<int32_t>(static_cast<int64_t>(cs) * 16 - base));
+        if (w.insns >= o.simTotalInsns)
+        {
+            w.total_cap = true;
+            break;
+        }
+        SimFork f = std::move(ex.queue.front());
+        ex.queue.pop_front();
+        if (ran.count(SimMemory::linear(f.regs.cs, f.regs.ip)))
+            continue; // coverage: nothing new to start from
+        ++ex.started;
+        ++w.paths;
+        o.maxInsns = std::min<uint64_t>(max_insns, o.simTotalInsns - w.insns);
+        const size_t before = raw_likely.size();
+        sim_load_regs(f.regs);
+        w.insns += sim_execute(f.st, o);
+        for (size_t k = before; k < raw_likely.size(); ++k)
+            ran.insert(SimMemory::linear(raw_likely[k].first, raw_likely[k].second));
     }
-    return out;
+    w.forks = ex.forks_made;
+    w.dispatches = ex.dispatches;
+    w.pending = ex.queue.size();
+    sim_load_regs(saved);
+
+    const uint32_t base = static_cast<uint32_t>(o.loadBase) * 16u;
+    std::set<uint32_t> seen;
+    auto collect = [&](const std::vector<std::pair<uint16_t, uint16_t>>& v,
+                       std::vector<std::pair<uint32_t, int32_t>>& out)
+    {
+        for (const auto& [cs, ip] : v)
+        {
+            const int64_t phys = static_cast<int64_t>(cs) * 16 + ip;
+            if (phys < base)
+                continue;
+            const uint32_t lin = static_cast<uint32_t>(phys - base);
+            if (seen.insert(lin).second)
+                out.emplace_back(lin, static_cast<int32_t>(static_cast<int64_t>(cs) * 16 - base));
+        }
+    };
+    collect(raw, w.faithful);
+    collect(raw_likely, w.likely);
+    return w;
+}
+
+/// Single-path wrapper (the 2.35 interface): every executed address.
+static inline std::vector<std::pair<uint32_t, int32_t>>
+sim_witness(const Options& opts_in, const std::vector<uint8_t>& fileData, bool com,
+            size_t com_entry_offset, std::span<const RelocEntry> relocs, uint64_t max_insns)
+{
+    Options o = opts_in;
+    o.simPaths = 1;
+    SimWitness w = sim_explore(o, fileData, com, com_entry_offset, relocs, max_insns);
+    w.faithful.insert(w.faithful.end(), w.likely.begin(), w.likely.end());
+    return w.faithful;
 }
 
 #endif // SIM_H

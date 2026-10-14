@@ -10,6 +10,7 @@
 #define OPTIONS_H
 
 #include <iostream>
+#include <algorithm>
 #include <format>
 #include <string>
 #include <string_view>
@@ -121,6 +122,13 @@ struct Options {
     /// Internal (no CLI): extra code roots for the listing graph, image
     /// offsets. NE -d/-a pass entry-table exports and internal fixup targets.
     std::vector<uint32_t> extraEntries;
+    /// P6 exploration caps (need --evidence=sim). Paths 1 = single path.
+    uint64_t simPaths = 1;           ///< --sim-paths=N
+    uint64_t simForkDepth = 40;      ///< --sim-fork-depth=D
+    uint64_t simTotalInsns = 50000000; ///< --sim-total-insns=T
+    bool simExploreSet = false;
+    /// --sim-no-dispatch-int: do not run program-installed INT handlers (S-4).
+    bool simNoDispatchInt = false;
     /// P5 (all need --uasm-verified):
     std::string hints_path;      ///< --hints=FILE: code/data/label hints
     std::string hints_out;       ///< --hints-out=FILE: write the hints this run used
@@ -481,6 +489,26 @@ struct Options {
                 }
             } else if (arg == "--strict") {
                 strict = true;
+            } else if (arg.starts_with("--sim-paths=") || arg.starts_with("--sim-fork-depth=") ||
+                       arg.starts_with("--sim-total-insns=")) {
+                const size_t eq = arg.find('=');
+                const std::string name(arg.substr(0, eq));
+                const std::string_view num = arg.substr(eq + 1);
+                uint64_t v = 0;
+                bool ok = !num.empty() && num.size() <= 12 &&
+                          std::all_of(num.begin(), num.end(), [](char c) { return c >= '0' && c <= '9'; });
+                if (ok)
+                    v = std::stoull(std::string(num));
+                const uint64_t lo = name == "--sim-fork-depth" ? 0 : 1;
+                const uint64_t hi = name == "--sim-paths" ? 4096 : (name == "--sim-fork-depth" ? 1000 : 1000000000000ull);
+                if (!ok || v < lo || v > hi) {
+                    std::cerr << "Error: Invalid " << name << " value\n";
+                    return false;
+                }
+                (name == "--sim-paths" ? simPaths : name == "--sim-fork-depth" ? simForkDepth : simTotalInsns) = v;
+                simExploreSet = true;
+            } else if (arg == "--sim-no-dispatch-int") {
+                simNoDispatchInt = true;
             } else if (arg == "--evidence=sim") {
                 // Enable-only. Requires --uasm-verified.
                 evidence_sim = true;
@@ -765,6 +793,11 @@ struct Options {
             std::cerr << "Error: --hints, --hints-out, --bytemap, --explain and --strict require --uasm-verified\n";
             return false;
         }
+        if (simExploreSet && !evidence_sim)
+        {
+            std::cerr << "Error: --sim-paths, --sim-fork-depth and --sim-total-insns require --evidence=sim\n";
+            return false;
+        }
         if (evidence_sim && !uasm_verified)
         {
             std::cerr << "Error: --evidence=sim requires --uasm-verified\n";
@@ -898,6 +931,14 @@ static inline void show_usage(const char* progname) {
         "                      --max-insns, default 1000000; guest files in memory\n"
         "                      only) and decode executed code the static graph missed.\n"
         "                      Opt-in. Enable-only.\n"
+        "  --sim-paths=N       With --evidence=sim, explore up to N paths (default 1):\n"
+        "                      the other side of each conditional branch, and handlers\n"
+        "                      installed with INT 21h/25h. Forked paths are Likely\n"
+        "                      evidence (not seeded under --strict). 1..4096.\n"
+        "  --sim-fork-depth=D  Forks along one path (default 40, 0..1000).\n"
+        "  --sim-total-insns=T Instructions summed over all paths (default 50000000).\n"
+        "  --sim-no-dispatch-int  Do not run handlers the program installed when it\n"
+        "                      executes INT n (debugging).\n"
         "  --uasm-header       With --uasm-verified, put the MZ header (relocation table\n"
         "                      as expressions) and the file tail in the listing, so\n"
         "                      uasm -bin rebuilds the whole EXE. Enable-only.\n"
