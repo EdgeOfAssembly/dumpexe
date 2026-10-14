@@ -529,9 +529,10 @@ inline VerifyResult verify_listing(UasmEmitter& em, const std::string& asm_bin,
 
     if (asm_bin.empty())
     {
-        // Without an assembler nothing is claimed: every code unit is symbolic db.
+        // Without an assembler only spellings from the verified pair table
+        // (and sized branches) stay mnemonic; everything else is symbolic db.
         for (EmitUnit& u : U)
-            if (u.code && u.rung < Rung::SymDb)
+            if (u.code && u.rung < Rung::SymDb && !(u.rung == Rung::Mnemonic && em.pair_verified(u)))
             {
                 u.rung = Rung::SymDb;
                 u.reason = "uasm not found";
@@ -781,6 +782,20 @@ inline VerifyResult verify_listing(UasmEmitter& em, const std::string& asm_bin,
                 v.shift_para.why_not = "no relocation-derived base";
         }
         (void)em.render({});
+        // Offline pair-table generation: DUMPEXE_PAIR_DUMP=FILE appends
+        // "key ok" for every reference-free code unit of a verified listing.
+        if (const char* pd = std::getenv("DUMPEXE_PAIR_DUMP"); pd != nullptr && *pd != 0)
+        {
+            std::ofstream pf(pd, std::ios::app);
+            for (const EmitUnit& u : U)
+            {
+                if (!u.code || u.rung == Rung::RawDb)
+                    continue;
+                const std::string k = em.pair_key(u);
+                if (!k.empty())
+                    pf << k << ' ' << (u.rung == Rung::Mnemonic ? 1 : 0) << '\n';
+            }
+        }
     }
     return v;
 }

@@ -79,7 +79,8 @@ rc=$?
 set -e
 check no_assembler_exit1 test "$rc" -eq 1
 check no_assembler_header grep -q '^; NOT VERIFIED' "$TD/nobin.asm"
-check no_assembler_no_mnemonic grep -q '^; lines: mnemonic 0 ' "$TD/nobin.asm"
+# 2.42: without uasm only verified-pair spellings stay mnemonic (§10.10).
+check no_assembler_pairs_only grep -qE '^; lines: mnemonic [0-9]+ .*symbolic db [1-9]' "$TD/nobin.asm"
 
 # MZ with relocations: relocated words are segment expressions, the
 # rebuilt load image is identical, and both shifts keep every reference.
@@ -143,6 +144,60 @@ if [[ -n "${DUMPEXE_R2_SAMPLE:-}" && -f "${DUMPEXE_R2_SAMPLE}" ]]; then
   (cd "$TD/r2" && "$BIN" -d --no-repack IN.EXE >out.txt 2>&1) || true
   check r2_unpacked_jwasm bash -c "sed -n '/=== UNPACKED ===/,\$p' '$TD/r2/out.txt' | grep -q 'JWASM-assemblable export'"
 fi
+
+# @m16 and JS8 pins (S11, prefixed short branches) and the no-uasm pair table.
+cat > "$TD/pin.asm" <<'ASM'
+_TEXT segment para public use16 'CODE'
+org 100h
+start:
+    db 8Bh, 87h, 08h, 00h
+    db 8Ah, 06h, 10h, 00h
+    db 80h, 0BFh, 05h, 00h, 07h
+    db 3Eh, 8Bh, 07h
+    db 2Eh, 74h, 02h
+    nop
+    nop
+    db 0F3h, 7Ch, 01h
+    nop
+    mov ah, 4Ch
+    int 21h
+_TEXT ends
+end start
+ASM
+asm pin.asm pin.com
+(cd "$TD" && "$BIN" --uasm --uasm-verified --uasm-bin "$UASM_BIN" -o pin_out.asm pin.com >/dev/null 2>&1) || true
+P="$TD/pin_out.asm"
+check m16_verified grep -q '^; VERIFIED identical' "$P"
+check m16_disp16 grep -qE '^    @m16 <8Bh, 87h>, 8h' "$P"
+check m16_imm grep -qE '^    @m16 <80h, 0BFh>, 5h, 7h' "$P"
+check js8_prefixed grep -qE '^    JS8 L[0-9A-F]{5}, 2Eh, 74h' "$P"
+check js8_rep grep -qE '^    JS8 L[0-9A-F]{5}, 0F3h, 7Ch' "$P"
+check js8_shift grep -qE '^; shift mid: [1-9][0-9]* references checked, 0 broken' "$P"
+# JS8 range check: an out-of-range target must fail to assemble.
+cat > "$TD/js8bad.asm" <<'ASM'
+JS8 macro tgt:req, ops:vararg
+  local here
+  db ops
+here label byte
+  db (tgt)-(here+1)
+  .erre ((tgt)-(here+1)+128) le 255, <rel8 out of range>
+endm
+_TEXT segment para public use16 'CODE'
+org 100h
+start:
+    JS8 far_away, 2Eh, 74h
+    db 300 dup(90h)
+far_away:
+    ret
+_TEXT ends
+end start
+ASM
+check js8_range bash -c "! (cd '$TD' && env -u UASM '$UASM_BIN' -bin -nologo -Fojs8bad.com js8bad.asm >/dev/null 2>&1)"
+# Without uasm: pair-table spellings and sized branches only, header says so.
+(cd "$TD" && env -u UASM "$BIN" --uasm --uasm-verified --uasm-bin /nonexistent -o nou.asm s.com >/dev/null 2>&1) || true
+check pairs_header grep -q '^; NOT VERIFIED: uasm not found' "$TD/nou.asm"
+check pairs_some_mnemonic grep -qE '^; lines: mnemonic [1-9]' "$TD/nou.asm"
+check pairs_reassemble bash -c "cd '$TD' && env -u UASM '$UASM_BIN' -bin -nologo -Fonou.bin nou.asm >/dev/null 2>&1 && cmp -s nou.bin s.com"
 
 echo "p2_verified passed=$pass failed=$fail"
 [[ $fail -eq 0 ]]

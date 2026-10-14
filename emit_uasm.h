@@ -15,6 +15,7 @@
 #define DX_EMIT_UASM_H
 
 #include <algorithm>
+#include "pair_table.h"
 #include <cstdint>
 #include <format>
 #include <map>
@@ -166,6 +167,14 @@ public:
     std::set<uint32_t> all_bases() const { return bases_; }
     const EmitInput& input() const { return in_; }
 
+    /**
+     * @brief Shape key for the verified-pair table (§10.10): fixed bytes in hex,
+     *        displacement and immediate replaced by a size and a value class.
+     *        Empty for units with references or that do not decode.
+     */
+    std::string pair_key(const EmitUnit& u);
+    /** @brief True when @p u may keep its mnemonic without an assembler. */
+    bool pair_verified(const EmitUnit& u);
     /** @brief Pin text for unit @p u, or empty when no pin family fits. */
     std::string pin_text(const EmitUnit& u);
 
@@ -869,6 +878,63 @@ inline const cs_insn* UasmEmitter::decode(const EmitUnit& u)
     return insn_;
 }
 
+inline std::string UasmEmitter::pair_key(const EmitUnit& u)
+{
+    if (!u.refs.empty())
+        return {};
+    const cs_insn* ci = decode(u);
+    if (ci == nullptr)
+        return {};
+    const cs_x86& x = ci->detail->x86;
+    const uint8_t* b = in_.image->data() + u.lin;
+    const uint32_t dofs = x.encoding.disp_offset, dsz = x.encoding.disp_size;
+    const uint32_t iofs = x.encoding.imm_offset, isz = x.encoding.imm_size;
+    auto cls = [&](uint32_t at, uint32_t sz)
+    {
+        int64_t v = 0;
+        for (uint32_t k = 0; k < sz; ++k)
+            v |= static_cast<int64_t>(b[at + k]) << (8 * k);
+        const int64_t sv = sz == 1 ? static_cast<int8_t>(v) : (sz == 2 ? static_cast<int16_t>(v) : v);
+        if (v == 0)
+            return std::string("z");
+        if (v == 1)
+            return std::string("1");
+        return std::string(sv >= -128 && sv <= 127 ? "s" : (v <= 0xFF ? "u" : "w"));
+    };
+    std::string k;
+    for (uint32_t j = 0; j < u.size;)
+    {
+        if (dsz != 0 && j == dofs)
+        {
+            k += std::format("D{}{}", dsz, cls(j, dsz));
+            j += dsz;
+        }
+        else if (isz != 0 && j == iofs)
+        {
+            k += std::format("I{}{}", isz, cls(j, isz));
+            j += isz;
+        }
+        else
+        {
+            k += std::format("{:02X}", b[j]);
+            ++j;
+        }
+    }
+    return k;
+}
+
+inline bool UasmEmitter::pair_verified(const EmitUnit& u)
+{
+    const uint8_t* b = in_.image->data() + u.lin;
+    // Sized branches (R4) spell their encoding explicitly.
+    if (u.refs.size() == 1 && u.refs[0].kind == RefKind::Rel &&
+        (b[0] == 0xE8 || b[0] == 0xE9 || b[0] == 0xEB || (b[0] >= 0x70 && b[0] <= 0x7F)))
+        return true;
+    const std::string k = pair_key(u);
+    return !k.empty() && std::binary_search(std::begin(kVerifiedPairs), std::end(kVerifiedPairs),
+                                            std::string_view(k));
+}
+
 inline int UasmEmitter::unit_at(uint32_t lin) const
 {
     auto it = std::lower_bound(starts_.begin(), starts_.end(), lin);
@@ -1036,7 +1102,58 @@ inline void UasmEmitter::collect_labels()
 inline std::string UasmEmitter::pin_text(const EmitUnit& u)
 {
     const cs_insn* ci = decode(u);
-    if (ci == nullptr || !u.refs.empty())
+    if (ci == nullptr)
+    {
+        return {};
+    }
+    {
+        const uint8_t* pb = in_.image->data() + u.lin;
+        uint32_t k = 0;
+        while (k < u.size && (pb[k] == 0x26 || pb[k] == 0x2E || pb[k] == 0x36 || pb[k] == 0x3E ||
+                              pb[k] == 0xF2 || pb[k] == 0xF3))
+            ++k;
+        auto hexlist = [&](uint32_t from, uint32_t to)
+        {
+            std::string t;
+            for (uint32_t j = from; j < to; ++j)
+                t += (j > from ? ", " : "") + uasm_hex(pb[j]);
+            return t;
+        };
+        // JS8: exact short branch (any prefixes) as data, edit-tracking via the label.
+        if (k + 2 == u.size && u.refs.size() == 1 && u.refs[0].kind == RefKind::Rel &&
+            ((pb[k] >= 0x70 && pb[k] <= 0x7F) || pb[k] == 0xEB || (pb[k] >= 0xE0 && pb[k] <= 0xE3)))
+        {
+            used_macros_.insert("js8");
+            return std::format("JS8 {}, {}", lbl(u.refs[0].target), hexlist(0, k + 1));
+        }
+        // @m16: ModRM memory form with a literal disp16 (mod=10, or mod=00 rm=110).
+        if (u.refs.empty() && k + 4 <= u.size && pb[k] != 0x0F && pb[k] != 0x66 && pb[k] != 0x67 &&
+            pb[k] != 0xF0)
+        {
+            const uint8_t m = pb[k + 1];
+            const bool d16 = (m >> 6) == 2 || ((m >> 6) == 0 && (m & 7) == 6);
+            static const uint8_t modrm_ops[] = {0x00, 0x01, 0x02, 0x03, 0x08, 0x09, 0x0A, 0x0B,
+                                                0x10, 0x11, 0x12, 0x13, 0x18, 0x19, 0x1A, 0x1B,
+                                                0x20, 0x21, 0x22, 0x23, 0x28, 0x29, 0x2A, 0x2B,
+                                                0x30, 0x31, 0x32, 0x33, 0x38, 0x39, 0x3A, 0x3B,
+                                                0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87,
+                                                0x88, 0x89, 0x8A, 0x8B, 0x8C, 0x8D, 0x8E, 0x8F,
+                                                0xC4, 0xC5, 0xC6, 0xC7, 0xD0, 0xD1, 0xD2, 0xD3,
+                                                0xF6, 0xF7, 0xFE, 0xFF};
+            const bool known = std::find(std::begin(modrm_ops), std::end(modrm_ops), pb[k]) !=
+                               std::end(modrm_ops);
+            if (d16 && known && ci->size == u.size)
+            {
+                used_macros_.insert("m16");
+                std::string t = std::format("@m16 <{}>, {}", hexlist(0, k + 2),
+                                            uasm_hex(pb[k + 2] | (pb[k + 3] << 8)));
+                if (k + 4 < u.size)
+                    t += ", " + hexlist(k + 4, u.size);
+                return t;
+            }
+        }
+    }
+    if (!u.refs.empty())
     {
         return {};
     }
@@ -1573,7 +1690,7 @@ inline std::string UasmEmitter::render(const std::vector<std::string>& header, i
             std::string t = ci ? mnemonic_text(u, ci) : std::string{};
             if (t.empty())
             {
-                u.rung = u.refs.empty() ? Rung::Pin : Rung::SymDb;
+                u.rung = pin_text(u).empty() ? Rung::SymDb : Rung::Pin;
                 u.reason = "no safe mnemonic form";
             }
             else
@@ -1660,7 +1777,28 @@ inline std::string UasmEmitter::render(const std::vector<std::string>& header, i
         put(std::format("{} equ <({}+{})>", lbl(kv.first), lbl(kv.second.first),
                         kv.second.second));
     // Pin macros actually used.
-    if (!used_macros_.empty())
+    if (used_macros_.count("js8"))
+    {
+        put("JS8 macro tgt:req, ops:vararg");
+        put("  local here");
+        put("  db ops");
+        put("here label byte");
+        put("  db (tgt)-(here+1)");
+        put("  .erre ((tgt)-(here+1)+128) le 255, <rel8 out of range>");
+        put("endm");
+    }
+    if (used_macros_.count("m16"))
+    {
+        put("@m16 macro pre:req, d:req, post:vararg");
+        put("  db pre");
+        put("  dw d");
+        put("  IFNB <post>");
+        put("    db post");
+        put("  ENDIF");
+        put("endm");
+    }
+    if (std::any_of(used_macros_.begin(), used_macros_.end(),
+                    [](const std::string& m) { return m != "js8" && m != "m16"; }))
     {
         static const char* r16[] = {"ax", "cx", "dx", "bx", "sp", "bp", "si", "di"};
         static const char* r8[] = {"al", "cl", "dl", "bl", "ah", "ch", "dh", "bh"};
