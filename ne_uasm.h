@@ -109,6 +109,7 @@ static inline int ne_emit_uasm(const Options& opts, const std::vector<uint8_t>& 
     map << "size " << d.size() << "\n";
     int rc = 0;
     std::set<std::pair<size_t, size_t>> done;
+    std::string seg_list;
     for (size_t s = 0; s < ne.segs.size(); ++s)
     {
         size_t foff = 0;
@@ -141,6 +142,7 @@ static inline int ne_emit_uasm(const Options& opts, const std::vector<uint8_t>& 
         const fs::path out = stem.parent_path() / name;
         std::ofstream(out) << text;
         map << std::format("seg {} {} {} {}_seg{}.bin\n", s + 1, foff, flen, stem.filename().string(), s + 1);
+        seg_list += std::format(" {}", s + 1);
         std::fill(skel.begin() + static_cast<std::ptrdiff_t>(foff),
                   skel.begin() + static_cast<std::ptrdiff_t>(foff + flen), uint8_t{0});
         std::cerr << std::format("listing: wrote UASM {} ({} insns{})\n", out.string(), n_insns,
@@ -148,6 +150,8 @@ static inline int ne_emit_uasm(const Options& opts, const std::vector<uint8_t>& 
         if (st != 0)
             rc = 1;
     }
+    // Every segment zeroed in the skeleton; bin2ne refuses a map missing one.
+    map << "segs" << seg_list << "\n";
     std::ofstream(stem.string() + ".neskel", std::ios::binary)
         .write(reinterpret_cast<const char*>(skel.data()), static_cast<std::streamsize>(skel.size()));
     std::cerr << std::format("listing: wrote {}.nemap and {}.neskel; rebuild: uasm -bin each _segN.asm "
