@@ -338,6 +338,56 @@ static inline void ne_parse_relocs(const std::vector<uint8_t>& d, const NEParsed
     }
 }
 
+/**
+ * @brief Roots of CODE segment @p s (0-based): entry, exports, internal
+ *        far fixup targets that land in it.
+ */
+static inline std::vector<CfgLin> ne_segment_roots(const std::vector<uint8_t>& d, const NEParsed& ne,
+                                                   const NeModel& m, size_t s, size_t flen)
+{
+    std::set<CfgLin> r;
+    const unsigned sn = static_cast<unsigned>(s + 1);
+    if (ne.hdr.cs == sn && ne.hdr.ip < flen)
+        r.insert(ne.hdr.ip);
+    for (const auto& [ord, e] : m.entries)
+        if (e.seg == sn && e.off < flen)
+            r.insert(e.off);
+    for (size_t from = 0; from < m.relocs.size(); ++from)
+        for (const NeReloc& x : m.relocs[from])
+        {
+            if ((x.rtype & 3) != 0)
+                continue;
+            // Segment-only fixup on the selector of 9A/EA: the offset is the
+            // literal word before it (Borland/MS far calls between segments).
+            if (x.atype == 2 && static_cast<uint8_t>(x.a & 0xFF) == sn && from < ne.segs.size())
+            {
+                const size_t ffo = ne_seg_file_offset(ne.hdr, ne.segs[from]);
+                for (uint16_t site : x.sites)
+                {
+                    const size_t at = ffo + site;
+                    if (site < 3 || at + 2 > d.size())
+                        continue;
+                    if (d[at - 3] != 0x9A && d[at - 3] != 0xEA)
+                        continue;
+                    const uint16_t off = static_cast<uint16_t>(d[at - 2] | (d[at - 1] << 8));
+                    if (off < flen)
+                        r.insert(off);
+                }
+                continue;
+            }
+            if (x.atype != 3)
+                continue;
+            const uint8_t t = static_cast<uint8_t>(x.a & 0xFF);
+            if (t == sn && x.b < flen)
+                r.insert(x.b);
+            else if (t == 0xFF)
+                if (auto it = m.entries.find(x.b); it != m.entries.end() && it->second.seg == sn &&
+                                                      it->second.off < flen)
+                    r.insert(it->second.off);
+        }
+    return {r.begin(), r.end()};
+}
+
 static inline NeModel ne_build_model(const std::vector<uint8_t>& d, const NEParsed& ne)
 {
     NeModel m;
