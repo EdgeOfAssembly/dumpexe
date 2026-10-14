@@ -1800,10 +1800,10 @@ static inline bool sim_exec_insn(SimState& st, Options& opts) {
                 AX = static_cast<uint16_t>(r);
                 CF = OF = (AH == 0x00 || AH == 0xFF) ? 0 : 1;
             } else {
-                int32_t r = static_cast<int16_t>(AX) * static_cast<int16_t>(s);
+                const int64_t r = int64_t{static_cast<int16_t>(AX)} * static_cast<int16_t>(s);
                 AX = static_cast<uint16_t>(r);
-                DX = static_cast<uint16_t>(static_cast<uint32_t>(r) >> 16);
-                int32_t sign_ext = static_cast<int16_t>(AX);
+                DX = static_cast<uint16_t>(static_cast<uint64_t>(r) >> 16);
+                const int64_t sign_ext = static_cast<int16_t>(AX);
                 CF = OF = (r != sign_ext) ? 1 : 0;
             }
         } else if (b) {
@@ -1823,7 +1823,7 @@ static inline bool sim_exec_insn(SimState& st, Options& opts) {
         uint16_t d = 0, s = 0;
         if (!sim_read_op(st, op(0), d, false) || !sim_read_op(st, op(1), s, false))
             return false;
-        int32_t r = static_cast<int16_t>(d) * static_cast<int16_t>(s);
+        const int64_t r = int64_t{static_cast<int16_t>(d)} * static_cast<int16_t>(s);
         sim_write_op(st, op(0), static_cast<uint16_t>(r), false);
         CF = OF = (r != static_cast<int16_t>(r)) ? 1 : 0;
         IP = next_ip; return true;
@@ -1831,8 +1831,10 @@ static inline bool sim_exec_insn(SimState& st, Options& opts) {
     if (mnem == "imul" && x86.op_count == 3) {
         uint16_t s = 0;
         if (!sim_read_op(st, op(1), s, false)) return false;
-        int32_t imm = static_cast<int32_t>(op(2).imm);
-        int32_t r = static_cast<int16_t>(s) * imm;
+        // T1: the immediate is a 16-bit operand (imm8 already sign-extended);
+        // Capstone may report it as a 64-bit value, so truncate, then widen.
+        const int64_t imm = static_cast<int16_t>(static_cast<uint16_t>(op(2).imm));
+        const int64_t r = int64_t{static_cast<int16_t>(s)} * imm;
         sim_write_op(st, op(0), static_cast<uint16_t>(r), false);
         CF = OF = (r != static_cast<int16_t>(r)) ? 1 : 0;
         IP = next_ip; return true;
@@ -1846,25 +1848,40 @@ static inline bool sim_exec_insn(SimState& st, Options& opts) {
             st.halt_reason = "divide by zero";
             return true;
         }
+        // T1: 64-bit arithmetic (no INT_MIN / -1 UB); a quotient that does
+        // not fit is #DE on the CPU and stops the path here.
+        auto div_overflow = [&]() {
+            st.halted = true;
+            st.halt_reason = "divide overflow";
+            return true;
+        };
         if (mnem == "idiv") {
             if (b) {
-                int16_t num = static_cast<int16_t>(AX);
-                int8_t den = static_cast<int8_t>(s);
-                AL = static_cast<uint8_t>(num / den);
+                const int64_t num = static_cast<int16_t>(AX);
+                const int64_t den = static_cast<int8_t>(s);
+                const int64_t q = num / den;
+                if (q < -128 || q > 127) return div_overflow();
+                AL = static_cast<uint8_t>(q);
                 AH = static_cast<uint8_t>(num % den);
             } else {
-                int32_t num = (static_cast<int32_t>(DX) << 16) | AX;
-                int16_t den = static_cast<int16_t>(s);
-                AX = static_cast<uint16_t>(num / den);
+                const int64_t num = static_cast<int32_t>((static_cast<uint32_t>(DX) << 16) | AX);
+                const int64_t den = static_cast<int16_t>(s);
+                const int64_t q = num / den;
+                if (q < -32768 || q > 32767) return div_overflow();
+                AX = static_cast<uint16_t>(q);
                 DX = static_cast<uint16_t>(num % den);
             }
         } else if (b) {
-            uint16_t num = AX;
-            AL = static_cast<uint8_t>(num / static_cast<uint8_t>(s));
+            const uint32_t num = AX;
+            const uint32_t q = num / static_cast<uint8_t>(s);
+            if (q > 0xFF) return div_overflow();
+            AL = static_cast<uint8_t>(q);
             AH = static_cast<uint8_t>(num % static_cast<uint8_t>(s));
         } else {
-            uint32_t num = (static_cast<uint32_t>(DX) << 16) | AX;
-            AX = static_cast<uint16_t>(num / s);
+            const uint64_t num = (static_cast<uint64_t>(DX) << 16) | AX;
+            const uint64_t q = num / s;
+            if (q > 0xFFFF) return div_overflow();
+            AX = static_cast<uint16_t>(q);
             DX = static_cast<uint16_t>(num % s);
         }
         IP = next_ip; return true;

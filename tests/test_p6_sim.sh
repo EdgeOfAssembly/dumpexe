@@ -190,5 +190,46 @@ check s8_simulate bash -c "! grep -q 'unsupported opcode' '$TD/e.sim' && grep -q
 check spin_paths_bounded grep -q '^; VERIFIED identical' "$TD/spin8.asm"
 check paths_range bash -c "! '$BIN' --uasm --uasm-verified --evidence=sim --sim-paths=0 '$TD/t.com' >/dev/null 2>&1"
 check paths_need_sim bash -c "! '$BIN' --uasm --uasm-verified --sim-paths=4 '$TD/t.com' >/dev/null 2>&1"
+# T1: imul/mul/div/idiv overflow corners under UBSan (review 2026-10-14b).
+cat > "$TD/m.asm" <<'ASM'
+.386
+_TEXT segment para public use16 'CODE'
+assume cs:_TEXT, ds:_TEXT
+org 100h
+start:
+    mov ax, 8000h
+    imul cx, ax, 7FFFh
+    imul cx, ax, -1
+    imul dx, ax, -128
+    mov bx, 8000h
+    imul ax, bx
+    imul bx
+    mov dx, 7FFFh
+    mov ax, 0FFFFh
+    mov cx, 0FFFFh
+    mul cx
+    cmp ax, 1
+    jne done
+    mov dx, 8000h
+    xor ax, ax
+    mov cx, -1
+    idiv cx
+done:
+    mov ah, 4Ch
+    int 21h
+_TEXT ends
+end start
+ASM
+asm m.asm m.com
+(cd "$TD" && $V --evidence=sim --sim-paths=64 -o m.asm.out m.com >/dev/null 2>&1) || true
+check t1_verified grep -q '^; VERIFIED identical' "$TD/m.asm.out"
+(cd "$TD" && "$BIN" --simulate m.com > m.sim 2>&1) || true
+check t1_idiv_overflow_stops grep -q '^Reason: divide overflow' "$TD/m.sim"
+if [[ -x "$ROOT/dumpexe-asan" ]]; then
+  check t1_ubsan_clean bash -c "cd '$TD' && UBSAN_OPTIONS=print_stacktrace=1 '$ROOT/dumpexe-asan' --uasm --uasm-verified --uasm-bin '$UASM_BIN' --evidence=sim --sim-paths=64 -o mu.asm m.com >/dev/null 2>ubsan.err; ! grep -qE 'runtime error|AddressSanitizer' ubsan.err"
+  check t1_ubsan_simulate bash -c "cd '$TD' && '$ROOT/dumpexe-asan' --simulate m.com >/dev/null 2>ubsan2.err; ! grep -qE 'runtime error|AddressSanitizer' ubsan2.err"
+else
+  echo "SKIP t1_ubsan (no dumpexe-asan; make asan)"
+fi
 echo "p6_sim passed=$pass failed=$fail"
 [[ $fail -eq 0 ]]
