@@ -30,4 +30,4 @@ a.out
 
 # Experimental map decode intermediates (keep selected .png)
 games/**/map_preview/*.ppm
-bin2ne
+/bin2ne
