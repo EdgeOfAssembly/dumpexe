@@ -4600,12 +4600,18 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
     // P6: simulation evidence (opt-in). Executed addresses in the entry frame
     // that the graph left in data become entries (Witnessed); executed
     // addresses inside a decoded instruction are conflicts and are not used.
+    // Addresses only seen on an unfaithful path (forced branch, loop skip,
+    // injected key, scheduled handler) are Likely: --strict does not seed them.
     std::vector<std::pair<uint32_t, int32_t>> witnessed;
+    SimWitness simw;
     if (opts.evidence_sim && file != nullptr)
     {
         const uint64_t cap = opts.maxInsnsSet ? opts.maxInsns : 1000000u;
-        witnessed = uasm_com ? sim_witness(opts, image, true, 0x100, relocs, cap)
-                             : sim_witness(opts, *file, false, 0, relocs, cap);
+        simw = uasm_com ? sim_explore(opts, image, true, 0x100, relocs, cap)
+                        : sim_explore(opts, *file, false, 0, relocs, cap);
+        witnessed = simw.faithful;
+        if (!opts.strict)
+            witnessed.insert(witnessed.end(), simw.likely.begin(), simw.likely.end());
     }
     size_t sim_seeded = 0;
     size_t sim_confirmed = 0;
@@ -4726,6 +4732,13 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
         hdr.push_back(std::format("simulation evidence: {} address(es) executed, {} confirm decoded heads, "
                                   "{} seeded as entries (witnessed), {} inside a decoded instruction (conflict)",
                                   witnessed.size(), sim_confirmed, sim_seeded, sim_conflicts));
+    if (opts.evidence_sim && (opts.simPaths > 1 || opts.strict))
+        hdr.push_back(std::format("simulation paths: {} run (cap {}), {} fork(s), {} handler dispatch(es), "
+                                  "{} pending at a cap; {} instruction(s){}; {} witnessed, {} likely{}",
+                                  simw.paths, opts.simPaths, simw.forks, simw.dispatches, simw.pending,
+                                  simw.insns, simw.total_cap ? " (total cap hit)" : "",
+                                  simw.faithful.size(), simw.likely.size(),
+                                  opts.strict ? " (likely not seeded: --strict)" : ""));
     if (!in.label_names.empty() || !in.force_data.empty() || !hint_code.empty())
         hdr.push_back(std::format("hints: {} code, {} data range(s), {} label name(s) from {}", hint_code.size(),
                                   in.force_data.size(), in.label_names.size(), opts.hints_path));
