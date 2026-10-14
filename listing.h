@@ -1135,6 +1135,64 @@ enum class ListingExportKind
 //=============================================================================
 
 /// Max bytes in one UASM segment. A 16-bit segment cannot be larger.
+
+/**
+ * @brief S4: true when @p name (any case) is a UASM/MASM reserved word: an
+ *        instruction mnemonic (Capstone's x86 table), a register, a
+ *        directive, an operator or a type.
+ */
+inline bool uasm_reserved_word(std::string_view name)
+{
+    std::string lo(name);
+    for (char& c : lo)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    static const std::set<std::string> words = []
+    {
+        std::set<std::string> w = {
+            // registers
+            "al", "ah", "ax", "eax", "bl", "bh", "bx", "ebx", "cl", "ch", "cx", "ecx", "dl", "dh", "dx", "edx",
+            "si", "esi", "di", "edi", "bp", "ebp", "sp", "esp", "cs", "ds", "es", "fs", "gs", "ss", "st",
+            "cr0", "cr2", "cr3", "cr4", "dr0", "dr1", "dr2", "dr3", "dr6", "dr7", "tr3", "tr4", "tr5", "tr6", "tr7",
+            "mm0", "mm1", "mm2", "mm3", "mm4", "mm5", "mm6", "mm7", "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5",
+            "xmm6", "xmm7", "rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp", "rip",
+            // operators and types
+            "offset", "seg", "ptr", "short", "near", "far", "byte", "word", "dword", "fword", "qword", "tbyte",
+            "oword", "real4", "real8", "real10", "sbyte", "sword", "sdword", "type", "size", "sizeof", "length",
+            "lengthof", "mask", "width", "high", "low", "highword", "lowword", "this", "and", "or", "xor", "not",
+            "shl", "shr", "mod", "eq", "ne", "lt", "le", "gt", "ge", "dup", "imagerel", "sectionrel", "opattr",
+            "high32", "low32", "near16", "near32", "far16", "far32", "flat", "nothing", "error", "vararg", "req",
+            // directives
+            "db", "dw", "dd", "df", "dq", "dt", "equ", "org", "end", "endp", "ends", "proc", "segment", "assume",
+            "group", "label", "macro", "endm", "exitm", "local", "public", "extern", "extrn", "externdef", "include",
+            "includelib", "comm", "if", "ife", "ifdef", "ifndef", "ifb", "ifnb", "ifidn", "ifidni", "ifdif",
+            "ifdifi", "else", "elseif", "endif", "rept", "repeat", "irp", "irpc", "for", "forc", "while", "struc",
+            "struct", "union", "record", "typedef", "proto", "invoke", "option", "align", "even", "radix", "model",
+            "stack", "data", "code", "const", "fardata", "startup", "exit", "title", "subtitle", "page", "name",
+            "comment", "echo", "purge", "catstr", "instr", "substr", "sizestr", "textequ", "alias", "uses",
+            "para", "public", "use16", "use32", "use64", "at", "common", "memory", "private", "basic", "c",
+            "pascal", "fortran", "stdcall", "syscall", "fastcall", "vectorcall", "masm", "cpu", "err",
+        };
+        for (const char* d : {".8086", ".186", ".286", ".386", ".486", ".586", ".686", ".287", ".387",
+                              ".model", ".code", ".data", ".stack", ".erre", ".err"})
+            w.insert(d);
+        csh h = 0;
+        if (cs_open(CS_ARCH_X86, CS_MODE_16, &h) == CS_ERR_OK)
+        {
+            for (unsigned id = 1; id < X86_INS_ENDING; ++id)
+                if (const char* n = cs_insn_name(h, id))
+                    w.insert(n);
+            cs_close(&h);
+        }
+        // Prefixes and spellings Capstone folds into other names.
+        for (const char* m : {"rep", "repe", "repz", "repne", "repnz", "lock", "xlat", "xlatb", "movsb", "movsw",
+                              "lodsb", "lodsw", "stosb", "stosw", "cmpsb", "cmpsw", "scasb", "scasw", "jmp",
+                              "call", "ret", "retf", "retn", "iret", "int", "into", "wait", "fwait"})
+            w.insert(m);
+        return w;
+    }();
+    return words.count(lo) != 0;
+}
+
 inline constexpr size_t kUasmSegBytes = 65536;
 
 /**
@@ -4486,6 +4544,12 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
                                 }) &&
                                 !(name.size() == 6 && name[0] == 'L' &&
                                   std::all_of(name.begin() + 1, name.end(), [](char c) { return std::isxdigit(static_cast<unsigned char>(c)); }));
+                if (ok && uasm_reserved_word(name))
+                {
+                    std::cerr << std::format("listing: --hints:{}: label '{}' is an assembler reserved word\n", ln,
+                                             name);
+                    continue;
+                }
                 bool dup = false;
                 for (const auto& [k, v] : in.label_names)
                     if (v == name)
