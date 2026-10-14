@@ -62,5 +62,11 @@ check explain_data grep -qE '^explain 0011C: data unit .*\(data hint\)' "$TD/err
 check strict_header grep -qE '^; strict: [0-9]+ instruction\(s\) with only Likely/Hint evidence printed as data' "$TD/s.asm"
 check strict_verified grep -q '^; VERIFIED identical' "$TD/s.asm"
 check needs_verified bash -c "! '$BIN' --uasm --strict '$TD/t.com' >/dev/null 2>&1"
+# S4: assembler reserved words are rejected as labels; the listing still verifies.
+printf 'label 114 mov\nlabel 118 AX\nlabel 11C offset\nlabel 120 Loop\nlabel 123 okname\n' > "$TD/rw.txt"
+(cd "$TD" && "$BIN" --uasm --uasm-verified --uasm-bin "$UASM_BIN" --hints=rw.txt -o rw.asm t.com >/dev/null 2>rw.err) || true
+check hints_rw_rejected test "$(grep -c 'is an assembler reserved word' "$TD/rw.err")" -eq 4
+check hints_rw_verified grep -q '^; VERIFIED identical' "$TD/rw.asm"
+check hints_rw_ok_kept grep -q '^okname' "$TD/rw.asm"
 echo "p5_tools passed=$pass failed=$fail"
 [[ $fail -eq 0 ]]
