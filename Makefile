@@ -42,7 +42,7 @@ export LD_LIBRARY_PATH := $(shell pkg-config --variable=libdir capstone 2>/dev/n
 
 all: dumpexe bin2exe bin2ne
 
-HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h listing.h cfg.h analysis.h sim.h sim_path.h sys.h sys_analysis.h com.h com_analysis.h ne.h ne_shift.h ne_analysis.h dos_extender.h dx_strings.h pascal_mt.h turbo_pascal.h toolchain.h symbols.h repack.h json_escape.h json_report.h unpack.h unpack_integrate.h image_model.h bytemap.h facts.h decode.h flow.h sha256.h ne_names.h ne_reloc.h ne_uasm.h emit_uasm.h verify.h
+HEADERS = dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h listing.h cfg.h analysis.h sim.h sim_path.h sys.h sys_analysis.h com.h com_analysis.h ne.h ne_shift.h ne_analysis.h dos_extender.h dx_strings.h pascal_mt.h turbo_pascal.h toolchain.h symbols.h repack.h json_escape.h json_report.h unpack.h unpack_integrate.h image_model.h bytemap.h facts.h decode.h flow.h sha256.h ne_names.h ne_reloc.h ne_uasm.h emit_uasm.h verify.h pair_table.h
 
 # Deark modules (MIT, Jason Summers). Host glue is unpack_host.c.
 # -I so <#include <deark-private.h>> in the modules resolves.
