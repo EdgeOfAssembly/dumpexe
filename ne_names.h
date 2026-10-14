@@ -9,6 +9,7 @@
 #ifndef NE_NAMES_H
 #define NE_NAMES_H
 
+#include <cctype>
 #include <algorithm>
 #include <cstdint>
 #include <span>
@@ -1437,12 +1438,19 @@ inline constexpr NeOrdName kNeGdiNames[] = {
  */
 inline const char* ne_builtin_ordinal_name(std::string_view module, uint16_t ord)
 {
+    // R7: module names in the module reference table are compared without case.
+    auto is = [&](std::string_view m)
+    {
+        return module.size() == m.size() &&
+               std::equal(module.begin(), module.end(), m.begin(), [](char a, char b)
+                          { return std::toupper(static_cast<unsigned char>(a)) == b; });
+    };
     std::span<const NeOrdName> t;
-    if (module == "KERNEL")
+    if (is("KERNEL"))
         t = kNeKernelNames;
-    else if (module == "USER")
+    else if (is("USER"))
         t = kNeUserNames;
-    else if (module == "GDI")
+    else if (is("GDI"))
         t = kNeGdiNames;
     else
         return nullptr;
