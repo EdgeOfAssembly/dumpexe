@@ -157,6 +157,10 @@ PY
 "$BIN" -a --no-asm-file "$TD/roots.exe" > "$TD/roots.txt" 2>&1 || true
 check s2_reloc_root grep -qE '^ +0010  9AFFFF0000 +call +far KERNEL\.91  ; InitTask' "$TD/roots.txt"
 check s2_export_root grep -qE '^ +0020  90 ' "$TD/roots.txt"
+# R7: built-in ordinal names match the module name without case.
+python3 -c "import sys; d=bytearray(open(sys.argv[1],'rb').read()); i=d.find(b'\x06KERNEL'); d[i+1:i+7]=b'kernel'; open(sys.argv[2],'wb').write(d)" "$TD/roots.exe" "$TD/rootsl.exe"
+"$BIN" -a --no-asm-file "$TD/rootsl.exe" > "$TD/rootsl.txt" 2>&1 || true
+check r7_module_case grep -qE 'call +far kernel\.91  ; InitTask' "$TD/rootsl.txt"
 
 # P7 round trip: per-segment --uasm, uasm -bin, bin2ne, byte-identical.
 # shellcheck source=lib_uasm.sh

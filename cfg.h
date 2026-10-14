@@ -3508,13 +3508,16 @@ static inline CfgGraph cfg_build_sys(const std::vector<uint8_t>& data,
                                      uint16_t strategy,
                                      uint16_t interrupt)
 {
-    const bool was = cfg_record_flow();
-    cfg_set_record_flow(true);
+    // R6: restore the flag on every exit, exceptions included.
+    struct RecordFlowScope
+    {
+        bool was = cfg_record_flow();
+        RecordFlowScope() { cfg_set_record_flow(true); }
+        ~RecordFlowScope() { cfg_set_record_flow(was); }
+    } scope;
     const CfgLin extra[1] = {static_cast<CfgLin>(interrupt)};
-    CfgGraph g = cfg_build(data, strategy, 0, 0, 0, true, 20000, {}, 0, dx::Fmt::Sys,
-                           false, std::span<const CfgLin>(extra, 1));
-    cfg_set_record_flow(was);
-    return g;
+    return cfg_build(data, strategy, 0, 0, 0, true, 20000, {}, 0, dx::Fmt::Sys,
+                     false, std::span<const CfgLin>(extra, 1));
 }
 
 /**
