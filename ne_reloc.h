@@ -359,8 +359,9 @@ static inline void ne_print_exports(const NeModel& m, std::ostream& os)
 
 static inline void ne_print_relocs(const NeModel& m, std::ostream& os)
 {
-    size_t printed = 0;
-    constexpr size_t kMaxLines = 20000;
+    // S5: no line cap. Each listed record is 8 distinct file bytes (shared
+    // tables are aliased, counts are clipped to the file), so the output is
+    // bounded by the input size.
     for (size_t s = 0; s < m.relocs.size(); ++s)
     {
         if (ne_reloc_owner(m, s) != s)
@@ -371,21 +372,10 @@ static inline void ne_print_relocs(const NeModel& m, std::ostream& os)
         }
         if (m.relocs[s].empty())
             continue;
-        if (printed >= kMaxLines)
-        {
-            os << std::format("\n=== Relocations segment {} ({} records, not listed: output cap) ===\n",
-                              s + 1, m.relocs[s].size());
-            continue;
-        }
         os << std::format("\n=== Relocations segment {} ({} records) ===\n", s + 1, m.relocs[s].size());
         os << "  #  Type      Kind      Target                         Sites\n";
         for (const NeReloc& r : m.relocs[s])
         {
-            if (printed++ >= kMaxLines)
-            {
-                os << "  … (output cap reached)\n";
-                break;
-            }
             std::string sites;
             for (size_t k = 0; k < r.sites.size(); ++k)
             {

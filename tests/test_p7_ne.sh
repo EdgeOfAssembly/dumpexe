@@ -88,6 +88,34 @@ PY
 check shared_fast bash -c "timeout 10 '$BIN' -a --no-asm-file '$TD/shared.exe' >'$TD/shared.txt' 2>&1"
 check shared_alias grep -q 'Relocations segment 2: same table as segment 1' "$TD/shared.txt"
 check shared_capped test "$(stat -c %s "$TD/shared.txt")" -lt 50000000
+# S5: no line cap in -d; a module with > 20000 distinct records lists all of them.
+python3 - "$TD/many.exe" <<'PY'
+import struct, sys
+nseg, seglen, nrec = 3, 0x8000, 8000
+data_off = 0x400
+recs_len = 2 + nrec * 8
+size = data_off + nseg * (seglen + recs_len) + 0x200
+blob = bytearray(size)
+blob[0:2] = b"MZ"; struct.pack_into("<I", blob, 0x3C, 0x40)
+blob[0x40:0x42] = b"NE"
+struct.pack_into("<H", blob, 0x40 + 0x1C, nseg)
+struct.pack_into("<H", blob, 0x40 + 0x22, 0x40)
+struct.pack_into("<H", blob, 0x40 + 0x26, 0x40 + nseg * 8)
+struct.pack_into("<H", blob, 0x40 + 0x32, 4)
+blob[0x40 + 0x36] = 2
+p = data_off
+for k in range(nseg):
+    struct.pack_into("<HHHH", blob, 0x80 + k * 8, p >> 4, seglen, 0x100, seglen)
+    r = p + seglen
+    struct.pack_into("<H", blob, r, nrec)
+    for i in range(nrec):
+        # additive internal fixup, one site each
+        struct.pack_into("<BBHBBH", blob, r + 2 + i * 8, 3, 4, i * 4, 1, 0, i)
+    p = (r + recs_len + 15) & ~15
+open(sys.argv[1], "wb").write(blob[:p + 0x10])
+PY
+"$BIN" -d --no-asm-file "$TD/many.exe" > "$TD/many.txt" 2>&1 || true
+check relocs_no_cap bash -c "! grep -q 'output cap' '$TD/many.txt' && grep -q 'Relocations segment 3 (8000 records)' '$TD/many.txt' && grep -qE '^ *7999 ' '$TD/many.txt'"
 
 # P7 round trip: per-segment --uasm, uasm -bin, bin2ne, byte-identical.
 # shellcheck source=lib_uasm.sh
