@@ -644,7 +644,7 @@ static inline bool analyze_ne(const Options& opts,
                   << "  \"format\": \"ne\",\n"
                   << "  \"file\": \"" << json_escape(opts.filename) << "\",\n"
                   << "  \"e_lfanew\": " << ne.e_lfanew << ",\n"
-                  << "  \"linker\": \"" << static_cast<unsigned>(ne.hdr.ver)
+                  << "  \"linker_version\": \"" << static_cast<unsigned>(ne.hdr.ver)
                   << "." << static_cast<unsigned>(ne.hdr.rev) << "\",\n"
                   << "  \"exetyp\": " << static_cast<unsigned>(ne.hdr.exetyp)
                   << ",\n"

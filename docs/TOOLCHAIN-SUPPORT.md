@@ -186,3 +186,28 @@ See `games/tp55-re/RE-NOTES.md`.
 | Fixture | `games/catacomb/` |
 | Export | `-d` → **Turbo Pascal–oriented** TASM byte export (`.MODEL LARGE`, PROC/ENDP, `db` + comments) |
 | Note | Fixed false JWASM from 0xFC-only heuristic on TP EXEs |
+
+## Linker, memory model and Turbo Pascal evidence (MZ)
+
+Ground truth: the BC++ 3.1 / TASM 3.1, 4.1 / MASM 5.10 / TP 5.5, 7.0 build
+matrix (297 builds, private); every rule below scores 100% there with no
+mislabels.
+
+| Report | Rule | Notes |
+|---|---|---|
+| `Linker: Borland TLINK N.x` | 1Ch..1Fh = `01 00 FB vv`, relocation table ≥ 3Eh | major series only (`vv >> 4`): TLINK 5.1 writes 50h, 7.1.30.1 writes 71h |
+| `Linker: Microsoft LINK (likely)` | relocation table at 1Eh, word 0001h at 1Ch, no FBh | seen on LINK 3.64 (MASM 5.10) |
+| `Linker: Turbo Pascal linker (likely)` | relocation table at 1Ch **and** TP runtime evidence | 1Ch alone is common; no label without TP |
+| `… (packed by P: header may be the packer's; low confidence)` | an EXE packer was detected | EXEPACK keeps or rewrites the header |
+| `Debug info: Borland (bytes FB 52 …)` | `FB 52` right after the load image | TLINK `/v` (bcc `-v`, tasm `/zi` + tlink `/v`); hint |
+| `Memory model: X (Borland C++ 3.1-compatible startup)` | entry `BA imm16` (tiny: `8C CA`), then `2E 89 16 off B4 30` | off: tiny 0396h, small 02BEh, medium 02C4h, compact 028Bh, large 0291h, huge 0284h; otherwise nothing |
+| TP evidence: stack-check far call | main block `55 89 E5`, `31 C0` or `B8 imm16`, `9A` | TP 7.0 ($S+ default); TP 5.5 never; version still from the copyright year |
+
+No assembler (TASM vs MASM, or TASM version) is inferred from linked output:
+TASM 3.1 and 4.1 produce byte-identical EXEs and COMs.
+
+JSON (`--json`, MZ): `turbo_pascal` {detected, confidence, compiler, version,
+toolchain, product, main_stack_check, evidence}, `linker` {detected, linker,
+evidence, packed, packer, debug_trailer_offset (-1 = none)}, and
+`toolchain.memory_model` when a model was found. NE: `linker_version` is the
+NE header linker version string (e.g. "5.10").
