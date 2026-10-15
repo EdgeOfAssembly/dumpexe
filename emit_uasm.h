@@ -104,6 +104,11 @@ struct EmitInput
     std::set<uint32_t> weak_heads;
     /// U2: label NUL-terminated printable runs found in data as cstr_.
     bool scan_cstrings = false;
+    /// Segment layout: when set, the U2 scan only looks at [cstr_lo, cstr_hi).
+    uint32_t cstr_lo = 0;
+    uint32_t cstr_hi = UINT32_MAX;
+    /// Extra ranges [lo, hi) the scan also covers (far data segments).
+    std::vector<std::pair<uint32_t, uint32_t>> cstr_extra;
     /// U3: look for the C startup `call X; push ax; call exit` and comment
     /// X as a possible _main (a hint only; the label is not renamed).
     bool hint_main = false;
@@ -486,8 +491,14 @@ inline void UasmEmitter::scan_cstrings()
     {
         if (u.code)
             continue;
-        const uint32_t end = u.lin + u.size;
-        uint32_t p = u.lin;
+        std::vector<std::pair<uint32_t, uint32_t>> wins = in_.cstr_extra;
+        wins.emplace_back(in_.cstr_lo, in_.cstr_hi);
+        for (const auto& [wlo, whi] : wins)
+        {
+        if (u.lin + u.size <= wlo || u.lin >= whi)
+            continue;
+        const uint32_t end = std::min(u.lin + u.size, whi);
+        uint32_t p = std::max(u.lin, wlo);
         while (p < end)
         {
             if (!text(img[p]) || (p > u.lin && text(img[p - 1])))
@@ -522,6 +533,7 @@ inline void UasmEmitter::scan_cstrings()
                 }
             }
             p = q;
+        }
         }
     }
 }

@@ -211,3 +211,18 @@ toolchain, product, main_stack_check, evidence}, `linker` {detected, linker,
 evidence, packed, packer, debug_trailer_offset (-1 = none)}, and
 `toolchain.memory_model` when a model was found. NE: `linker_version` is the
 NE header linker version string (e.g. "5.10").
+
+## Segment layout (`--uasm-verified`, Borland C++ 3.1-compatible startup)
+
+When the c0 model rule matches (small, medium, compact, large, huge) and the
+`mov dx, DGROUP` word at the entry is relocated, its value is DGROUP's
+paragraph (matrix: 206/206 EXEs equal the MAP `_DATA` start; no CODE segment
+at or past it). DGROUP to the end of the load image is then data: no
+instruction head is printed there and simulation evidence is not seeded
+there. In huge model, TLINK places every FAR_DATA segment after all code
+(40/40 MAPs); from the lowest segment named by a decoded
+`mov ax, seg X` / `mov ds, ax` (relocated) up to DGROUP is far data. The
+C-string scan then only looks at DGROUP and that far data. Nothing is applied
+when the static graph already decoded an instruction in the range (header:
+`segment layout: not applied`). Code below DGROUP is still found by flow
+analysis only; tiny (COM) is not handled.

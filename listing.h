@@ -4476,6 +4476,87 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
     {
         std::cerr << "listing: --uasm-header: not an MZ image at its header end; image only\n";
     }
+    // Segment layout (BC++ 3.1-compatible startup): `mov dx, DGROUP` at the
+    // entry is a relocated word whose value is DGROUP's paragraph. Code lies
+    // below it in every model (huge's far data segments too, which are left
+    // to flow analysis). DGROUP to the end of the load image is data: no head
+    // there, and the C-string scan looks only there. Not applied when the
+    // static graph already decoded an instruction inside it.
+    int64_t layout_dgroup = -1;
+    size_t layout_conflicts = 0;
+    std::string layout_model;
+    std::vector<std::pair<uint32_t, uint32_t>> layout_far;
+    if (!uasm_com && entry_ip + 3 <= image.size() && in.reloc_at.count(entry_ip + 1))
+    {
+        layout_model = bc31_memory_model(image, entry_ip);
+        if (!layout_model.empty() && layout_model != "tiny")
+        {
+            const uint32_t dg = (image[entry_ip + 1] | (image[entry_ip + 2] << 8)) * 16u;
+            if (dg > entry_ip && dg < image.size())
+            {
+                for (const auto& [ip, b] : g.blocks)
+                    for (const CfgInsn& ci : b.insns)
+                        if (ci.ip + ci.size > dg)
+                            ++layout_conflicts;
+                if (layout_conflicts == 0)
+                {
+                    layout_dgroup = dg;
+                    in.force_data.emplace_back(dg, static_cast<uint32_t>(image.size()));
+                    in.cstr_lo = dg;
+                    // Far data segments below DGROUP: `mov ax, seg X` (relocated)
+                    // then `mov ds, ax` in decoded code names X. It runs to the
+                    // next relocation-derived base; used only when nothing in it
+                    // was decoded.
+                    std::set<uint32_t> bases{dg};
+                    for (uint32_t at : in.reloc_at)
+                        if (at + 1 < image.size())
+                            bases.insert((image[at] | (image[at + 1] << 8)) * 16u);
+                    std::set<uint32_t> fars;
+                    for (const auto& [ip, b] : g.blocks)
+                        for (const CfgInsn& ci : b.insns)
+                            if (ci.size == 3 && ci.bytes[0] == 0xB8 && in.reloc_at.count(ci.ip + 1) &&
+                                ci.ip + 5 <= image.size() && image[ci.ip + 3] == 0x8E && image[ci.ip + 4] == 0xD8)
+                                fars.insert((image[ci.ip + 1] | (image[ci.ip + 2] << 8)) * 16u);
+                    // TLINK puts every FAR_DATA segment after all code (matrix:
+                    // 40/40 huge MAPs), so from the lowest named one up to
+                    // DGROUP is far data when nothing there was decoded.
+                    std::erase_if(fars, [&](uint32_t lo) { return lo <= entry_ip || lo >= dg; });
+                    if (!fars.empty())
+                    {
+                        const uint32_t lo = *fars.begin();
+                        bool clash = false;
+                        for (const auto& [ip, b] : g.blocks)
+                            for (const CfgInsn& ci : b.insns)
+                                if (ci.ip < dg && ci.ip + ci.size > lo)
+                                    clash = true;
+                        if (!clash)
+                        {
+                            in.force_data.emplace_back(lo, dg);
+                            in.cstr_extra.emplace_back(lo, dg);
+                            layout_far.emplace_back(lo, dg);
+                            fars.clear();
+                        }
+                    }
+                    for (uint32_t lo : fars)
+                    {
+                        if (lo <= entry_ip || lo >= dg)
+                            continue;
+                        const uint32_t hi = *bases.upper_bound(lo);
+                        bool clash = false;
+                        for (const auto& [ip, b] : g.blocks)
+                            for (const CfgInsn& ci : b.insns)
+                                if (ci.ip < hi && ci.ip + ci.size > lo)
+                                    clash = true;
+                        if (clash)
+                            continue;
+                        in.force_data.emplace_back(lo, hi);
+                        in.cstr_extra.emplace_back(lo, hi);
+                        layout_far.emplace_back(lo, hi);
+                    }
+                }
+            }
+        }
+    }
     // Test hook: every code line raw db, so the shift tests must break.
     in.negative_control = std::getenv("DUMPEXE_UASM_NEGCONTROL") != nullptr;
     // P5 fixpoint: a bounded jump table whose entries the graph left in data
@@ -4626,7 +4707,7 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
         const int32_t ef = uasm_com ? 0 : static_cast<int32_t>(entry_frame);
         for (const auto& [lin, fr] : witnessed)
         {
-            if (lin < e.emit_lo() || lin >= n)
+            if (lin < e.emit_lo() || lin >= n || (layout_dgroup >= 0 && lin >= layout_dgroup))
                 continue;
             const int ui = e.unit_covering(lin);
             if (ui < 0)
@@ -4757,6 +4838,16 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
     if (em.value_pointers() + em.typed_strings() != 0)
         hdr.push_back(std::format("pointers and types: {} code pointer(s) through a register, {} typed string(s)",
                                   em.value_pointers(), em.typed_strings()));
+    if (layout_dgroup >= 0)
+        hdr.push_back(std::format("segment layout: DGROUP at {:05X} (relocated mov dx, DGROUP at the entry; {} model, "
+                                  "Borland C++ 3.1-compatible startup); {:05X}-{:05X} is data",
+                                  layout_dgroup, layout_model, layout_dgroup, image.size() - 1) +
+                      (layout_far.empty() ? std::string{}
+                                          : std::format("; far data {:05X}-{:05X} below it (from the lowest mov ax, seg X / mov ds, ax)",
+                                                        layout_far.front().first, layout_far.back().second - 1)));
+    else if (layout_conflicts != 0)
+        hdr.push_back(std::format("segment layout: not applied ({} decoded instruction(s) at or past DGROUP)",
+                                  layout_conflicts));
     if (em.scanned_cstrings() != 0)
         hdr.push_back(std::format("C strings: {} NUL-terminated string(s) found in data by scan (labeled cstr_; referenced ones keep their references)",
                                   em.scanned_cstrings()));
