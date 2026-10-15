@@ -102,6 +102,11 @@ struct EmitInput
     std::map<uint32_t, std::string> label_names;
     std::vector<std::pair<uint32_t, uint32_t>> force_data;
     std::set<uint32_t> weak_heads;
+    /// U2: label NUL-terminated printable runs found in data as cstr_.
+    bool scan_cstrings = false;
+    /// U3: look for the C startup `call X; push ax; call exit` and comment
+    /// X as a possible _main (a hint only; the label is not renamed).
+    bool hint_main = false;
 };
 
 /** @brief MASM hex: 0NNh with a leading 0 before A–F. */
@@ -203,6 +208,11 @@ private:
     std::string off_expr(uint32_t target, uint32_t frame);
     void collect_labels();
     void add_value_refs();
+    void scan_cstrings();
+    void find_main_hint();
+    std::set<uint32_t> cstr_scanned_;
+    int64_t main_hint_ = -1;
+    int64_t main_hint_exit_ = -1;
     void type_string(uint32_t lin, uint32_t len, const char* prefix);
     template <class FrameOk, class InData>
     void add_pointer_refs(const std::vector<size_t>& code, FrameOk&& frame_ok, InData&& in_data);
@@ -261,7 +271,12 @@ public:
     size_t value_tables() const { return n_tables_; }
     size_t value_strings() const { return n_strings_; }
     size_t value_pointers() const { return n_pointers_; }
-    size_t typed_strings() const { return str_len_.size(); }
+    size_t typed_strings() const { return str_len_.size() - cstr_scanned_.size(); }
+    /// U2: NUL-terminated strings found by the data scan (not by a reference).
+    size_t scanned_cstrings() const { return cstr_scanned_.size(); }
+    /// U3: possible _main (linear) and the exit call after it, or -1.
+    int64_t main_hint() const { return main_hint_; }
+    int64_t main_hint_exit() const { return main_hint_exit_; }
 };
 
 // ---------------------------------------------------------------------------
@@ -449,6 +464,92 @@ inline UasmEmitter::UasmEmitter(const CfgGraph& g, EmitInput in)
         }
     }
     add_value_refs();
+    if (in_.scan_cstrings)
+        scan_cstrings();
+    if (in_.hint_main)
+        find_main_hint();
+}
+
+/**
+ * @brief U2: type NUL-terminated text in data as `cstr_` strings.
+ *
+ * A run of at least 4 printable bytes (or TAB/LF/CR), starting at a data
+ * unit start or after a non-text byte and ending in a 0 byte, with at least
+ * 3 letters. Runs already typed by a reference, or crossing a relocated or
+ * table word, are left alone (type_string checks the latter).
+ */
+inline void UasmEmitter::scan_cstrings()
+{
+    const std::vector<uint8_t>& img = *in_.image;
+    auto text = [](uint8_t c) { return (c >= 0x20 && c < 0x7F) || c == 9 || c == 10 || c == 13; };
+    for (const EmitUnit& u : units_)
+    {
+        if (u.code)
+            continue;
+        const uint32_t end = u.lin + u.size;
+        uint32_t p = u.lin;
+        while (p < end)
+        {
+            if (!text(img[p]) || (p > u.lin && text(img[p - 1])))
+            {
+                ++p;
+                continue;
+            }
+            uint32_t q = p;
+            size_t alpha = 0;
+            while (q < end && text(img[q]))
+            {
+                if (std::isalpha(img[q]))
+                    ++alpha;
+                ++q;
+            }
+            if (q < end && img[q] == 0 && q - p >= 4 && alpha >= 3)
+            {
+                bool clash = false;
+                for (const auto& [sl, len] : str_len_)
+                    if (sl < q + 1 && sl + len > p)
+                        clash = true;
+                if (!clash)
+                {
+                    type_string(p, q + 1 - p, "cstr");
+                    if (str_len_.count(p))
+                        cstr_scanned_.insert(p);
+                }
+            }
+            p = q;
+        }
+    }
+}
+
+/**
+ * @brief U3: the C startup calls main, then passes its return value to exit:
+ *        `call X` / `push ax` / `call Y` (near or far). The first such run
+ *        within 4 KiB after the entry, with X a decoded head, makes X a
+ *        possible _main. Only a comment is printed; nothing is asserted.
+ */
+inline void UasmEmitter::find_main_hint()
+{
+    const std::vector<uint8_t>& img = *in_.image;
+    for (size_t i = 0; i + 2 < units_.size(); ++i)
+    {
+        const EmitUnit& a = units_[i];
+        const EmitUnit& b = units_[i + 1];
+        const EmitUnit& c = units_[i + 2];
+        if (!a.code || !b.code || !c.code || a.lin < in_.entry || a.lin >= in_.entry + 0x1000)
+            continue;
+        if (a.size != 3 || img[a.lin] != 0xE8 || b.lin != a.lin + 3 || b.size != 1 || img[b.lin] != 0x50 ||
+            c.lin != b.lin + 1)
+            continue;
+        if (!((c.size == 3 && img[c.lin] == 0xE8) || (c.size == 5 && img[c.lin] == 0x9A)))
+            continue;
+        const int16_t rel = static_cast<int16_t>(img[a.lin + 1] | (img[a.lin + 2] << 8));
+        const int64_t x = static_cast<int64_t>(a.lin) + 3 + rel;
+        if (x < 0 || unit_at(static_cast<uint32_t>(x)) < 0 || !units_[static_cast<size_t>(unit_at(static_cast<uint32_t>(x)))].code)
+            continue;
+        main_hint_ = x;
+        main_hint_exit_ = c.lin;
+        return;
+    }
 }
 
 /**
@@ -1010,6 +1111,9 @@ inline void UasmEmitter::collect_labels()
             frame_bases_.insert(b);
         }
     }
+    // U2 scanned strings carry their cstr_ label.
+    for (uint32_t s : cstr_scanned_)
+        labels_.insert(s);
     // P4 table words: targets and frames are labels.
     for (const auto& [at, w] : off_words_)
     {
@@ -1936,8 +2040,9 @@ inline std::string UasmEmitter::render(const std::vector<std::string>& header, i
                     if (shift_at > static_cast<int64_t>(p) && shift_at < static_cast<int64_t>(se))
                         se = static_cast<uint32_t>(shift_at);
                     // Chunked: UASM rejects very long source lines.
+                    const char* kind = cstr_scanned_.count(p) ? "string (NUL-terminated, data scan)" : "string";
                     for (uint32_t c = p; c < se; c += 64)
-                        put(std::format("    db {}\t; {:05X}: string", string_text(c, std::min<uint32_t>(64, se - c)), c));
+                        put(std::format("    db {}\t; {:05X}: {}", string_text(c, std::min<uint32_t>(64, se - c)), c, kind));
                     p = se;
                     continue;
                 }
@@ -1953,6 +2058,9 @@ inline std::string UasmEmitter::render(const std::vector<std::string>& header, i
             }
             continue;
         }
+        if (static_cast<int64_t>(u.lin) == main_hint_)
+            put(std::format("; hint: possibly _main (C startup calls it, then passes AX to the call at {:05X}); "
+                            "not verified", static_cast<uint32_t>(main_hint_exit_)));
         if (labels_.count(u.lin))
         {
             if (frame_bases_.count(u.lin) && u.lin > in_.emit_lo && u.lin % 16 == 0)

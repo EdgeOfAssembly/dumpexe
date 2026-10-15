@@ -795,12 +795,14 @@ struct Options {
         }
         if (simExploreSet && !evidence_sim)
         {
-            std::cerr << "Error: --sim-paths, --sim-fork-depth and --sim-total-insns require --evidence=sim\n";
+            std::cerr << "Error: --sim-paths, --sim-fork-depth and --sim-total-insns require --evidence=sim\n"
+                      << "  Sim evidence needs the full option chain: --uasm --uasm-verified --evidence=sim --sim-paths=N -o OUT.asm FILE\n";
             return false;
         }
         if (evidence_sim && !uasm_verified)
         {
-            std::cerr << "Error: --evidence=sim requires --uasm-verified\n";
+            std::cerr << "Error: --evidence=sim requires --uasm-verified\n"
+                      << "  Sim evidence needs the full option chain: --uasm --uasm-verified --evidence=sim --sim-paths=N -o OUT.asm FILE\n";
             return false;
         }
         if (uasm_header && !uasm_verified)
@@ -811,6 +813,8 @@ struct Options {
         if (uasm_verified && !uasm)
         {
             std::cerr << "Error: --uasm-verified requires --uasm\n";
+            if (evidence_sim)
+                std::cerr << "  Sim evidence needs the full option chain: --uasm --uasm-verified --evidence=sim --sim-paths=N -o OUT.asm FILE\n";
             return false;
         }
         if (uasm_verify && !uasm)
