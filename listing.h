@@ -4460,6 +4460,8 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
     if (!uasm_com)
         in.reloc_at = cfg_reloc_sites(image, relocs);
     in.source_name = source_name;
+    in.scan_cstrings = true;
+    in.hint_main = true;
     if (opts.uasm_header && !uasm_com && file != nullptr && file->size() >= 0x1C &&
         (*file)[0] == 'M' && (*file)[1] == 'Z' && image_file_off != 0 &&
         image_file_off == static_cast<size_t>((*file)[8] | ((*file)[9] << 8)) * 16u)
@@ -4755,6 +4757,14 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
     if (em.value_pointers() + em.typed_strings() != 0)
         hdr.push_back(std::format("pointers and types: {} code pointer(s) through a register, {} typed string(s)",
                                   em.value_pointers(), em.typed_strings()));
+    if (em.scanned_cstrings() != 0)
+        hdr.push_back(std::format("C strings: {} NUL-terminated string(s) found in data (cstr_, by scan, unreferenced)",
+                                  em.scanned_cstrings()));
+    if (em.main_hint() >= 0)
+        hdr.push_back(std::format("hint: possibly _main at {} (C startup pattern: call, push ax, exit call at {:05X}); "
+                                  "not verified, label not renamed",
+                                  em.lbl(static_cast<uint32_t>(em.main_hint())),
+                                  static_cast<uint32_t>(em.main_hint_exit())));
     if (em.input().mz_header)
         hdr.push_back(std::format("strategy C: MZ header and file tail in the source; {} header field(s) literal",
                                   em.header_literals().size()));
