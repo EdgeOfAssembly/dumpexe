@@ -50,9 +50,9 @@ txt() { "$BIN" -a --no-asm-file --no-repack "$TD/$1" 2>&1 || true; }
 js() { "$BIN" --json "$TD/$1" 2>/dev/null || true; }
 model() { txt "$1" | sed -n 's/^Memory model: //p'; }
 for m in small medium compact large huge; do
-  check "model_$m" test "$(model bc_$m.exe)" = "$m (BC++ 3.1 startup)"
+  check "model_$m" test "$(model bc_$m.exe)" = "$m (Borland C++ 3.1-compatible startup)"
 done
-check model_tiny_com test "$(model bc_tiny.com)" = "tiny (BC++ 3.1 startup)"
+check model_tiny_com test "$(model bc_tiny.com)" = "tiny (Borland C++ 3.1-compatible startup)"
 for f in bc_wrong.exe bc_nob430.exe bc_tinyoff.exe bc_tiny_bad.com; do check "model_none_$f" test -z "$(model $f)"; done
 check model_json bash -c "'$BIN' --json '$TD/bc_large.exe' | grep -q '\"memory_model\": \"large\"'"
 check model_json_absent bash -c "! '$BIN' --json '$TD/bc_wrong.exe' | grep -q memory_model"

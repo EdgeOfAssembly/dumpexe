@@ -458,8 +458,9 @@ Reverse-walk depth for the load and I/O graph (default 6).
 Maximum path and FCB seeds in the load graph (default 40).
 .TP
 .B \-\-no-toolchain
-Disable JWASM 1.8, COM-in-EXE, CuteMouse, and packer detection
-(default on). Also skips unpack.
+Disable JWASM 1.8, COM-in-EXE, CuteMouse, Borland C++ and Turbo Pascal,
+linker, memory model, and packer detection (default on). Also skips unpack.
+See TOOLCHAIN DETECTION.
 .TP
 .B \-\-no-dos-extender
 Disable DOS extender and DPMI stub detection (default on).
@@ -705,6 +706,46 @@ Best-effort emulation of first ~20 instructions showing register changes.
 Not a full emulator — focuses on common register operations for quick insight.
 .RE
 
+.SH TOOLCHAIN DETECTION
+.SS Linker (MZ header)
+A
+.B Linker:
+line comes from header bytes 1Ch..1Fh.
+.B Borland TLINK N.x
+needs 01 00 FB vv with the relocation table at 3Eh or later; only the
+major series (vv >> 4) is reported, never an exact version.
+.B Microsoft LINK (likely)
+needs the relocation table at 1Eh and word 0001h at 1Ch.
+.B Turbo Pascal linker (likely)
+needs the relocation table at 1Ch and Turbo Pascal runtime evidence.
+The assembler is never inferred.
+When an EXE packer is detected the label adds
+.I (packed by P: header may be the packer's; low confidence) .
+.B Debug info: Borland
+is a hint when bytes FB 52 follow the load image (TLINK /v).
+.SS Memory model
+.B Memory model: X (Borland C++ 3.1-compatible startup)
+is printed only when the entry matches the BC++ 3.1 c0 store
+mov cs:[DGROUP@],dx (2E 89 16 imm16, then B4 30) with the operand of that
+model (tiny 0396h after 8C CA; small 02BEh, medium 02C4h, compact 028Bh,
+large 0291h, huge 0284h after BA imm16). Otherwise nothing is printed.
+.SS Turbo Pascal
+The version comes from the RTL copyright year. A main block that opens with
+the stack-check far call (55 89 E5, 31 C0 or B8 imm16, 9A) adds TP 7.0-style
+evidence; TP 5.5 has none and $S- removes it. The TP export's
+.I memory model
+comment is the TASM .model for the export only.
+.SS JSON keys
+MZ reports add
+.B turbo_pascal
+(detected, confidence, compiler, version, toolchain, product,
+main_stack_check, evidence) and
+.B linker
+(detected, linker, evidence, packed, packer, debug_trailer_offset;
+debug_trailer_offset is \-1 when absent), and
+.B toolchain.memory_model
+when a model was found. NE reports give the header linker version as
+.BR linker_version .
 .SH STATIC vs DYNAMIC ANALYSIS
 .B Static Analysis (-d):
 .RS

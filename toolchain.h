@@ -1309,7 +1309,7 @@ static inline void toolchain_print_report(const ToolchainReport& rep)
     if (!rep.compiler_fp.empty())
         std::cout << std::format("Compiler:    {}\n", rep.compiler_fp);
     if (!rep.memory_model.empty())
-        std::cout << std::format("Memory model: {} (BC++ 3.1 startup)\n", rep.memory_model);
+        std::cout << std::format("Memory model: {} (Borland C++ 3.1-compatible startup)\n", rep.memory_model);
     if (!rep.assembler.empty())
     {
         std::cout << std::format("Assembler:   {} {}\n", rep.assembler,

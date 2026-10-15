@@ -205,6 +205,9 @@ case_trunc_code() {
 check dup_code case_dup_code
 check trunc_code case_trunc_code
 
+# NE JSON: the header linker version is "linker_version"; "linker" stays the MZ object.
+check ne_json_linker_version bash -c "'$BIN' --json '$TD/ip0.exe' | grep -qE '\"linker_version\": \"[0-9]+\\.[0-9]+\"'"
+check ne_json_no_linker_string bash -c "! '$BIN' --json '$TD/ip0.exe' | grep -q '\"linker\":'"
 echo "---"
 echo "p0_ne passed=$pass failed=$fail"
 [[ "$fail" -eq 0 ]]
