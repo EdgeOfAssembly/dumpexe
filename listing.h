@@ -923,7 +923,7 @@ static inline std::string listing_emit_turbo_pascal(const CfgGraph& g,
     else if (tp.far_calls_entry >= 4 || tp.frame_5589e5 + tp.frame_558bec >= 40)
     {
         model = "large"; // typical TP program with units / far calls
-        model_why = " (auto: TP far-call / dense frames → large)";
+        model_why = " (TASM .model for this export only; Turbo Pascal has no C memory model: far code per unit, one data segment)";
     }
     else
     {

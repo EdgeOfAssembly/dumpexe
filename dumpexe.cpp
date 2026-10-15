@@ -402,6 +402,8 @@ int main(int argc, char* argv[]) {
         {
             tc_rep = toolchain_analyze(fileData, header,
                                        static_cast<size_t>(sizes.headerSizeBytes));
+            tc_rep.memory_model =
+                bc31_memory_model(fileData, static_cast<size_t>(sizes.entryPointFileOffset));
             if (human)
                 toolchain_print_report(tc_rep);
         }
@@ -412,8 +414,13 @@ int main(int argc, char* argv[]) {
                 toolchain_print_report(tc_rep);
         }
         // Linker fingerprint (header bytes 1Ch..1Fh); TPC needs TP runtime evidence.
-        if (opts.toolchainDetect && human)
-            linker_print_report(linker_detect(fileData, tp_rep.detected));
+        LinkerReport ln_rep{};
+        if (opts.toolchainDetect)
+        {
+            ln_rep = linker_detect(fileData, tp_rep.detected, tc_rep.packer);
+            if (human)
+                linker_print_report(ln_rep);
+        }
 
         std::vector<RelocEntry> relocs;
         if (human)
@@ -594,6 +601,8 @@ int main(int argc, char* argv[]) {
             {
                 rep.toolchain = std::move(tc_rep);
                 rep.toolchain_ran = true;
+                rep.turbo_pascal_obj = turbo_pascal_json(tp_rep);
+                rep.linker_obj = linker_json(ln_rep);
             }
             rep.strings = std::move(strs);
             rep.strings_ran = true;
@@ -656,7 +665,10 @@ int main(int argc, char* argv[]) {
 
         ToolchainReport tc_rep{};
         if (opts.toolchainDetect)
+        {
             tc_rep = toolchain_fingerprints_only(fileData);
+            tc_rep.memory_model = bc31_memory_model(fileData, entry_offset);
+        }
 
         const bool com_json_listing =
             opts.jsonOut &&

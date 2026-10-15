@@ -23,6 +23,8 @@
 #include <string_view>
 #include <vector>
 
+#include "json_escape.h"
+
 #include "exe.h"
 #include "options.h"
 
@@ -42,6 +44,7 @@ struct TurboPascalReport
     size_t frame_558bec = 0;
     size_t far_calls_entry = 0;
 
+    bool main_stack_check = false; ///< main block opens with the TP 7.0 stack-check call
     std::vector<std::string> evidence;
 };
 
@@ -265,6 +268,29 @@ static inline TurboPascalReport turbo_pascal_analyze(const std::vector<uint8_t>&
     std::string year_evidence;
     const std::string year_ver = tp_version_from_copyright(fileData, year_evidence);
 
+    // Main block: far calls to the unit inits, then push bp; mov bp,sp. TP 7.0
+    // ($S+, the default) then calls the stack check: xor ax,ax | mov ax,imm16
+    // followed by a far call. TP 5.5 has no such call (matrix: 11/11 each).
+    {
+        size_t p = entry_file_off;
+        while (p + 5 <= fileData.size() && fileData[p] == 0x9A)
+            p += 5;
+        if (p + 3 <= fileData.size() && fileData[p] == 0x55 && fileData[p + 1] == 0x89 &&
+            fileData[p + 2] == 0xE5)
+        {
+            const size_t q = p + 3;
+            if ((q + 3 <= fileData.size() && fileData[q] == 0x31 && fileData[q + 1] == 0xC0 &&
+                 fileData[q + 2] == 0x9A) ||
+                (q + 4 <= fileData.size() && fileData[q] == 0xB8 && fileData[q + 3] == 0x9A))
+            {
+                rep.main_stack_check = true;
+                rep.evidence.push_back(std::format(
+                    "main block at file 0x{:X} starts with a stack-check far call (TP 7.0 style; "
+                    "TP 5.5 has none)", p));
+            }
+        }
+    }
+
     if (score >= 3.5 && has_rte && !is_mt)
     {
         rep.detected = true;
@@ -312,6 +338,22 @@ static inline void turbo_pascal_print_report(const TurboPascalReport& rep)
             std::cout << "  - " << e << "\n";
     }
     std::cout << "=== End Turbo Pascal ===\n";
+}
+
+/** @brief JSON object for the Turbo Pascal result. */
+static inline std::string turbo_pascal_json(const TurboPascalReport& rep)
+{
+    if (!rep.detected)
+        return "{\"detected\": false}";
+    std::string ev;
+    for (size_t i = 0; i < rep.evidence.size(); ++i)
+        ev += std::format("{}\"{}\"", i ? ", " : "", json_escape(rep.evidence[i]));
+    return std::format("{{\"detected\": true, \"confidence\": {:.3f}, \"compiler\": \"{}\", "
+                       "\"version\": \"{}\", \"toolchain\": \"{}\", \"product\": \"{}\", "
+                       "\"main_stack_check\": {}, \"evidence\": [{}]}}",
+                       rep.confidence, json_escape(rep.compiler), json_escape(rep.version),
+                       json_escape(rep.toolchain), json_escape(rep.product),
+                       rep.main_stack_check ? "true" : "false", ev);
 }
 
 #endif // TURBO_PASCAL_H
