@@ -63,6 +63,9 @@ struct JsonReport
 
     ToolchainReport toolchain{};
     bool toolchain_ran = false;
+    /// Pre-rendered objects (MZ only); empty prints null.
+    std::string turbo_pascal_obj;
+    std::string linker_obj;
 
     std::vector<ExtractedString> strings;
     bool strings_ran = false;
@@ -278,6 +281,8 @@ struct JsonReport
             os << std::format("    \"tool_path_hint\": \"{}\",\n",
                               json_escape(toolchain.tool_path_hint));
             os << std::format("    \"fc_pad_runs\": {},\n", toolchain.fc_pad_runs);
+            if (!toolchain.memory_model.empty())
+                os << std::format("    \"memory_model\": \"{}\",\n", json_escape(toolchain.memory_model));
             os << "    \"evidence\": [\n";
             for (size_t i = 0; i < toolchain.evidence.size(); ++i)
             {
@@ -290,6 +295,11 @@ struct JsonReport
         }
         os << ",\n";
 
+        if (format == "mz")
+        {
+            os << "  \"turbo_pascal\": " << (turbo_pascal_obj.empty() ? "null" : turbo_pascal_obj) << ",\n";
+            os << "  \"linker\": " << (linker_obj.empty() ? "null" : linker_obj) << ",\n";
+        }
         // Strings
         os << "  \"strings\": ";
         if (!strings_ran)

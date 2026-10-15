@@ -71,8 +71,48 @@ struct ToolchainReport
 
     size_t fc_pad_runs = 0; ///< runs of ≥2× 0xFC (JWASM even-pad hint)
 
+    std::string memory_model;      ///< BC++ 3.1 startup model ("small" …), else empty
+
     std::vector<std::string> evidence;
 };
+
+/**
+ * @brief BC++ 3.1 memory model from the c0 startup at the entry.
+ *
+ * c0 stores DGROUP with `mov cs:[DGROUP@], dx` (2E 89 16 imm16) before
+ * `mov ah, 30h` (B4 30). The imm16 is fixed per model in the BC 3.1 RTL;
+ * tiny starts `mov dx, cs` (8C CA), the others `mov dx, DGROUP` (BA imm16).
+ * @return model name, or empty when the pattern does not match exactly.
+ */
+static inline std::string bc31_memory_model(const std::vector<uint8_t>& f, size_t entry)
+{
+    size_t p = entry;
+    bool tiny_head = false;
+    if (p + 2 <= f.size() && f[p] == 0x8C && f[p + 1] == 0xCA)
+    {
+        tiny_head = true;
+        p += 2;
+    }
+    else if (p + 3 <= f.size() && f[p] == 0xBA)
+        p += 3;
+    else
+        return {};
+    if (p + 7 > f.size() || f[p] != 0x2E || f[p + 1] != 0x89 || f[p + 2] != 0x16 || f[p + 5] != 0xB4 ||
+        f[p + 6] != 0x30)
+        return {};
+    const uint16_t off = static_cast<uint16_t>(f[p + 3] | (f[p + 4] << 8));
+    if (tiny_head)
+        return off == 0x0396 ? "tiny" : std::string{};
+    switch (off)
+    {
+    case 0x02BE: return "small";
+    case 0x02C4: return "medium";
+    case 0x028B: return "compact";
+    case 0x0291: return "large";
+    case 0x0284: return "huge";
+    default: return {};
+    }
+}
 
 //=============================================================================
 // Helpers
@@ -1268,6 +1308,8 @@ static inline void toolchain_print_report(const ToolchainReport& rep)
         std::cout << std::format("Packer:      {}\n", rep.packer);
     if (!rep.compiler_fp.empty())
         std::cout << std::format("Compiler:    {}\n", rep.compiler_fp);
+    if (!rep.memory_model.empty())
+        std::cout << std::format("Memory model: {} (BC++ 3.1 startup)\n", rep.memory_model);
     if (!rep.assembler.empty())
     {
         std::cout << std::format("Assembler:   {} {}\n", rep.assembler,

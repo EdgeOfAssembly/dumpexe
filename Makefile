@@ -214,6 +214,7 @@ test: dumpexe bin2exe bin2ne tools/bin2exe/test_header test_p1_model test_p1_flo
 	@$(call run_suite,tests/test_p5_fixpoint.sh)
 	@$(call run_suite,tests/test_u1_u3.sh)
 	@$(call run_suite,tests/test_linker.sh)
+	@$(call run_suite,tests/test_toolchain_fp.sh)
 	@$(call run_suite,tests/test_p5_tools.sh)
 	@$(call run_suite,tests/test_p6_sim.sh)
 	@$(call run_suite,tests/test_p7_ne.sh)

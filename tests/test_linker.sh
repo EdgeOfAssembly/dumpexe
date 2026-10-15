@@ -45,6 +45,6 @@ check tpc test "$(run tp)" = "Turbo Pascal linker (likely)"
 check tpc_needs_runtime test -z "$(run tpnort)"
 check bad_series test -z "$(run fbbad)"
 for f in tl5 tl7 ms; do check no_assembler_guess_$f bash -c "! '$BIN' -a --no-asm-file --no-repack '$TD/$f.exe' 2>&1 | grep -qiE 'TASM|MASM|Assembler:'"; done
-check no_json_change bash -c "! '$BIN' --json '$TD/tl5.exe' 2>&1 | grep -qi tlink"
+check json_linker bash -c "'$BIN' --json '$TD/tl5.exe' 2>&1 | grep -qF '\"linker\": \"Borland TLINK 5.x\"'"
 echo "linker passed=$pass failed=$fail"
 [[ $fail -eq 0 ]]
