@@ -37,7 +37,12 @@ rc=0; (cd "$TD" && "$BIN" --uasm-verified t.com >/dev/null 2>"$TD/plain.err") ||
 check u1_plain_rc test "$rc" -ne 0
 check u1_plain_no_chain bash -c "! grep -qF -- 'evidence=sim' '$TD/plain.err'"
 
-UASM_BIN="$(uasm_resolve)" || { echo "SKIP U2/U3 (no uasm)"; echo "u1_u3 passed=$pass failed=$fail"; [[ $fail -eq 0 ]]; exit; }
+N_UASM_CHECKS=17
+UASM_BIN="$(uasm_resolve)" || {
+  echo "SKIP $N_UASM_CHECKS U2/U3 checks: no uasm on PATH (set UASM=/path/to/uasm to run them)"
+  echo "u1_u3 passed=$pass failed=$fail skipped=$N_UASM_CHECKS"
+  [[ $fail -eq 0 ]]; exit
+}
 cat > "$TD/c.asm" <<'ASM'
 _TEXT segment para public use16 'CODE'
 assume cs:_TEXT, ds:_TEXT
@@ -86,5 +91,21 @@ check u3_target bash -c "grep -A1 '^; hint: possibly _main (' '$O' | grep -q '^L
 printf '\xb4\x4c\xcd\x21' > "$TD/n.com"
 (cd "$TD" && "$BIN" --uasm --uasm-verified --uasm-bin "$UASM_BIN" -o n_out.asm n.com >/dev/null 2>&1) || true
 check u3_no_pattern bash -c "! grep -q 'possibly _main' '$TD/n_out.asm'"
+# F1: a cstr never starts on (or covers) a relocated segment word. The
+# word at image 0Fh is 01h 'Q' and "QRSTU",0 follows: printable from 'Q'.
+python3 - "$TD/r.exe" <<'PY'
+import struct, sys
+img = bytes([0xB4, 0x4C, 0xCD, 0x21, 0]) + b'Good text\0' + bytes([0x01]) + b'QRSTU\0'
+img += bytes(-len(img) % 16)
+hdr = struct.pack('<14H', 0x5A4D, (32 + len(img)) % 512, (32 + len(img) + 511) // 512, 1, 2, 0, 0xFFFF,
+                  len(img) // 16, 0x100, 0, 0, 0, 0x1C, 0) + struct.pack('<HH', 0x0F, 0) + bytes(32 - 0x20)
+open(sys.argv[1], 'wb').write(hdr + img)
+PY
+(cd "$TD" && "$BIN" --uasm --uasm-verified --uasm-bin "$UASM_BIN" -o r_out.asm r.exe >/dev/null 2>&1) || true
+R="$TD/r_out.asm"
+check f1_verified grep -q '^; VERIFIED identical' "$R"
+check f1_reloc_symbolic grep -qF '; relocations: 1 of 1 segment words symbolic, 0 in undecoded data' "$R"
+check f1_no_cstr_on_reloc bash -c "! grep -qE '^cstr_0001[01]:' '$R'"
+check f1_good_string grep -qE '^cstr_00005:' "$R"
 echo "u1_u3 passed=$pass failed=$fail"
 [[ $fail -eq 0 ]]
