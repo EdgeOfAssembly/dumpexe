@@ -4758,7 +4758,7 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
         hdr.push_back(std::format("pointers and types: {} code pointer(s) through a register, {} typed string(s)",
                                   em.value_pointers(), em.typed_strings()));
     if (em.scanned_cstrings() != 0)
-        hdr.push_back(std::format("C strings: {} NUL-terminated string(s) found in data (cstr_, by scan, unreferenced)",
+        hdr.push_back(std::format("C strings: {} NUL-terminated string(s) found in data by scan (labeled cstr_; referenced ones keep their references)",
                                   em.scanned_cstrings()));
     if (em.main_hint() >= 0)
         hdr.push_back(std::format("hint: possibly _main at {} (C startup pattern: call, push ax, exit call at {:05X}); "

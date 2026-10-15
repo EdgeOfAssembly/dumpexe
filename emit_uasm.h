@@ -505,7 +505,12 @@ inline void UasmEmitter::scan_cstrings()
             }
             if (q < end && img[q] == 0 && q - p >= 4 && alpha >= 3)
             {
+                // F1: no byte of a relocated (or table) word may lie in the
+                // run or its NUL; a word starting at p-1 covers p.
                 bool clash = false;
+                for (uint32_t k = (p > 0 ? p - 1 : p); k <= q; ++k)
+                    if (in_.reloc_at.count(k) || off_words_.count(k))
+                        clash = true;
                 for (const auto& [sl, len] : str_len_)
                     if (sl < q + 1 && sl + len > p)
                         clash = true;
