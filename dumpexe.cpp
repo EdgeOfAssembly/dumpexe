@@ -264,6 +264,7 @@ static inline void mz_cfg_window(const MZHeader& header,
 }
 
 #include "unpack_integrate.h"
+#include "linker.h"
 
 int main(int argc, char* argv[]) {
     Options opts;
@@ -410,6 +411,9 @@ int main(int argc, char* argv[]) {
             if (human)
                 toolchain_print_report(tc_rep);
         }
+        // Linker fingerprint (header bytes 1Ch..1Fh); TPC needs TP runtime evidence.
+        if (opts.toolchainDetect && human)
+            linker_print_report(linker_detect(fileData, tp_rep.detected));
 
         std::vector<RelocEntry> relocs;
         if (human)
