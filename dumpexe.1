@@ -290,6 +290,30 @@ or relocated far callees (three levels) reaches
 with AH=4Ch.
 The hint is a comment only; no label is renamed.
 .PP
+Segment layout rule
+.RB ( \-\-uasm\-verified
+only, Borland C++ 3.1-compatible startup, not tiny):
+the entry's relocated
+.B "mov dx, DGROUP"
+gives DGROUP (the value times 16).
+From DGROUP through the end of the load image is forced to data, and the
+C-string scan looks only there, but only when the decoder found no
+instruction in that range; otherwise the header says
+.BR "; segment layout: not applied (N decoded instruction(s) at or past DGROUP)" .
+In the huge model, far data from the lowest segment named by a relocated
+.B "mov ax, seg X"
+/
+.B "mov ds, ax"
+up to DGROUP is also data when nothing there was decoded.
+The header line
+.B "; segment layout: DGROUP at ..."
+reports it.
+These built-in ranges are not counted in the
+.B "; hints:"
+line, which counts only
+.B \-\-hints
+file entries.
+.PP
 A relocated
 .B "mov r16, imm16"
 (opcodes B8 through BF) whose paragraph frame lies in this image is printed as

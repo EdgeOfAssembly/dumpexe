@@ -4557,6 +4557,8 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
             }
         }
     }
+    // Ranges forced by the built-in layout rule; not user hints (header).
+    const size_t layout_ranges = in.force_data.size();
     // Test hook: every code line raw db, so the shift tests must break.
     in.negative_control = std::getenv("DUMPEXE_UASM_NEGCONTROL") != nullptr;
     // P5 fixpoint: a bounded jump table whose entries the graph left in data
@@ -4822,9 +4824,10 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
                                   simw.insns, simw.total_cap ? " (total cap hit)" : "",
                                   simw.faithful.size(), simw.likely.size(),
                                   opts.strict ? " (likely not seeded: --strict)" : ""));
-    if (!in.label_names.empty() || !in.force_data.empty() || !hint_code.empty())
+    const size_t hint_data = in.force_data.size() - layout_ranges;
+    if (!opts.hints_path.empty() || !in.label_names.empty() || hint_data != 0 || !hint_code.empty())
         hdr.push_back(std::format("hints: {} code, {} data range(s), {} label name(s) from {}", hint_code.size(),
-                                  in.force_data.size(), in.label_names.size(), opts.hints_path));
+                                  hint_data, in.label_names.size(), opts.hints_path));
     if (opts.strict)
         hdr.push_back(std::format("strict: {} instruction(s) with only Likely/Hint evidence printed as data",
                                   strict_dropped));

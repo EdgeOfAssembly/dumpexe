@@ -75,5 +75,11 @@ check huge_dgroup_str grep -qF "db 'Hello, DGROUP', 0h" "$TD/huge.asm"
 check conflict_not_applied grep -qE '^; segment layout: not applied \([0-9]+ decoded instruction' "$TD/conflict.asm"
 check conflict_code_kept grep -qE 'mov ah, 4Ch.*; [0-9A-F]{5}: B4 4C' "$TD/conflict.asm"
 check small_relocs grep -qF '; relocations: 1 of 1 segment words symbolic' "$TD/small.asm"
+# L1 (verify-34420d6): layout ranges are not user hints.
+for f in small large huge; do check "${f}_no_hints_line" bash -c "! grep -q '^; hints:' '$TD/$f.asm'"; done
+printf 'data 10 2\n' > "$TD/h.txt"
+(cd "$TD" && "$BIN" --uasm --uasm-verified --uasm-bin "$UASM_BIN" --hints=h.txt -o smallh.asm small.exe >/dev/null 2>&1) || true
+check hints_user_count grep -qF '; hints: 0 code, 1 data range(s), 0 label name(s) from h.txt' "$TD/smallh.asm"
+check hints_layout_still grep -qE '^; segment layout: DGROUP at' "$TD/smallh.asm"
 echo "segment_layout passed=$pass failed=$fail"
 [[ $fail -eq 0 ]]
