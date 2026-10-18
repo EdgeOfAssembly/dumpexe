@@ -974,10 +974,15 @@ inline void UasmEmitter::add_value_refs()
                     count = (count + 1) / 2;
                 break;
             }
-            // Value-mask bound (FP emulator), only when no compare bounds
-            // the index: see mask_bound.
-            if (csp && count < 0)
-                count = mask_bound(code, j, static_cast<uint8_t>(b[2] & 7));
+            // Value-mask bound (FP emulator; see mask_bound). It is a proven
+            // upper bound, so with a compare bound too the smaller one wins
+            // (the compare scan does not check which register it compares).
+            if (csp)
+            {
+                const int64_t mb = mask_bound(code, j, static_cast<uint8_t>(b[2] & 7));
+                if (mb > 0 && (count < 0 || mb < count))
+                    count = mb;
+            }
             if (count > 0 && count <= 256)
             {
                 const uint32_t T = static_cast<uint32_t>(fr + disp);
