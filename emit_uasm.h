@@ -500,6 +500,9 @@ inline UasmEmitter::UasmEmitter(const CfgGraph& g, EmitInput in)
  *    lower case of two or more letters (`ChDir`, `getDate`, `error`); a
  *    lone letter is fine (`-w-`);
  *  - it is not a period-2 repetition (`dJdJdJ`, `tMtMtM`, `r0r0r0`).
+ * printf conversions (`%s`, `%-5.2lf`, `%*d`, `%%`) are read as one blank
+ * each before these tests, and a run with one skips the repetition test,
+ * so `%s%s%s` passes.
  * `$RPj`, `6kIj`, `}SDH`, `pNzK` fail; `TEMP`, `(null)`, `ChDir`, `READ$`,
  * `^PgUp` and `XXXXXX` pass.
  */
@@ -507,6 +510,53 @@ inline bool cstr_plausible(const uint8_t* s, size_t len)
 {
     if (len >= 8)
         return true;
+    // printf conversions (`%s`, `%-08.3lX`, `%*d`, `%%`) count as one
+    // blank each; a run with one passes the period-2 test (`%s%s%s`).
+    uint8_t buf[8];
+    size_t bl = 0;
+    bool spec = false;
+    for (size_t i = 0; i < len;)
+    {
+        if (s[i] == '%')
+        {
+            size_t k = i + 1;
+            if (k < len && s[k] == '%')
+            {
+                buf[bl++] = ' ';
+                spec = true;
+                i = k + 1;
+                continue;
+            }
+            while (k < len && std::string_view("-+ #0").find(static_cast<char>(s[k])) != std::string_view::npos)
+                ++k;
+            if (k < len && s[k] == '*')
+                ++k;
+            else
+                while (k < len && std::isdigit(s[k]))
+                    ++k;
+            if (k < len && s[k] == '.')
+            {
+                ++k;
+                if (k < len && s[k] == '*')
+                    ++k;
+                else
+                    while (k < len && std::isdigit(s[k]))
+                        ++k;
+            }
+            if (k < len && std::string_view("hlLNF").find(static_cast<char>(s[k])) != std::string_view::npos)
+                ++k;
+            if (k < len && std::string_view("diouxXcsfeEgGpn").find(static_cast<char>(s[k])) != std::string_view::npos)
+            {
+                buf[bl++] = ' ';
+                spec = true;
+                i = k + 1;
+                continue;
+            }
+        }
+        buf[bl++] = s[i++];
+    }
+    s = buf;
+    len = bl;
     static constexpr std::string_view punct = ".,:;!?'\"-%()/\\_+=*#&@<>[]$^";
     for (size_t i = 0; i < len; ++i)
     {
@@ -551,7 +601,7 @@ inline bool cstr_plausible(const uint8_t* s, size_t len)
         }
         i = j;
     }
-    if (len >= 6)
+    if (len >= 6 && !spec)
     {
         bool rep = true;
         for (size_t i = 2; i < len && rep; ++i)

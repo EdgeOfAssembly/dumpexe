@@ -279,6 +279,12 @@ A run needs at least 4 text bytes and 3 letters.
 A run shorter than 8 bytes must also look like text: only letters,
 digits, blanks and common punctuation, each letter run all upper case
 or CamelCase, and no period-2 repetition.
+Printf conversions (
+.BR %s ,
+.BR %\-5ld ,
+.BR %*d ,
+.BR %% )
+count as one blank each and lift the repetition test.
 The C startup pattern
 .B "call X / push ax / call Y"
 adds the comment

@@ -134,6 +134,9 @@ g2 db 'READ$', 0
 g3 db 'TEMP', 0
 g4 db 'XXXXXX', 0
 g5 db 'Long enough text', 0
+g6 db '%s%s%s', 0
+g7 db '%-5ld%s', 0
+j7 db '%dkRM', 0
 _TEXT ends
 end start
 ASM
@@ -146,6 +149,10 @@ done
 for g in ChDir 'READ' TEMP XXXXXX 'Long enough text'; do
   check "f5_text_${g// /_}" bash -c "grep -B1 -F \"'$g\" '$S' | grep -q '^cstr_'"
 done
-check f5_count grep -qF '; C strings: 5 NUL-terminated string(s) found in data' "$S"
+check f5_fmt_sss grep -B1 -qF "db 25h, 's', 25h, 's', 25h, 's', 0h" "$S"
+check f5_fmt_sss_label bash -c "grep -B1 -F \"db 25h, 's', 25h, 's', 25h, 's', 0h\" '$S' | grep -q '^cstr_'"
+check f5_fmt_ld bash -c "grep -B1 -F \"db 25h, '-5ld', 25h, 's', 0h\" '$S' | grep -q '^cstr_'"
+check f5_fmt_junk_still bash -c "! grep -B1 -F \"'dkRM'\" '$S' | grep -q '^cstr_'"
+check f5_count grep -qF '; C strings: 7 NUL-terminated string(s) found in data' "$S"
 echo "f2_f5 passed=$pass failed=$fail"
 [[ $fail -eq 0 ]]
