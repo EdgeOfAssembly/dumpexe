@@ -322,10 +322,20 @@ segment's frame; the header line
 .B "; far interrupt handlers: N"
 counts them. Tables
 .B "jmp|call cs:[bx|bp|si|di+T]"
-without a compare bound are also bounded when a bit-mask interpretation of the call-free run
+are also bounded (the smaller of this and any compare bound) when a bit-mask interpretation of the call-free run
 before the jump, from its last inner entry point, leaves the index mask
 at 2^k\-2 (at most 256 entries); targets outside the entry segment are
 seeded in their own frame.
+.PP
+Turbo Pascal programs: System.Halt is recognized by its code signature
+(exactly one match, with the relocated data segment word) and RunError by
+.B "pop cx / pop bx / jmp short"
+to Halt's Terminate. A far call to either, or the last overlay stub
+.RB ( "int 3Fh"
+and its 3 stub bytes), followed only by zero padding to the next paragraph
+ends the code there; the padding stays data, and the next paragraph is
+seeded when it is a relocated segment frame starting with
+.BR "push bp / mov bp, sp" .
 .PP
 Segment layout rule
 .RB ( \-\-uasm\-verified

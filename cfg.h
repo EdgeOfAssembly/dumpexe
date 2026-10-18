@@ -496,6 +496,50 @@ static inline std::set<uint32_t> cfg_reloc_sites(const std::vector<uint8_t>& ima
 }
 
 /**
+ * @brief Turbo Pascal System.Halt / System.RunError entries (never return).
+ *
+ * TP 5.5 and 7.0 executables carry no symbols, so the System unit routines
+ * are found by code signature. Halt is
+ *   33 C9 33 DB                 xor cx,cx / xor bx,bx   (Halt)
+ *   BA ss ss 8E DA FB A3 xx xx  mov dx,DSEG / mov ds,dx / sti / mov [ExitCode],ax  (Terminate)
+ *   8B C1 0B C3 74              mov ax,cx / or ax,bx / je
+ * with the DSEG word relocated. RunError is `59 5B EB rel` (pop cx / pop bx /
+ * jmp short Terminate) whose jump lands exactly on Terminate. Exactly one
+ * Halt must match; otherwise nothing is returned (no guess).
+ *
+ * @return Linear entries of Halt and RunError, empty when not a TP program.
+ */
+static inline std::set<uint32_t> cfg_tp_noreturn(const std::vector<uint8_t>& image,
+                                                 const std::set<uint32_t>& reloc_at)
+{
+    static constexpr int16_t sig[] = {0x33, 0xC9, 0x33, 0xDB, 0xBA, -1, -1, 0x8E, 0xDA, 0xFB,
+                                      0xA3, -1, -1, 0x8B, 0xC1, 0x0B, 0xC3, 0x74};
+    constexpr size_t n = sizeof(sig) / sizeof(sig[0]);
+    std::set<uint32_t> out;
+    int64_t halt = -1;
+    for (size_t i = 0; i + n <= image.size(); ++i)
+    {
+        bool ok = true;
+        for (size_t k = 0; k < n && ok; ++k)
+            ok = sig[k] < 0 || image[i + k] == static_cast<uint8_t>(sig[k]);
+        if (!ok || !reloc_at.contains(static_cast<uint32_t>(i + 5)))
+            continue;
+        if (halt >= 0)
+            return out; // ambiguous
+        halt = static_cast<int64_t>(i);
+    }
+    if (halt < 0)
+        return out;
+    out.insert(static_cast<uint32_t>(halt));
+    const int64_t term = halt + 4;
+    for (int64_t i = std::max<int64_t>(0, term - 129); i + 4 <= term + 128 && i + 4 <= static_cast<int64_t>(image.size()); ++i)
+        if (image[i] == 0x59 && image[i + 1] == 0x5B && image[i + 2] == 0xEB &&
+            i + 4 + static_cast<int8_t>(image[i + 3]) == term)
+            out.insert(static_cast<uint32_t>(i));
+    return out;
+}
+
+/**
  * @brief Classify a direct far 9Ah/EAh against the relocation table.
  *
  * Pinned only when @p size is 5, the opcode at @p ip is 9Ah or EAh (no
@@ -994,6 +1038,49 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
     }
 
     const std::set<uint32_t> reloc_at = cfg_reloc_sites(image, relocs);
+    // TP programs (System.Halt found by signature): a far call to Halt or
+    // RunError, or the last overlay stub (`int 3Fh` + 3 stub bytes), followed
+    // only by zero padding up to the next paragraph ends the code there: the
+    // padding is not decoded. When that paragraph is a relocated segment
+    // frame starting with the TP far prologue `55 89 E5`, it is enqueued.
+    const std::set<uint32_t> tp_noreturn = cfg_tp_noreturn(image, reloc_at);
+    const bool tp_prog = !tp_noreturn.empty();
+    std::set<uint32_t> tp_frames;
+    if (tp_prog)
+        for (const uint32_t r : reloc_at)
+            if (static_cast<size_t>(r) + 2 <= image.size())
+                tp_frames.insert((image[r] | (static_cast<uint32_t>(image[r + 1]) << 8)) * 16u);
+    std::set<CfgLin> tp_pad_ips; // insns whose zero-padded fall-through is cut
+    auto tp_zero_pad = [&](CfgLin next) -> int64_t {
+        const size_t a = static_cast<size_t>(next);
+        const size_t b = (a + 15) & ~static_cast<size_t>(15);
+        if (b == a || b > image.size())
+            return -1;
+        for (size_t k = a; k < b; ++k)
+            if (image[k] != 0)
+                return -1;
+        return static_cast<int64_t>(b);
+    };
+    auto tp_halt_call = [&](CfgLin at, uint16_t size) -> bool {
+        if (!tp_prog)
+            return false;
+        const CfgFarReloc pin = cfg_far_reloc_site(image, at, size, reloc_at);
+        return pin.kind == CfgFarRelocKind::InImage && image[static_cast<size_t>(at)] == 0x9A &&
+               tp_noreturn.contains(static_cast<uint32_t>(pin.ip));
+    };
+    // At the end of a cut: enqueue the next paragraph when it is a frame
+    // that starts with `push bp / mov bp, sp`.
+    auto tp_after_pad = [&](int64_t b, auto&& enq) {
+        const size_t u = static_cast<size_t>(b);
+        if (u + 3 <= image.size() && tp_frames.contains(static_cast<uint32_t>(u)) &&
+            image[u] == 0x55 && image[u + 1] == 0x89 && image[u + 2] == 0xE5)
+            enq(static_cast<CfgLin>(u), static_cast<int32_t>(u));
+    };
+    // The 3-byte tail of an `int 3Fh` stub decoded as an instruction.
+    auto tp_stub_tail = [&](CfgLin at, uint16_t size) -> bool {
+        const size_t a = static_cast<size_t>(at);
+        return tp_prog && size == 3 && a >= 2 && image[a - 2] == 0xCD && image[a - 1] == 0x3F;
+    };
 
     struct CfgSeed
     {
@@ -1327,6 +1414,18 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                         looks_data = true;
                     }
                 }
+                if (next_ok && tp_halt_call(linear, insn->size))
+                {
+                    const int64_t b = tp_zero_pad(next);
+                    if (b >= 0)
+                    {
+                        looks_data = true;
+                        tp_pad_ips.insert(linear);
+                        tp_after_pad(b, [&](CfgLin t, int32_t f) {
+                            enqueue(t, f, dx::Why::Fallthrough, dx::Strength::Likely, linear);
+                        });
+                    }
+                }
                 if (!looks_data && next_ok)
                 {
                     enqueue(next, frame, dx::Why::CallFallthroughSpec, dx::Strength::Likely,
@@ -1416,6 +1515,19 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                     enqueue(next, frame, dx::Why::Wrap, dx::Strength::Proven, linear);
                 }
                 break;
+            }
+
+            if (next_ok && tp_stub_tail(linear, insn->size))
+            {
+                const int64_t b = tp_zero_pad(next);
+                if (b >= 0)
+                {
+                    tp_pad_ips.insert(linear);
+                    tp_after_pad(b, [&](CfgLin t, int32_t f) {
+                        enqueue(t, f, dx::Why::Fallthrough, dx::Strength::Likely, linear);
+                    });
+                    break;
+                }
             }
 
             if (!next_ok)
@@ -1960,7 +2072,7 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
             // block. Bytes cover an int that stayed in this block (INT 27h).
             const bool insn_noreturn =
                 noreturn_ips.count(linear) != 0 ||
-                (cd && cfg_int_noreturn(inum, block_ah));
+                (cd && cfg_int_noreturn(inum, block_ah)) || tp_pad_ips.count(linear) != 0;
             if (!insn_noreturn && cd && inum == 0x21)
             {
                 block_ah = 0x100;
@@ -2020,6 +2132,10 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                         cont_ok = false;
                     }
                     if (table_slots.count(next))
+                    {
+                        cont_ok = false;
+                    }
+                    if (tp_pad_ips.count(linear))
                     {
                         cont_ok = false;
                     }
