@@ -15,9 +15,11 @@
 #define DX_EMIT_UASM_H
 
 #include <algorithm>
+#include <cctype>
 #include "pair_table.h"
 #include <cstdint>
 #include <format>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -210,6 +212,7 @@ private:
     void add_value_refs();
     void scan_cstrings();
     void find_main_hint();
+    bool exit_like(uint32_t y) const;
     std::set<uint32_t> cstr_scanned_;
     int64_t main_hint_ = -1;
     int64_t main_hint_exit_ = -1;
@@ -471,6 +474,80 @@ inline UasmEmitter::UasmEmitter(const CfgGraph& g, EmitInput in)
 }
 
 /**
+ * @brief F5: reject short runs that look like code or table bytes.
+ *
+ * Runs of 8 bytes or more pass. A shorter run passes only if:
+ *  - every byte is a letter, digit, blank (space, TAB, CR, LF) or text
+ *    punctuation `.,:;!?'"-%()/\_+=*#&@<>[]$^`;
+ *  - each maximal letter run is all upper case, or CamelCase: split before
+ *    each upper-case letter that follows a lower-case one, every part is one
+ *    capital followed by lower case, except that the first part may be all
+ *    lower case of two or more letters (`ChDir`, `getDate`, `error`); a
+ *    lone letter is fine (`-w-`);
+ *  - it is not a period-2 repetition (`dJdJdJ`, `tMtMtM`, `r0r0r0`).
+ * `$RPj`, `6kIj`, `}SDH`, `pNzK` fail; `TEMP`, `(null)`, `ChDir`, `READ$`,
+ * `^PgUp` and `XXXXXX` pass.
+ */
+inline bool cstr_plausible(const uint8_t* s, size_t len)
+{
+    if (len >= 8)
+        return true;
+    static constexpr std::string_view punct = ".,:;!?'\"-%()/\\_+=*#&@<>[]$^";
+    for (size_t i = 0; i < len; ++i)
+    {
+        const uint8_t c = s[i];
+        if (std::isalnum(c) || c == ' ' || c == 9 || c == 10 || c == 13)
+            continue;
+        if (punct.find(static_cast<char>(c)) == std::string_view::npos)
+            return false;
+    }
+    for (size_t i = 0; i < len;)
+    {
+        if (!std::isalpha(s[i]))
+        {
+            ++i;
+            continue;
+        }
+        size_t j = i;
+        bool any_lower = false;
+        while (j < len && std::isalpha(s[j]))
+            any_lower |= std::islower(s[j++]) != 0;
+        if (any_lower && j - i > 1)
+        {
+            // Parts: [i, k) split before an upper case letter after a lower one.
+            size_t k = i;
+            bool first = true;
+            while (k < j)
+            {
+                size_t e = k + 1;
+                while (e < j && !(std::isupper(s[e]) && std::islower(s[e - 1])))
+                    ++e;
+                const size_t plen = e - k;
+                bool lower_tail = true;
+                for (size_t m = k + 1; m < e; ++m)
+                    lower_tail &= std::islower(s[m]) != 0;
+                const bool cap = std::isupper(s[k]) && plen >= 2 && lower_tail;
+                const bool low = first && std::islower(s[k]) && plen >= 2 && lower_tail;
+                if (!cap && !low)
+                    return false;
+                first = false;
+                k = e;
+            }
+        }
+        i = j;
+    }
+    if (len >= 6)
+    {
+        bool rep = true;
+        for (size_t i = 2; i < len && rep; ++i)
+            rep = s[i] == s[i - 2];
+        if (rep && s[0] != s[1])
+            return false;
+    }
+    return true;
+}
+
+/**
  * @brief U2: type NUL-terminated text in data as `cstr_` strings.
  *
  * A run of at least 4 printable bytes (or TAB/LF/CR), starting at a data
@@ -503,7 +580,7 @@ inline void UasmEmitter::scan_cstrings()
                     ++alpha;
                 ++q;
             }
-            if (q < end && img[q] == 0 && q - p >= 4 && alpha >= 3)
+            if (q < end && img[q] == 0 && q - p >= 4 && alpha >= 3 && cstr_plausible(img.data() + p, q - p))
             {
                 // F1: no byte of a relocated (or table) word may lie in the
                 // run or its NUL; a word starting at p-1 covers p.
@@ -529,9 +606,121 @@ inline void UasmEmitter::scan_cstrings()
 /**
  * @brief U3: the C startup calls main, then passes its return value to exit:
  *        `call X` / `push ax` / `call Y` (near or far). The first such run
- *        within 4 KiB after the entry, with X a decoded head, makes X a
- *        possible _main. Only a comment is printed; nothing is asserted.
+ *        within 512 bytes after the entry, with X a decoded head and Y a
+ *        known exit (see exit_like), makes X a possible _main. Only a
+ *        comment is printed; nothing is asserted.
  */
+/**
+ * @brief F2: Y is a known exit when no path from Y reaches a return, or a
+ *        path reaches DOS terminate (`mov ah, 4Ch` or `mov ax, 4Cxxh`, then
+ *        `int 21h` in the same straight run). Walks decoded units through
+ *        fall-through, rel jumps, both jcc arms and near calls, three call
+ *        levels deep. A unit outside the decoded code, an indirect jump or a
+ *        walk budget overrun counts as "may return" with no terminate seen.
+ */
+inline bool UasmEmitter::exit_like(uint32_t y) const
+{
+    const std::vector<uint8_t>& img = *in_.image;
+    const uint32_t n = static_cast<uint32_t>(img.size());
+    bool terminate = false;
+    size_t budget = 4096;
+    // Returns true when some path from @p h may return to its caller.
+    std::function<bool(uint32_t, int)> may_return = [&](uint32_t h, int depth) -> bool {
+        std::set<uint32_t> seen;
+        std::vector<uint32_t> work{h};
+        bool ret = false;
+        while (!work.empty())
+        {
+            uint32_t p = work.back();
+            work.pop_back();
+            bool ah4c = false;
+            while (true)
+            {
+                if (budget == 0 || p >= n)
+                    return true;
+                --budget;
+                if (!seen.insert(p).second)
+                    break;
+                const int ui = unit_at(p);
+                if (ui < 0 || !units_[static_cast<size_t>(ui)].code)
+                    return true;
+                const EmitUnit& u = units_[static_cast<size_t>(ui)];
+                const uint8_t* b = img.data() + u.lin;
+                const uint32_t nx = u.lin + u.size;
+                // Near targets wrap inside the unit's 64 KiB frame.
+                const auto fit = frame_of_.find(u.lin);
+                const uint32_t fr = fit != frame_of_.end() && fit->second >= 0 && static_cast<uint32_t>(fit->second) <= u.lin
+                                        ? static_cast<uint32_t>(fit->second)
+                                        : (u.lin & ~0xFFFFu);
+                auto near = [&](int32_t rel) { return fr + ((nx - fr + static_cast<uint32_t>(rel)) & 0xFFFFu); };
+                if ((u.size == 2 && b[0] == 0xB4 && b[1] == 0x4C) || (u.size == 3 && b[0] == 0xB8 && b[2] == 0x4C))
+                {
+                    ah4c = true;
+                    p = nx;
+                    continue;
+                }
+                if (u.size == 2 && b[0] == 0xCD && b[1] == 0x21 && ah4c)
+                {
+                    terminate = true;
+                    break;
+                }
+                const uint8_t op = b[0];
+                if (op == 0xC3 || op == 0xCB || op == 0xC2 || op == 0xCA || op == 0xCF)
+                {
+                    ret = true;
+                    break;
+                }
+                if (op == 0xEB && u.size == 2)
+                {
+                    p = near(static_cast<int8_t>(b[1]));
+                    continue;
+                }
+                if (op == 0xE9 && u.size == 3)
+                {
+                    p = near(static_cast<int16_t>(b[1] | (b[2] << 8)));
+                    continue;
+                }
+                if (((op >= 0x70 && op <= 0x7F) || (op >= 0xE0 && op <= 0xE3)) && u.size == 2)
+                {
+                    work.push_back(near(static_cast<int8_t>(b[1])));
+                    p = nx;
+                    continue;
+                }
+                if (op == 0xE8 && u.size == 3)
+                {
+                    const uint32_t t = near(static_cast<int16_t>(b[1] | (b[2] << 8)));
+                    if (depth < 3 && !may_return(t, depth + 1))
+                        break; // the callee never comes back: path ends
+                    if (terminate)
+                        return true;
+                    p = nx;
+                    continue;
+                }
+                if (op == 0x9A && u.size == 5 && in_.reloc_at.count(u.lin + 3))
+                {
+                    const uint32_t t = (static_cast<uint32_t>(b[3] | (b[4] << 8)) << 4) + (b[1] | (b[2] << 8));
+                    if (depth < 3 && !may_return(t, depth + 1))
+                        break;
+                    if (terminate)
+                        return true;
+                    p = nx;
+                    continue;
+                }
+                if (op == 0xFF && u.size >= 2 && (((b[1] >> 3) & 7) == 4 || ((b[1] >> 3) & 7) == 5))
+                    return true; // indirect jump: unknown
+                if (u.size == 2 && b[0] == 0xCD)
+                    ah4c = false;
+                p = nx;
+            }
+            if (terminate)
+                return true;
+        }
+        return ret;
+    };
+    const bool r = may_return(y, 0);
+    return terminate || !r;
+}
+
 inline void UasmEmitter::find_main_hint()
 {
     const std::vector<uint8_t>& img = *in_.image;
@@ -540,7 +729,8 @@ inline void UasmEmitter::find_main_hint()
         const EmitUnit& a = units_[i];
         const EmitUnit& b = units_[i + 1];
         const EmitUnit& c = units_[i + 2];
-        if (!a.code || !b.code || !c.code || a.lin < in_.entry || a.lin >= in_.entry + 0x1000)
+        // F2: the startup's main call sits near the entry.
+        if (!a.code || !b.code || !c.code || a.lin < in_.entry || a.lin >= in_.entry + 0x200)
             continue;
         if (a.size != 3 || img[a.lin] != 0xE8 || b.lin != a.lin + 3 || b.size != 1 || img[b.lin] != 0x50 ||
             c.lin != b.lin + 1)
@@ -550,6 +740,22 @@ inline void UasmEmitter::find_main_hint()
         const int16_t rel = static_cast<int16_t>(img[a.lin + 1] | (img[a.lin + 2] << 8));
         const int64_t x = static_cast<int64_t>(a.lin) + 3 + rel;
         if (x < 0 || unit_at(static_cast<uint32_t>(x)) < 0 || !units_[static_cast<size_t>(unit_at(static_cast<uint32_t>(x)))].code)
+            continue;
+        // F2: the exit call must not return (or must reach DOS terminate).
+        uint32_t y = 0;
+        if (img[c.lin] == 0xE8)
+        {
+            const auto fit = frame_of_.find(c.lin);
+            const uint32_t fr = fit != frame_of_.end() && fit->second >= 0 && static_cast<uint32_t>(fit->second) <= c.lin
+                                    ? static_cast<uint32_t>(fit->second)
+                                    : (c.lin & ~0xFFFFu);
+            y = fr + ((c.lin + 3 - fr + static_cast<uint32_t>(static_cast<int16_t>(img[c.lin + 1] | (img[c.lin + 2] << 8)))) & 0xFFFFu);
+        }
+        else if (in_.reloc_at.count(c.lin + 3))
+            y = (static_cast<uint32_t>(img[c.lin + 3] | (img[c.lin + 4] << 8)) << 4) + (img[c.lin + 1] | (img[c.lin + 2] << 8));
+        else
+            continue;
+        if (!exit_like(y))
             continue;
         main_hint_ = x;
         main_hint_exit_ = c.lin;

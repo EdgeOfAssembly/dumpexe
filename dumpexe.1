@@ -268,6 +268,28 @@ When recovery stops with candidates still queued, the header says
 and does not say verified.
 If verify is on and no assembler can be run, dumpexe writes an error
 on stderr and exits non-zero.
+.PP
+With
+.BR \-\-uasm\-verified ,
+NUL-terminated text in data is labeled
+.B cstr_
+(header
+.BR "; C strings: N" ).
+A run needs at least 4 text bytes and 3 letters.
+A run shorter than 8 bytes must also look like text: only letters,
+digits, blanks and common punctuation, each letter run all upper case
+or CamelCase, and no period-2 repetition.
+The C startup pattern
+.B "call X / push ax / call Y"
+adds the comment
+.B "; hint: possibly _main"
+on X only when the pattern starts within 512 bytes after the entry and Y
+is a known exit: no path from Y returns, or a path through Y and its near
+or relocated far callees (three levels) reaches
+.B "int 21h"
+with AH=4Ch.
+The hint is a comment only; no label is renamed.
+.PP
 A relocated
 .B "mov r16, imm16"
 (opcodes B8 through BF) whose paragraph frame lies in this image is printed as
