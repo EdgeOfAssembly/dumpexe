@@ -222,6 +222,11 @@ private:
     int64_t main_hint_ = -1;
     int64_t main_hint_exit_ = -1;
     void type_string(uint32_t lin, uint32_t len, const char* prefix);
+    template <class InData>
+    void add_startup_roots(const std::vector<size_t>& code, InData&& in_data);
+    size_t n_init_roots_ = 0;
+    size_t n_vector_roots_ = 0;
+    size_t n_ptr_roots_ = 0;
     template <class FrameOk, class InData>
     void add_pointer_refs(const std::vector<size_t>& code, FrameOk&& frame_ok, InData&& in_data);
     std::map<uint32_t, uint32_t> str_len_;          ///< P4 typed strings
@@ -279,6 +284,11 @@ public:
     size_t value_tables() const { return n_tables_; }
     size_t value_strings() const { return n_strings_; }
     size_t value_pointers() const { return n_pointers_; }
+    /// Coverage: entries asked for from Borland init/exit tables and from
+    /// INT 21h/25h handlers set with DS = CS (see add_startup_roots).
+    size_t init_roots() const { return n_init_roots_; }
+    size_t vector_roots() const { return n_vector_roots_; }
+    size_t ptr_roots() const { return n_ptr_roots_; }
     size_t typed_strings() const { return str_len_.size() - cstr_scanned_.size(); }
     /// U2: NUL-terminated strings found by the data scan (not by a reference).
     size_t scanned_cstrings() const { return cstr_scanned_.size(); }
@@ -1013,6 +1023,7 @@ inline void UasmEmitter::add_value_refs()
         }
     }
     add_pointer_refs(code, frame_ok, in_data);
+    add_startup_roots(code, in_data);
 }
 
 /**
@@ -1168,6 +1179,189 @@ inline void UasmEmitter::add_pointer_refs(const std::vector<size_t>& code, Frame
             ++n_strings_;
             type_string(T, q + 1 - T, "cstr");
         }
+    }
+}
+
+/**
+ * @brief Coverage: proven entries the static graph cannot see.
+ *
+ *  - Borland C startup init/exit tables. Decoded `mov si, S` / `mov di, E` /
+ *    `call P`, where P walks 6-byte records (`add bx, 6` within its first 24
+ *    instructions and an `es:[bx]` operand). DS is known (COM: 0; MZ: the
+ *    inferred DGROUP) and [S, E) lies in data. Each record is
+ *    {type, priority, offset, segment}: type 0 is a near offset in the
+ *    entry frame; type 1 is far, and its segment word must be relocated and
+ *    equal to the entry frame. Any other type rejects the whole table.
+ *  - INT 21h AH=25h (set vector) with DS = CS: within the contiguous run of
+ *    at most 6 instructions ending in `int 21h`, `mov ax, 25xxh` or
+ *    `mov ah, 25h`, `push cs`/`pop ds` or `mov r, cs`/`mov ds, r`, and
+ *    `mov dx, imm` after the DS load, with nothing else in the run. The
+ *    handler is the run's frame plus imm.
+ * Targets that sit in undecoded data are asked for as fixpoint entries
+ * (want_roots); entries outside the entry frame are not used.
+ */
+template <class InData>
+inline void UasmEmitter::add_startup_roots(const std::vector<size_t>& code, InData&& in_data)
+{
+    const std::vector<uint8_t>& img = *in_.image;
+    const uint32_t n = static_cast<uint32_t>(img.size());
+    const auto efit = frame_of_.find(in_.entry);
+    if (efit == frame_of_.end() || efit->second < 0)
+        return;
+    const uint32_t ef = static_cast<uint32_t>(efit->second);
+    auto want = [&](uint32_t t) -> bool {
+        if (t < in_.emit_lo || t >= n || t < ef || t - ef > 0xFFFFu)
+            return false;
+        const int ci = unit_covering(t);
+        if (ci < 0 || units_[static_cast<size_t>(ci)].code)
+            return false;
+        for (const auto& [lo, hi] : in_.force_data)
+            if (t >= lo && t < hi)
+                return false;
+        want_roots_.push_back(t);
+        return true;
+    };
+    auto contiguous = [&](size_t a, size_t b) {
+        for (size_t k = a; k < b; ++k)
+            if (units_[code[k]].lin + units_[code[k]].size != units_[code[k + 1]].lin)
+                return false;
+        return true;
+    };
+    // DS: COM 0; MZ the inferred DGROUP, else the Borland c0 entry
+    // `mov dx, DGROUP` (relocated word at entry+1; ES = DS for the walker).
+    int64_t ds = in_.com ? 0 : dgroup_;
+    if (ds < 0 && !in_.com && in_.entry + 3 <= n && img[in_.entry] == 0xBA && in_.reloc_at.count(in_.entry + 1))
+    {
+        const int eu = unit_at(in_.entry);
+        if (eu >= 0 && units_[static_cast<size_t>(eu)].code)
+            ds = static_cast<int64_t>(img[in_.entry + 1] | (img[in_.entry + 2] << 8)) * 16;
+    }
+    for (size_t j = 0; j + 2 < code.size(); ++j)
+    {
+        const EmitUnit& a = units_[code[j]];
+        const EmitUnit& b = units_[code[j + 1]];
+        const EmitUnit& c = units_[code[j + 2]];
+        const uint8_t* ab = img.data() + a.lin;
+        const uint8_t* bb = img.data() + b.lin;
+        const uint8_t* cb = img.data() + c.lin;
+        if (ds < 0 || !contiguous(j, j + 2) || a.size != 3 || ab[0] != 0xBE || b.size != 3 || bb[0] != 0xBF ||
+            c.size != 3 || cb[0] != 0xE8)
+            continue;
+        const uint32_t cfr = static_cast<uint32_t>(frame_of_[c.lin]);
+        const uint32_t P = cfr + ((c.lin + 3 - cfr + static_cast<uint32_t>(static_cast<int16_t>(cb[1] | (cb[2] << 8)))) & 0xFFFFu);
+        const int pi = unit_at(P);
+        if (pi < 0 || !units_[static_cast<size_t>(pi)].code)
+            continue;
+        bool step6 = false;
+        bool esbx = false;
+        for (size_t q = static_cast<size_t>(pi), cnt = 0; q < units_.size() && cnt < 24 && units_[q].code; ++q, ++cnt)
+        {
+            const uint8_t* qb = img.data() + units_[q].lin;
+            if (units_[q].size == 3 && qb[0] == 0x83 && qb[1] == 0xC3 && qb[2] == 0x06)
+                step6 = true;
+            if (units_[q].size >= 3 && qb[0] == 0x26 && (qb[1] == 0x80 || qb[1] == 0x8A) && (qb[2] & 0xC7) == 0x07)
+                esbx = true;
+            if (units_[q].size >= 4 && qb[0] == 0x26 && (qb[1] == 0x80 || qb[1] == 0x8A) && (qb[2] & 0xC7) == 0x47)
+                esbx = true;
+        }
+        if (!step6 || !esbx)
+            continue;
+        const uint32_t S = static_cast<uint32_t>(ds) + (ab[1] | (ab[2] << 8));
+        const uint32_t E = static_cast<uint32_t>(ds) + (bb[1] | (bb[2] << 8));
+        if (E <= S || (E - S) % 6 != 0 || E - S > 6 * 256 || !in_data(S, E - S))
+            continue;
+        std::vector<uint32_t> tg;
+        bool ok = true;
+        for (uint32_t r = S; r < E && ok; r += 6)
+        {
+            const uint32_t off = img[r + 2] | (img[r + 3] << 8);
+            if (img[r] == 0)
+                tg.push_back(ef + off);
+            else if (img[r] == 1 && in_.reloc_at.count(r + 4) && static_cast<uint32_t>(img[r + 4] | (img[r + 5] << 8)) * 16u == ef)
+                tg.push_back(ef + off);
+            else if (img[r] != 1)
+                ok = false;
+        }
+        if (!ok)
+            continue;
+        for (uint32_t t : tg)
+            if (want(t))
+                ++n_init_roots_;
+    }
+    // Code pointer cells: `call word ptr ds:[X]` (FF 16 X) and
+    // `mov word ptr ds:[X], imm` (C7 06 X imm) both in decoded code, no
+    // segment override, X not relocated: each stored imm is a call target
+    // in the entry frame (near call through DS:X, DS constant: a COM, or a
+    // known DGROUP).
+    if (ds >= 0)
+    {
+        std::set<uint32_t> called;
+        std::vector<std::pair<uint32_t, uint32_t>> stores;
+        for (size_t j = 0; j < code.size(); ++j)
+        {
+            const EmitUnit& u = units_[code[j]];
+            const uint8_t* b = img.data() + u.lin;
+            if (u.size == 4 && b[0] == 0xFF && b[1] == 0x16)
+                called.insert(b[2] | (b[3] << 8));
+            else if (u.size == 6 && b[0] == 0xC7 && b[1] == 0x06)
+                stores.emplace_back(b[2] | (b[3] << 8), b[4] | (b[5] << 8));
+        }
+        for (const auto& [x, v] : stores)
+            if (called.count(x) && !in_.reloc_at.count(static_cast<uint32_t>(ds) + x) && want(ef + v))
+                ++n_ptr_roots_;
+    }
+    // INT 21h / AH=25h with DS = CS.
+    for (size_t j = 0; j < code.size(); ++j)
+    {
+        const EmitUnit& u = units_[code[j]];
+        if (u.size != 2 || img[u.lin] != 0xCD || img[u.lin + 1] != 0x21)
+            continue;
+        int64_t found = -1;
+        for (size_t k0 = j; k0 > 0 && k0 + 6 > j && found < 0;)
+        {
+        --k0;
+        if (!contiguous(k0, j))
+            break;
+        bool ah25 = false;
+        bool dscs = false;
+        int64_t dx = -1;
+        bool bad = false;
+        for (size_t k = k0; k < j && !bad; ++k)
+        {
+            const EmitUnit& w = units_[code[k]];
+            const uint8_t* wb = img.data() + w.lin;
+            if (w.size == 3 && wb[0] == 0xB8 && wb[2] == 0x25)
+                ah25 = true;
+            else if (w.size == 2 && wb[0] == 0xB4 && wb[1] == 0x25)
+                ah25 = true;
+            else if (w.size == 2 && wb[0] == 0xB0)
+                ;
+            else if (w.size == 1 && wb[0] == 0x0E && k + 1 < j && units_[code[k + 1]].size == 1 && img[units_[code[k + 1]].lin] == 0x1F)
+            {
+                dscs = true;
+                dx = -1;
+                ++k;
+            }
+            else if (w.size == 2 && wb[0] == 0x8C && (wb[1] & 0xF8) == 0xC8 && k + 1 < j && units_[code[k + 1]].size == 2 &&
+                     img[units_[code[k + 1]].lin] == 0x8E && img[units_[code[k + 1]].lin + 1] == static_cast<uint8_t>(0xD8 | (wb[1] & 7)))
+            {
+                dscs = true;
+                dx = -1;
+                ++k;
+            }
+            else if (w.size == 3 && wb[0] == 0xBA)
+                dx = wb[1] | (wb[2] << 8);
+            else
+                bad = true;
+        }
+        if (!bad && ah25 && dscs && dx >= 0)
+            found = dx;
+        }
+        const int64_t fr = frame_of_[u.lin];
+        if (found < 0 || fr < 0)
+            continue;
+        if (want(static_cast<uint32_t>(fr + found)))
+            ++n_vector_roots_;
     }
 }
 

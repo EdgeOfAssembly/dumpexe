@@ -4724,9 +4724,15 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
         }
         return r;
     };
+    size_t st_init = 0;
+    size_t st_vec = 0;
+    size_t st_ptr = 0;
     while (rebuild && fix_rounds < 16)
     {
         std::vector<uint32_t> want = emp->want_roots();
+        st_init += emp->init_roots();
+        st_vec += emp->vector_roots();
+        st_ptr += emp->ptr_roots();
         for (uint32_t t : sim_roots(*emp))
         {
             want.push_back(t);
@@ -4834,7 +4840,12 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
     if (fix_rounds > 1)
         hdr.push_back(std::format("fixpoint: {} round(s), {} address(es) seeded as entries "
                                   "({} from bounded jump tables, derived)",
-                                  fix_rounds, seeds.size(), seeds.size() - std::min(seeds.size(), sim_seeded)));
+                                  fix_rounds, seeds.size(),
+                                  seeds.size() - std::min(seeds.size(), sim_seeded + st_init + st_vec + st_ptr)));
+    if (st_init + st_vec + st_ptr != 0)
+        hdr.push_back(std::format("startup entries: {} init/exit table record(s), {} DS=CS interrupt handler(s), "
+                                  "{} stored code pointer(s) (seeded as entries)",
+                                  st_init, st_vec, st_ptr));
     if (em.value_tables() + em.value_strings() != 0)
         hdr.push_back(std::format("value references: {} bounded jump table(s) ({} entries), {} $-string pointer(s)",
                                   em.value_tables(), em.off_words().size() - em.value_pointers(), em.value_strings()));

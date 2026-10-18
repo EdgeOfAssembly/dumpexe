@@ -290,6 +290,19 @@ or relocated far callees (three levels) reaches
 with AH=4Ch.
 The hint is a comment only; no label is renamed.
 .PP
+The verified fixpoint also seeds startup entries in the entry frame:
+each record of a Borland startup init/exit table (decoded
+.B "mov si, S / mov di, E / call P"
+where P walks 6-byte records; type 0 near, type 1 far with a relocated
+segment equal to the entry frame; any other type rejects the table),
+INT 21h function 25h handlers set with DS = CS, and immediates stored by
+.B "mov word ptr ds:[X], imm"
+into a cell that decoded code calls with
+.BR "call word ptr ds:[X]" .
+The header line
+.B "; startup entries: N init/exit table record(s), M DS=CS interrupt handler(s), K stored code pointer(s)"
+counts them.
+.PP
 Segment layout rule
 .RB ( \-\-uasm\-verified
 only, Borland C++ 3.1-compatible startup, not tiny):
