@@ -304,7 +304,8 @@ segment equal to the entry frame; any other type rejects the table),
 INT 21h function 25h handlers set with DS = CS, and immediates stored by
 .B "mov word ptr ds:[X], imm"
 into a cell that decoded code calls with
-.BR "call word ptr ds:[X]" .
+.B "call word ptr ds:[X]"
+when every store and call for that cell sits in the entry code segment.
 The header line
 .B "; startup entries: N init/exit table record(s), M DS=CS interrupt handler(s), K stored code pointer(s)"
 counts them.

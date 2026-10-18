@@ -1247,6 +1247,8 @@ inline void UasmEmitter::add_pointer_refs(const std::vector<size_t>& code, Frame
  *    `mov ah, 25h`, `push cs`/`pop ds` or `mov r, cs`/`mov ds, r`, and
  *    `mov dx, imm` after the DS load, with nothing else in the run. The
  *    handler is the run's frame plus imm.
+ *  - code pointer cells: `mov word ptr ds:[X], imm` stores into a cell
+ *    called by `call word ptr ds:[X]`, all in one code frame (see below).
  * Targets that sit in undecoded data are asked for as fixpoint entries
  * (want_roots); entries outside the entry frame are not used.
  */
@@ -1340,25 +1342,44 @@ inline void UasmEmitter::add_startup_roots(const std::vector<size_t>& code, InDa
     }
     // Code pointer cells: `call word ptr ds:[X]` (FF 16 X) and
     // `mov word ptr ds:[X], imm` (C7 06 X imm) both in decoded code, no
-    // segment override, X not relocated: each stored imm is a call target
-    // in the entry frame (near call through DS:X, DS constant: a COM, or a
-    // known DGROUP).
+    // segment override, X not relocated. A near call goes to CS:imm, so the
+    // target frame is the frame of the calling code: every call through X
+    // and every store to X must sit in one code frame F (one segment, so in
+    // the multi-segment models also one module and one DS), DS known (a COM,
+    // or a known DGROUP). Targets are seeded only when F is the entry frame
+    // (the rebuild walks extra entries in the entry frame only).
     if (ds >= 0)
     {
-        std::set<uint32_t> called;
+        std::map<uint32_t, std::set<int64_t>> cell_frames;
         std::vector<std::pair<uint32_t, uint32_t>> stores;
+        std::set<uint32_t> called;
         for (size_t j = 0; j < code.size(); ++j)
         {
             const EmitUnit& u = units_[code[j]];
             const uint8_t* b = img.data() + u.lin;
+            const auto fit = frame_of_.find(u.lin);
+            const int64_t fr = fit != frame_of_.end() ? fit->second : -1;
             if (u.size == 4 && b[0] == 0xFF && b[1] == 0x16)
+            {
                 called.insert(b[2] | (b[3] << 8));
+                cell_frames[b[2] | (b[3] << 8)].insert(fr);
+            }
             else if (u.size == 6 && b[0] == 0xC7 && b[1] == 0x06)
+            {
                 stores.emplace_back(b[2] | (b[3] << 8), b[4] | (b[5] << 8));
+                cell_frames[b[2] | (b[3] << 8)].insert(fr);
+            }
         }
         for (const auto& [x, v] : stores)
-            if (called.count(x) && !in_.reloc_at.count(static_cast<uint32_t>(ds) + x) && want(ef + v))
+        {
+            if (!called.count(x) || in_.reloc_at.count(static_cast<uint32_t>(ds) + x))
+                continue;
+            const std::set<int64_t>& fs = cell_frames[x];
+            if (fs.size() != 1 || *fs.begin() != static_cast<int64_t>(ef))
+                continue;
+            if (want(ef + v))
                 ++n_ptr_roots_;
+        }
     }
     // INT 21h / AH=25h with DS = CS.
     for (size_t j = 0; j < code.size(); ++j)
