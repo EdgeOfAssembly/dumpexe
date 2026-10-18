@@ -4450,7 +4450,8 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
                                                      const std::vector<uint8_t>* file = nullptr,
                                                      size_t image_file_off = 0,
                                                      uint32_t entry_frame = 0,
-                                                     const std::function<CfgGraph(std::span<const CfgLin>)>& rebuild = {})
+                                                     const std::function<CfgGraph(std::span<const CfgLin>)>& rebuild = {},
+                                                     std::vector<std::pair<CfgLin, int32_t>>* far_seeds = nullptr)
 {
     dx::EmitInput in;
     in.image = &image;
@@ -4727,11 +4728,13 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
     size_t st_init = 0;
     size_t st_vec = 0;
     size_t st_ptr = 0;
+    size_t st_far = 0;
     while (rebuild && fix_rounds < 16)
     {
         std::vector<uint32_t> want = emp->want_roots();
         st_init += emp->init_roots();
         st_vec += emp->vector_roots();
+        st_far += emp->far_vector_roots();
         st_ptr += emp->ptr_roots();
         for (uint32_t t : sim_roots(*emp))
         {
@@ -4739,7 +4742,8 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
             if (std::find(seeds.begin(), seeds.end(), t) == seeds.end())
                 ++sim_seeded;
         }
-        if (want.empty())
+        const bool want_far = far_seeds != nullptr && !emp->want_far_roots().empty();
+        if (want.empty() && !want_far)
             break;
         size_t added = 0;
         for (uint32_t t : want)
@@ -4748,6 +4752,14 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
                 seeds.push_back(t);
                 ++added;
             }
+        // Far interrupt handlers in their own frame; the rebuild reads them.
+        if (want_far)
+            for (const auto& fs : emp->want_far_roots())
+                if (std::find(far_seeds->begin(), far_seeds->end(), fs) == far_seeds->end())
+                {
+                    far_seeds->push_back(fs);
+                    ++added;
+                }
         if (added == 0)
             break;
         std::sort(seeds.begin(), seeds.end());
@@ -4846,6 +4858,10 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
         hdr.push_back(std::format("startup entries: {} init/exit table record(s), {} DS=CS interrupt handler(s), "
                                   "{} stored code pointer(s) (seeded as entries)",
                                   st_init, st_vec, st_ptr));
+    if (st_far != 0)
+        hdr.push_back(std::format("far interrupt handlers: {} (INT 21h/25h with a relocated DS; seeded as entries in "
+                                  "their own segment)",
+                                  st_far));
     if (em.value_tables() + em.value_strings() != 0)
         hdr.push_back(std::format("value references: {} bounded jump table(s) ({} entries), {} $-string pointer(s)",
                                   em.value_tables(), em.off_words().size() - em.value_pointers(), em.value_strings()));
@@ -4983,6 +4999,7 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
         kind_out = ListingExportKind::Uasm;
         if (opts.uasm_verified)
         {
+            std::vector<std::pair<CfgLin, int32_t>> far_extra;
             out_text = listing_emit_uasm_verified(g, image, entry_ip, opts, source_name,
                                                   uasm_com, uasm_com_psp, relocs, n_insns,
                                                   uasm_status, &fileData, image_file_off,
@@ -4992,8 +5009,9 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
                                                           fileData, image_file_off, len, entry_ip, cs_seg,
                                                           file_cs, cfg_opts, relocs, entry_seg_base,
                                                           uasm_com ? dx::Fmt::Com : dx::Fmt::Mz, uasm_com,
-                                                          extra);
-                                                  });
+                                                          extra, far_extra);
+                                                  },
+                                                  &far_extra);
         }
         else
         {

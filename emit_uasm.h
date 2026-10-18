@@ -15,6 +15,7 @@
 #define DX_EMIT_UASM_H
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include "pair_table.h"
 #include <cstdint>
@@ -217,6 +218,8 @@ private:
     void add_value_refs();
     void scan_cstrings();
     void find_main_hint();
+    int64_t mask_bound(const std::vector<size_t>& code, size_t j, uint8_t rm);
+    bool contiguous_units(size_t a, size_t b) const { return units_[a].lin + units_[a].size == units_[b].lin; }
     bool exit_like(uint32_t y) const;
     std::set<uint32_t> cstr_scanned_;
     int64_t main_hint_ = -1;
@@ -227,6 +230,8 @@ private:
     size_t n_init_roots_ = 0;
     size_t n_vector_roots_ = 0;
     size_t n_ptr_roots_ = 0;
+    size_t n_far_vec_roots_ = 0;
+    std::vector<std::pair<uint32_t, int32_t>> want_far_roots_;
     template <class FrameOk, class InData>
     void add_pointer_refs(const std::vector<size_t>& code, FrameOk&& frame_ok, InData&& in_data);
     std::map<uint32_t, uint32_t> str_len_;          ///< P4 typed strings
@@ -289,6 +294,10 @@ public:
     size_t init_roots() const { return n_init_roots_; }
     size_t vector_roots() const { return n_vector_roots_; }
     size_t ptr_roots() const { return n_ptr_roots_; }
+    /// FP emulator coverage: INT 21h/25h handlers whose DS is a relocated
+    /// segment (linear, frame), still in data.
+    size_t far_vector_roots() const { return n_far_vec_roots_; }
+    const std::vector<std::pair<uint32_t, int32_t>>& want_far_roots() const { return want_far_roots_; }
     size_t typed_strings() const { return str_len_.size() - cstr_scanned_.size(); }
     /// U2: NUL-terminated strings found by the data scan (not by a reference).
     size_t scanned_cstrings() const { return cstr_scanned_.size(); }
@@ -913,8 +922,10 @@ inline void UasmEmitter::add_value_refs()
         const uint8_t* b = img.data() + u.lin;
         if (has_off_ref(u))
             continue;
-        // Jump table: [2E] FF A7 lo hi.
-        const bool csp = u.size == 5 && b[0] == 0x2E && b[1] == 0xFF && b[2] == 0xA7;
+        // Jump table: [2E] FF A7 lo hi (also a call table, FF 97, with CS).
+        const bool csp = u.size == 5 && b[0] == 0x2E && b[1] == 0xFF &&
+                         (b[2] == 0xA7 || b[2] == 0x97 || b[2] == 0xA4 || b[2] == 0xA5 || b[2] == 0xA6 ||
+                          b[2] == 0x94 || b[2] == 0x95 || b[2] == 0x96);
         const bool nop = u.size == 4 && b[0] == 0xFF && b[1] == 0xA7;
         if ((csp && (pure_com || frame_ok(frame_of_[u.lin]))) || (nop && pure_com))
         {
@@ -924,7 +935,10 @@ inline void UasmEmitter::add_value_refs()
             // Bound: cmp r, imm followed by an unsigned jcc, all contiguous.
             int64_t count = -1;
             bool doubled_after_cmp = false;
-            for (size_t back = 1; back <= 8 && back <= j; ++back)
+            // Value-mask bound (FP emulator): see mask_bound.
+            if (csp && count < 0)
+                count = mask_bound(code, j, static_cast<uint8_t>(b[2] & 7));
+            for (size_t back = 1; count < 0 && (!csp || (b[2] & 7) == 7) && back <= 8 && back <= j; ++back)
             {
                 const EmitUnit& c = units_[code[j - back]];
                 const EmitUnit& nx = units_[code[j - back + 1]];
@@ -1004,6 +1018,14 @@ inline void UasmEmitter::add_value_refs()
                     const auto ef = frame_of_.find(in_.entry);
                     if (ef != frame_of_.end() && ef->second == fr)
                         want_roots_.insert(want_roots_.end(), undecoded.begin(), undecoded.end());
+                    else if (!pure_com && fr >= 0)
+                        // Another code segment: seeded in its own frame.
+                        for (uint32_t t : undecoded)
+                        {
+                            const std::pair<uint32_t, int32_t> fs{t, static_cast<int32_t>(fr)};
+                            if (std::find(want_far_roots_.begin(), want_far_roots_.end(), fs) == want_far_roots_.end())
+                                want_far_roots_.push_back(fs);
+                        }
                     ok = false;
                 }
                 if (ok)
@@ -1434,6 +1456,328 @@ inline void UasmEmitter::add_startup_roots(const std::vector<size_t>& code, InDa
         if (want(static_cast<uint32_t>(fr + found)))
             ++n_vector_roots_;
     }
+    // INT 21h / AH=25h with DS = a relocated segment (the Borland FP
+    // emulator hooks INT 34h-3Eh this way). In the contiguous run of at most
+    // 32 instructions before `int 21h`:
+    //  - `mov r16, seg` (relocated word) then `mov ds, r16`, and a later
+    //    `mov dx, imm`: the handler is seg:imm;
+    //  - `lds dx, [bp+d]`: each `mov word ptr [bp+d], imm` paired with the
+    //    next `mov word ptr [bp+d+2], seg` (relocated word) in the run is a
+    //    handler seg:imm. Any other write to [bp+d] or [bp+d+2], or a call,
+    //    rejects the run.
+    // AH must be 25h at the `int 21h` (set by `mov ax, 25xxh` or
+    // `mov ah, 25h` after the last other write to AX/AH in the run).
+    auto far_want = [&](uint32_t seg, uint32_t off) -> bool {
+        const uint32_t fr = seg * 16u;
+        const uint32_t t = fr + off;
+        if (t >= n || t < in_.emit_lo || fr == ef)
+            return false;
+        const int ci = unit_covering(t);
+        if (ci < 0 || units_[static_cast<size_t>(ci)].code)
+            return false;
+        for (const auto& [lo, hi] : in_.force_data)
+            if (t >= lo && t < hi)
+                return false;
+        const std::pair<uint32_t, int32_t> fs{t, static_cast<int32_t>(fr)};
+        if (std::find(want_far_roots_.begin(), want_far_roots_.end(), fs) != want_far_roots_.end())
+            return false;
+        want_far_roots_.push_back(fs);
+        return true;
+    };
+    for (size_t j = 0; j < code.size(); ++j)
+    {
+        const EmitUnit& u = units_[code[j]];
+        if (u.size != 2 || img[u.lin] != 0xCD || img[u.lin + 1] != 0x21)
+            continue;
+        // The handler's frame comes from the relocated segment value, so
+        // the run's own frame does not matter (a far-call target can be
+        // decoded partly from another frame).
+        size_t k0 = j;
+        while (k0 > 0 && j - k0 < 32 && contiguous(k0 - 1, j))
+            --k0;
+        bool ah25 = false;
+        int64_t ds_seg = -1;     // from mov r, seg / mov ds, r
+        int64_t dx = -1;
+        int lds_d = 1000;        // [bp+d] of the last lds dx
+        std::map<int, std::vector<std::pair<uint32_t, bool>>> st; // d -> (value, seg relocated)
+        std::set<int> bad_d;
+        bool bad = false;
+        for (size_t k = k0; k < j && !bad; ++k)
+        {
+            const EmitUnit& w = units_[code[k]];
+            const uint8_t* wb = img.data() + w.lin;
+            if (w.size == 3 && wb[0] == 0xB8)
+                ah25 = wb[2] == 0x25;
+            else if (w.size == 2 && wb[0] == 0xB4)
+                ah25 = wb[1] == 0x25;
+            else if (w.size == 1 && wb[0] == 0x40)
+                ah25 = false;
+            if (w.size == 3 && wb[0] >= 0xB8 && wb[0] <= 0xBF && in_.reloc_at.count(w.lin + 1) && k + 1 < j)
+            {
+                const EmitUnit& m = units_[code[k + 1]];
+                if (m.size == 2 && img[m.lin] == 0x8E && img[m.lin + 1] == static_cast<uint8_t>(0xD8 | (wb[0] - 0xB8)))
+                {
+                    ds_seg = wb[1] | (wb[2] << 8);
+                    dx = -1;
+                    lds_d = 1000;
+                    ++k;
+                    continue;
+                }
+            }
+            if (w.size == 2 && wb[0] == 0x8E && (wb[1] & 0xF8) == 0xD8)
+            {
+                ds_seg = -1; // mov ds, r from elsewhere
+                lds_d = 1000;
+            }
+            else if (w.size == 1 && wb[0] == 0x1F)
+            {
+                ds_seg = -1;
+                lds_d = 1000;
+            }
+            else if (w.size == 3 && wb[0] == 0xBA)
+            {
+                dx = wb[1] | (wb[2] << 8);
+                lds_d = 1000;
+            }
+            else if (w.size == 3 && wb[0] == 0xC5 && wb[1] == 0x56)
+            {
+                lds_d = static_cast<int8_t>(wb[2]);
+                ds_seg = -1;
+                dx = -1;
+            }
+            else if (w.size == 5 && wb[0] == 0xC7 && wb[1] == 0x46)
+            {
+                const int d = static_cast<int8_t>(wb[2]);
+                st[d].emplace_back(static_cast<uint32_t>(wb[3] | (wb[4] << 8)), in_.reloc_at.count(w.lin + 3) != 0);
+            }
+            else if (wb[0] == 0xE8 || wb[0] == 0x9A || (wb[0] == 0xFF && w.size >= 2 && (((wb[1] >> 3) & 7) == 2 || ((wb[1] >> 3) & 7) == 3)))
+                bad = true;
+            else if (w.size == 3 && (wb[0] == 0x88 || wb[0] == 0x89 || wb[0] == 0xC6 || wb[0] == 0xFF || wb[0] == 0x8F ||
+                                     wb[0] == 0xD1 || wb[0] == 0x01 || wb[0] == 0x29 || wb[0] == 0x31 || wb[0] == 0x09 ||
+                                     wb[0] == 0x21) && (wb[1] & 0xC7) == 0x46)
+                bad_d.insert(static_cast<int8_t>(wb[2])); // other write to [bp+d]
+        }
+        if (bad || !ah25)
+            continue;
+        if (ds_seg >= 0 && dx >= 0)
+        {
+            if (far_want(static_cast<uint32_t>(ds_seg), static_cast<uint32_t>(dx)))
+                ++n_far_vec_roots_;
+            continue;
+        }
+        if (lds_d == 1000 || bad_d.count(lds_d) || bad_d.count(lds_d + 1) || bad_d.count(lds_d + 2) || bad_d.count(lds_d + 3))
+            continue;
+        const auto& offs = st[lds_d];
+        const auto& segs = st[lds_d + 2];
+        if (offs.empty() || offs.size() != segs.size())
+            continue;
+        bool all_reloc = true;
+        for (const auto& [v, r] : segs)
+            all_reloc &= r;
+        if (!all_reloc)
+            continue;
+        for (size_t q = 0; q < offs.size(); ++q)
+            if (far_want(segs[q].first, offs[q].first))
+                ++n_far_vec_roots_;
+    }
+}
+
+/**
+ * @brief FP emulator jump tables: entry count for `jmp|call cs:[R+T]` at
+ *        code[j] (R = BX, BP, SI or DI by @p rm), or -1.
+ *
+ * Bit-mask abstract interpretation over the contiguous run of at most 48
+ * instructions before the jump. The run starts after the last call or
+ * backward branch, and no branch from outside the run may land inside it.
+ * Each 16-bit register holds a mask of bits that may be set (unknown =
+ * FFFFh): mov imm sets it, and/xor-self/shifts/xchg/mov reg-reg follow it,
+ * any other write (Capstone register access) makes it unknown. Forward
+ * branches inside the run join their state (OR) at the target. At the jump
+ * the index mask must be 2^k - 2 (k >= 2): the index is an even value
+ * 0..mask, so the word entries are 0..mask/2.
+ */
+inline int64_t UasmEmitter::mask_bound(const std::vector<size_t>& code, size_t j, uint8_t rm)
+{
+    const std::vector<uint8_t>& img = *in_.image;
+    size_t s0 = j;
+    while (s0 > 0 && j - s0 < 48 && contiguous_units(code[s0 - 1], code[s0]))
+    {
+        const EmitUnit& w = units_[code[s0 - 1]];
+        const uint8_t* wb = img.data() + w.lin;
+        if (wb[0] == 0xE8 || wb[0] == 0x9A || (wb[0] == 0xFF && w.size >= 2 && (((wb[1] >> 3) & 7) == 2 || ((wb[1] >> 3) & 7) == 3)))
+            break;
+        --s0;
+    }
+    if (s0 == j)
+        return -1;
+    const uint32_t lo = units_[code[s0]].lin;
+    const uint32_t hi = units_[code[j]].lin;
+    auto br_target = [&](const EmitUnit& b) -> int64_t {
+        const uint8_t* bb = img.data() + b.lin;
+        const auto fit = frame_of_.find(b.lin);
+        const int64_t fr = fit != frame_of_.end() ? fit->second : 0;
+        const uint32_t nx = b.lin + b.size;
+        if (b.size == 2 && (bb[0] == 0xEB || (bb[0] >= 0x70 && bb[0] <= 0x7F) || (bb[0] >= 0xE0 && bb[0] <= 0xE3)))
+            return fr + ((nx - fr + static_cast<int8_t>(bb[1])) & 0xFFFF);
+        if (b.size == 3 && (bb[0] == 0xE9 || bb[0] == 0xE8))
+            return fr + ((nx - fr + static_cast<int16_t>(bb[1] | (bb[2] << 8))) & 0xFFFF);
+        return -1;
+    };
+    // Entry points inside (lo, hi]: a branch from outside the run, any
+    // backward branch, or a table entry. The analysis starts at the last
+    // one, where nothing is known about the registers.
+    std::set<uint32_t> entries;
+    for (size_t q = 0; q < code.size(); ++q)
+    {
+        const EmitUnit& b = units_[code[q]];
+        const int64_t t = br_target(b);
+        if (t <= static_cast<int64_t>(lo) || t > static_cast<int64_t>(hi))
+            continue;
+        if (b.lin < lo || b.lin > hi || t <= static_cast<int64_t>(b.lin))
+            entries.insert(static_cast<uint32_t>(t));
+    }
+    for (const auto& [at, ow] : off_words_)
+        if (ow.target > lo && ow.target <= hi)
+            entries.insert(ow.target);
+    if (!entries.empty())
+    {
+        const uint32_t last = *entries.rbegin();
+        if (last == hi)
+            return -1;
+        while (units_[code[s0]].lin < last)
+            ++s0;
+        if (units_[code[s0]].lin != last || s0 >= j)
+            return -1;
+    }
+    const uint32_t lo2 = units_[code[s0]].lin;
+    using St = std::array<uint32_t, 8>; // ax cx dx bx sp bp si di
+    const St unknown{0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
+    St st = unknown;
+    bool live = true;
+    std::map<uint32_t, St> pend;
+    auto join = [](St& a, const St& b) { for (size_t i = 0; i < 8; ++i) a[i] |= b[i]; };
+    auto get8 = [&](const St& x, uint8_t r) -> uint32_t { return r < 4 ? (x[r] & 0xFF) : ((x[r - 4] >> 8) & 0xFF); };
+    auto set8 = [&](St& x, uint8_t r, uint32_t v) {
+        if (r < 4)
+            x[r] = (x[r] & 0xFF00) | (v & 0xFF);
+        else
+            x[r - 4] = (x[r - 4] & 0x00FF) | ((v & 0xFF) << 8);
+    };
+    auto reg16 = [](unsigned cr) -> int {
+        switch (cr)
+        {
+        case X86_REG_AX: case X86_REG_AL: case X86_REG_AH: case X86_REG_EAX: return 0;
+        case X86_REG_CX: case X86_REG_CL: case X86_REG_CH: case X86_REG_ECX: return 1;
+        case X86_REG_DX: case X86_REG_DL: case X86_REG_DH: case X86_REG_EDX: return 2;
+        case X86_REG_BX: case X86_REG_BL: case X86_REG_BH: case X86_REG_EBX: return 3;
+        case X86_REG_SP: case X86_REG_ESP: return 4;
+        case X86_REG_BP: case X86_REG_EBP: return 5;
+        case X86_REG_SI: case X86_REG_ESI: return 6;
+        case X86_REG_DI: case X86_REG_EDI: return 7;
+        default: return -1;
+        }
+    };
+    for (size_t k = s0; k < j; ++k)
+    {
+        const EmitUnit& w = units_[code[k]];
+        if (auto it = pend.find(w.lin); it != pend.end())
+        {
+            if (live)
+                join(st, it->second);
+            else
+                st = it->second;
+            live = true;
+        }
+        if (!live)
+            continue;
+        const uint8_t* wb = img.data() + w.lin;
+        const uint8_t op = wb[0];
+        const uint8_t md = w.size >= 2 ? wb[1] : 0;
+        const bool rr = w.size == 2 && (md >> 6) == 3;
+        const int64_t t = br_target(w);
+        if (t >= 0)
+        {
+            if (t <= static_cast<int64_t>(w.lin) && t >= static_cast<int64_t>(lo2))
+                return -1; // loop inside the run
+            if (t > static_cast<int64_t>(w.lin) && t <= static_cast<int64_t>(hi))
+            {
+                auto [it, fresh] = pend.emplace(static_cast<uint32_t>(t), st);
+                if (!fresh)
+                    join(it->second, st);
+            }
+            if (op == 0xEB || op == 0xE9)
+                live = false;
+            continue;
+        }
+        if (w.size == 3 && op >= 0xB8 && op <= 0xBF)
+            st[op - 0xB8] = wb[1] | (wb[2] << 8);
+        else if (w.size == 2 && op >= 0xB0 && op <= 0xB7)
+            set8(st, op - 0xB0, wb[1]);
+        else if (rr && (op == 0x22 || op == 0x20))
+        {
+            const uint8_t d = op == 0x22 ? (md >> 3) & 7 : md & 7, sr = op == 0x22 ? md & 7 : (md >> 3) & 7;
+            set8(st, d, get8(st, d) & get8(st, sr));
+        }
+        else if (rr && (op == 0x23 || op == 0x21))
+        {
+            const uint8_t d = op == 0x23 ? (md >> 3) & 7 : md & 7, sr = op == 0x23 ? md & 7 : (md >> 3) & 7;
+            st[d] &= st[sr];
+        }
+        else if (w.size == 3 && op == 0x80 && (md & 0xF8) == 0xE0)
+            set8(st, md & 7, get8(st, md & 7) & wb[2]);
+        else if (w.size == 3 && op == 0x83 && (md & 0xF8) == 0xE0)
+            st[md & 7] &= static_cast<uint32_t>(static_cast<int16_t>(static_cast<int8_t>(wb[2]))) & 0xFFFF;
+        else if (w.size == 4 && op == 0x81 && (md & 0xF8) == 0xE0)
+            st[md & 7] &= static_cast<uint32_t>(wb[2] | (wb[3] << 8));
+        else if (w.size == 2 && op == 0x24)
+            set8(st, 0, get8(st, 0) & wb[1]);
+        else if (w.size == 3 && op == 0x25)
+            st[0] &= static_cast<uint32_t>(wb[1] | (wb[2] << 8));
+        else if (rr && op == 0xD1 && ((md >> 3) & 7) == 5)
+            st[md & 7] >>= 1;
+        else if (rr && op == 0xD1 && ((md >> 3) & 7) == 4)
+            st[md & 7] = (st[md & 7] << 1) & 0xFFFF;
+        else if (w.size == 1 && op >= 0x91 && op <= 0x97)
+            std::swap(st[0], st[op - 0x90]);
+        else if (rr && op == 0x87)
+            std::swap(st[(md >> 3) & 7], st[md & 7]);
+        else if (rr && op == 0x8B)
+            st[(md >> 3) & 7] = st[md & 7];
+        else if (rr && op == 0x8A)
+            set8(st, (md >> 3) & 7, get8(st, md & 7));
+        else if (rr && (op == 0x33 || op == 0x31 || op == 0x2B || op == 0x29) && ((md >> 3) & 7) == (md & 7))
+            st[md & 7] = 0;
+        else
+        {
+            const cs_insn* ci = decode(w);
+            if (ci == nullptr)
+                return -1;
+            cs_regs rd, wr;
+            uint8_t nr = 0, nw = 0;
+            if (cs_regs_access(cs_, ci, rd, &nr, wr, &nw) != CS_ERR_OK)
+                return -1;
+            for (uint8_t q = 0; q < nw; ++q)
+                if (const int r = reg16(wr[q]); r >= 0)
+                    st[static_cast<size_t>(r)] = 0xFFFF;
+        }
+    }
+    if (auto it = pend.find(hi); it != pend.end())
+    {
+        if (live)
+            join(st, it->second);
+        else
+            st = it->second;
+        live = true;
+    }
+    if (!live)
+        return -1;
+    static constexpr uint8_t idx[8] = {0, 0, 0, 0, 6, 7, 5, 3}; // rm -> reg
+    if (rm < 4)
+        return -1;
+    const uint32_t m = st[idx[rm]];
+    if (m < 2 || m > 0x1FE || (m & 1) != 0 || ((m + 2) & m) != 0) // at most 256 entries
+        return -1;
+    return m / 2 + 1;
 }
 
 inline UasmEmitter::~UasmEmitter()

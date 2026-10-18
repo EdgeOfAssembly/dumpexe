@@ -310,6 +310,23 @@ The header line
 .B "; startup entries: N init/exit table record(s), M DS=CS interrupt handler(s), K stored code pointer(s)"
 counts them.
 .PP
+Far interrupt handlers: an INT 21h function 25h whose DS is a relocated
+segment
+.RB ( "mov r, seg / mov ds, r" " then " "mov dx, imm" ,
+or
+.B "lds dx, [bp+d]"
+with paired relocated
+.B "mov word ptr [bp+d], imm / mov word ptr [bp+d+2], seg"
+stores in the same call-free run) seeds seg:imm as an entry in that
+segment's frame; the header line
+.B "; far interrupt handlers: N"
+counts them. Tables
+.B "jmp|call cs:[bx|bp|si|di+T]"
+are also bounded when a bit-mask interpretation of the call-free run
+before the jump, from its last inner entry point, leaves the index mask
+at 2^k\-2 (at most 256 entries); targets outside the entry segment are
+seeded in their own frame.
+.PP
 Segment layout rule
 .RB ( \-\-uasm\-verified
 only, Borland C++ 3.1-compatible startup, not tiny):

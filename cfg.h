@@ -953,7 +953,8 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
                                  int32_t entry_frame = 0,
                                  dx::Fmt trace_fmt = dx::Fmt::Mz,
                                  bool psp_in_bytes = false,
-                                 std::span<const CfgLin> extra_entries = {})
+                                 std::span<const CfgLin> extra_entries = {},
+                                 std::span<const std::pair<CfgLin, int32_t>> far_entries = {})
 {
     CfgGraph g;
     g.cs_seg = cs_seg;
@@ -1470,6 +1471,14 @@ static inline CfgGraph cfg_build(const std::vector<uint8_t>& image,
         if (cfg_ip_in_image(extra, image.size()) && cfg_in_frame(extra, entry_frame))
         {
             enqueue(extra, entry_frame, dx::Why::Entry, dx::Strength::Proven, extra);
+        }
+    }
+    // Proven entries in their own frame (far interrupt handlers).
+    for (const auto& [lin, frame] : far_entries)
+    {
+        if (cfg_ip_in_image(lin, image.size()) && cfg_in_frame(lin, frame))
+        {
+            enqueue(lin, frame, dx::Why::Entry, dx::Strength::Proven, lin);
         }
     }
     drain();
@@ -3550,7 +3559,8 @@ static inline CfgGraph cfg_build_annotated(const std::vector<uint8_t>& fileData,
                                            int32_t entry_frame = 0,
                                            dx::Fmt trace_fmt = dx::Fmt::Mz,
                                            bool psp_in_bytes = false,
-                                           std::span<const CfgLin> extra_entries = {})
+                                           std::span<const CfgLin> extra_entries = {},
+                                           std::span<const std::pair<CfgLin, int32_t>> far_entries = {})
 {
     CfgGraph empty;
     if (image_file_off >= fileData.size())
@@ -3562,7 +3572,7 @@ static inline CfgGraph cfg_build_annotated(const std::vector<uint8_t>& fileData,
 
     CfgGraph g = cfg_build(image, entry_ip, cs_seg, file_cs, image_file_off,
                            opts.cfgFollowCalls, 20000, relocs, entry_frame,
-                           trace_fmt, psp_in_bytes, extra_entries);
+                           trace_fmt, psp_in_bytes, extra_entries, far_entries);
     cfg_annotate(g, image);
     return g;
 }
