@@ -5,7 +5,9 @@
 # The same holds after the last overlay stub (`int 3Fh` + 3 stub bytes).
 # The next paragraph is seeded when it is a relocated frame that starts
 # with `push bp / mov bp, sp`. Control: with the signature broken (not TP)
-# the padding after the call is decoded as before.
+# the padding after the call is decoded as before, and so it is with two
+# copies of the Halt signature (exactly one is required). Real code after
+# the Halt call (an epilogue) keeps being decoded.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="${DUMPEXE_BIN:-$ROOT/dumpexe}"
@@ -29,7 +31,7 @@ def mz(name, img, relocs):
     for r in relocs:
         h += struct.pack('<HH', r, 0)
     open(os.path.join(td, name), 'wb').write(h + bytes(hl - len(h)) + img)
-def build(name, tp=True, runerror=False):
+def build(name, tp=True, runerror=False, two=False, epilogue=False):
     # A main (0x00), O overlay stub (0x20), P unit proc (0x30),
     # S System (0x40: RunError at S:0, Halt at S:4), DGROUP (0x60).
     img = bytearray(0x70)
@@ -48,12 +50,22 @@ def build(name, tp=True, runerror=False):
         (b'\xfb' if tp else b'\x90') + b'\xa3\x2c\x00\x8b\xc1\x0b\xc3\x74\x00\xb8\x00\x4c\xcd\x21'
     img[0x40:0x40 + len(s)] = s
     img[0x60:0x62] = b'\x03\x00'                     # dw seg P (relocated)
-    mz(name, bytes(img), [1, 19, 26, 0x49, 0x60])
+    relocs = [1, 19, 26, 0x49, 0x60]
+    if epilogue:
+        img[28:30] = b'\x5d\xcb'                     # pop bp / retf after the Halt call
+    if two:
+        # A second copy of the Halt signature (relocated too): ambiguous.
+        img += bytearray(0x20)
+        img[0x70:0x70 + len(s) - 4] = s[4:]
+        relocs.append(0x75)
+    mz(name, bytes(img), relocs)
 build('halt.exe')
 build('runerr.exe', runerror=True)
 build('nontp.exe', tp=False)
+build('twohalt.exe', two=True)
+build('epilog.exe', epilogue=True)
 PY
-for f in halt runerr nontp; do (cd "$TD" && "$BIN" --uasm --uasm-verified --uasm-bin "$UASM_BIN" -o $f.asm $f.exe >/dev/null 2>&1) || true; done
+for f in halt runerr nontp twohalt epilog; do (cd "$TD" && "$BIN" --uasm --uasm-verified --uasm-bin "$UASM_BIN" -o $f.asm $f.exe >/dev/null 2>&1) || true; done
 for f in halt runerr; do
   check ${f}_verified grep -q '^; VERIFIED identical' "$TD/$f.asm"
   check ${f}_padding_data bash -c "! grep -qE '^    add byte ptr \[bx\+si\], al	; 000(1[C-F]|2[5-9A-F]):' '$TD/$f.asm'"
@@ -62,5 +74,13 @@ done
 check nontp_verified grep -q '^; VERIFIED identical' "$TD/nontp.asm"
 check nontp_padding_decoded grep -qE '^    add byte ptr \[bx\+si\], al	; 0001C: 00 00' "$TD/nontp.asm"
 check nontp_proc_not_seeded bash -c "! grep -qE '^    mov ax, 1h	; 00033: B8 01 00' '$TD/nontp.asm'"
+# Exactly-one-copy guard: two Halt signatures, no Halt rule.
+check twohalt_verified grep -q '^; VERIFIED identical' "$TD/twohalt.asm"
+check twohalt_padding_decoded grep -qE '^    add byte ptr \[bx\+si\], al	; 0001C: 00 00' "$TD/twohalt.asm"
+check twohalt_proc_not_seeded bash -c "! grep -qE '^    mov ax, 1h	; 00033: B8 01 00' '$TD/twohalt.asm'"
+# Real code after the Halt call (an epilogue) is still decoded.
+check epilog_verified grep -q '^; VERIFIED identical' "$TD/epilog.asm"
+check epilog_pop_bp grep -qE '^    pop bp	; 0001C: 5D' "$TD/epilog.asm"
+check epilog_retf grep -qE '^    retf	; 0001D: CB' "$TD/epilog.asm"
 echo "tp_noreturn passed=$pass failed=$fail"
 [[ $fail -eq 0 ]]
