@@ -935,9 +935,6 @@ inline void UasmEmitter::add_value_refs()
             // Bound: cmp r, imm followed by an unsigned jcc, all contiguous.
             int64_t count = -1;
             bool doubled_after_cmp = false;
-            // Value-mask bound (FP emulator): see mask_bound.
-            if (csp && count < 0)
-                count = mask_bound(code, j, static_cast<uint8_t>(b[2] & 7));
             for (size_t back = 1; count < 0 && (!csp || (b[2] & 7) == 7) && back <= 8 && back <= j; ++back)
             {
                 const EmitUnit& c = units_[code[j - back]];
@@ -977,6 +974,10 @@ inline void UasmEmitter::add_value_refs()
                     count = (count + 1) / 2;
                 break;
             }
+            // Value-mask bound (FP emulator), only when no compare bounds
+            // the index: see mask_bound.
+            if (csp && count < 0)
+                count = mask_bound(code, j, static_cast<uint8_t>(b[2] & 7));
             if (count > 0 && count <= 256)
             {
                 const uint32_t T = static_cast<uint32_t>(fr + disp);
