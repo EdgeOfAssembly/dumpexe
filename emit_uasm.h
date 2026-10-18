@@ -231,6 +231,8 @@ private:
     size_t n_vector_roots_ = 0;
     size_t n_ptr_roots_ = 0;
     size_t n_far_vec_roots_ = 0;
+    size_t n_cb_roots_ = 0;
+    void add_callback_args(const std::vector<size_t>& code);
     std::vector<std::pair<uint32_t, int32_t>> want_far_roots_;
     template <class FrameOk, class InData>
     void add_pointer_refs(const std::vector<size_t>& code, FrameOk&& frame_ok, InData&& in_data);
@@ -297,6 +299,8 @@ public:
     /// FP emulator coverage: INT 21h/25h handlers whose DS is a relocated
     /// segment (linear, frame), still in data.
     size_t far_vector_roots() const { return n_far_vec_roots_; }
+    /// Code pointers passed to a callee that calls through that parameter.
+    size_t callback_roots() const { return n_cb_roots_; }
     const std::vector<std::pair<uint32_t, int32_t>>& want_far_roots() const { return want_far_roots_; }
     size_t typed_strings() const { return str_len_.size() - cstr_scanned_.size(); }
     /// U2: NUL-terminated strings found by the data scan (not by a reference).
@@ -1102,6 +1106,8 @@ inline void UasmEmitter::add_value_refs()
     }
     add_pointer_refs(code, frame_ok, in_data);
     add_startup_roots(code, in_data);
+    if (!pure_com)
+        add_callback_args(code);
 }
 
 /**
@@ -1585,6 +1591,327 @@ inline void UasmEmitter::add_startup_roots(const std::vector<size_t>& code, InDa
         for (size_t q = 0; q < offs.size(); ++q)
             if (far_want(segs[q].first, offs[q].first))
                 ++n_far_vec_roots_;
+    }
+}
+
+/**
+ * @brief Code pointers passed as arguments (Borland printf passes __FPUTN).
+ *
+ * For a near `call F` (E8) in decoded code, frame fr:
+ *  - F starts with `push bp / mov bp, sp` and, in its body (units in frame
+ *    fr from F up to the next near-call target, at most 4 KB), BP is written
+ *    only by that prologue and `pop bp`;
+ *  - F does `call word ptr [bp+d]` (FF 56 d), d = 4 + 2 * slot, and every
+ *    other use of [bp+d] in the body is a read (push, mov r, cmp);
+ *  - the caller's contiguous run before the call, with no branch or table
+ *    entry into it after its start and no other SP write, pushes the slot-th
+ *    word (counting back from the call) as `push imm` or `push r` where the
+ *    last write to r in the run is `mov r, imm` (not relocated).
+ * Then CS:imm (frame fr) is a code entry: it is seeded when it lies in data,
+ * and the immediate becomes a symbolic offset when it starts an instruction.
+ */
+inline void UasmEmitter::add_callback_args(const std::vector<size_t>& code)
+{
+    const std::vector<uint8_t>& img = *in_.image;
+    const uint32_t n = static_cast<uint32_t>(img.size());
+    const auto efit = frame_of_.find(in_.entry);
+    if (efit == frame_of_.end() || efit->second < 0)
+        return;
+    const int64_t ef = efit->second;
+    auto frame = [&](uint32_t lin) -> int64_t {
+        const auto it = frame_of_.find(lin);
+        return it == frame_of_.end() ? -1 : it->second;
+    };
+    auto rel_target = [&](const EmitUnit& w) -> int64_t {
+        const uint8_t* bb = img.data() + w.lin;
+        const int64_t fr = frame(w.lin);
+        if (fr < 0)
+            return -1;
+        const uint32_t nx = w.lin + w.size;
+        if (w.size == 2 && (bb[0] == 0xEB || (bb[0] >= 0x70 && bb[0] <= 0x7F) || (bb[0] >= 0xE0 && bb[0] <= 0xE3)))
+            return fr + ((nx - fr + static_cast<int8_t>(bb[1])) & 0xFFFF);
+        if (w.size == 3 && (bb[0] == 0xE9 || bb[0] == 0xE8))
+            return fr + ((nx - fr + static_cast<int16_t>(bb[1] | (bb[2] << 8))) & 0xFFFF);
+        return -1;
+    };
+    auto reg_written = [&](const EmitUnit& w, int want) -> int {
+        const cs_insn* ci = decode(w);
+        if (ci == nullptr)
+            return -1;
+        cs_regs rd, wr;
+        uint8_t nr = 0, nw = 0;
+        if (cs_regs_access(cs_, ci, rd, &nr, wr, &nw) != CS_ERR_OK)
+            return -1;
+        static constexpr unsigned regs[8][4] = {
+            {X86_REG_AX, X86_REG_AL, X86_REG_AH, X86_REG_EAX}, {X86_REG_CX, X86_REG_CL, X86_REG_CH, X86_REG_ECX},
+            {X86_REG_DX, X86_REG_DL, X86_REG_DH, X86_REG_EDX}, {X86_REG_BX, X86_REG_BL, X86_REG_BH, X86_REG_EBX},
+            {X86_REG_SP, X86_REG_ESP, X86_REG_SP, X86_REG_ESP}, {X86_REG_BP, X86_REG_EBP, X86_REG_BP, X86_REG_EBP},
+            {X86_REG_SI, X86_REG_ESI, X86_REG_SI, X86_REG_ESI}, {X86_REG_DI, X86_REG_EDI, X86_REG_DI, X86_REG_EDI}};
+        for (uint8_t q = 0; q < nw; ++q)
+            for (unsigned r : regs[want])
+                if (wr[q] == r)
+                    return 1;
+        return 0;
+    };
+    std::set<uint32_t> entries, callees;
+    for (size_t q = 0; q < code.size(); ++q)
+    {
+        const EmitUnit& w = units_[code[q]];
+        const int64_t t = rel_target(w);
+        if (t < 0)
+            continue;
+        entries.insert(static_cast<uint32_t>(t));
+        if (img[w.lin] == 0xE8)
+            callees.insert(static_cast<uint32_t>(t));
+    }
+    for (const auto& [at, ow] : off_words_)
+        entries.insert(ow.target);
+    std::map<uint32_t, size_t> pos;
+    for (size_t q = 0; q < code.size(); ++q)
+        pos[units_[code[q]].lin] = q;
+    // Callee analysis, cached: slot -> ok.
+    std::map<uint32_t, std::set<int>> callee_slots;
+    auto analyse = [&](uint32_t P, int64_t fr) -> const std::set<int>& {
+        auto [it, fresh] = callee_slots.emplace(P, std::set<int>{});
+        if (!fresh)
+            return it->second;
+        std::set<int>& out = it->second;
+        const auto pit = pos.find(P);
+        if (pit == pos.end() || pit->second + 1 >= code.size())
+            return out;
+        const EmitUnit& a = units_[code[pit->second]];
+        const EmitUnit& b = units_[code[pit->second + 1]];
+        if (a.size != 1 || img[a.lin] != 0x55 || b.lin != a.lin + 1 || b.size != 2 ||
+            !((img[b.lin] == 0x8B && img[b.lin + 1] == 0xEC) || (img[b.lin] == 0x89 && img[b.lin + 1] == 0xE5)))
+            return out;
+        // Body: units reachable from F without entering callees (jumps,
+        // branches, fall-through, resolved cs: jump tables). An unresolved
+        // indirect jump or a unit outside frame fr rejects F.
+        std::set<int> calls;
+        std::map<int, bool> other_use; // d -> written or used otherwise
+        std::set<uint32_t> seen, helpers;
+        std::vector<uint32_t> work{b.lin + 2};
+        seen.insert(b.lin + 2);
+        while (!work.empty())
+        {
+            if (seen.size() > 4096)
+                return out;
+            const uint32_t at = work.back();
+            work.pop_back();
+            const int wi = unit_at(at);
+            if (wi < 0 || !units_[static_cast<size_t>(wi)].code || frame(at) != fr)
+                return out;
+            const EmitUnit& w = units_[static_cast<size_t>(wi)];
+            const uint8_t* wb = img.data() + w.lin;
+            auto go = [&](uint32_t t) {
+                if (seen.insert(t).second)
+                    work.push_back(t);
+            };
+            if (!(w.size == 1 && wb[0] == 0x5D) && reg_written(w, 5) != 0)
+                return out; // BP rewritten (or undecodable)
+            // [bp+d8] operands: modrm mod=01 rm=110, no prefix.
+            if (w.size >= 3 && (wb[1] & 0xC7) == 0x46)
+            {
+                const int d = static_cast<int8_t>(wb[2]);
+                const uint8_t op = wb[0], rg = (wb[1] >> 3) & 7;
+                if (op == 0xFF && rg == 2 && w.size == 3)
+                    calls.insert(d);
+                else if ((op == 0xFF && rg == 6) || op == 0x8B || op == 0x8A || op == 0x3B || op == 0x3A ||
+                         (op == 0x83 && rg == 7) || (op == 0x80 && rg == 7) || (op == 0x81 && rg == 7))
+                    ;
+                else
+                    other_use[d] = true;
+            }
+            const uint8_t op = wb[0];
+            const int64_t t = rel_target(w);
+            const uint32_t nx = w.lin + w.size;
+            if (op == 0xC2 || op == 0xC3 || op == 0xCA || op == 0xCB || op == 0xCF)
+                continue;
+            if (op == 0xEB || op == 0xE9)
+            {
+                if (t < 0)
+                    return out;
+                go(static_cast<uint32_t>(t));
+                continue;
+            }
+            if (op == 0xE8)
+            {
+                // A local helper without its own frame (no push bp / mov
+                // bp, sp) shares F's BP: it is part of the body, and every
+                // call to it must come from the body (checked below).
+                if (t >= 0 && !(img[static_cast<size_t>(t)] == 0x55 && static_cast<size_t>(t) + 2 < img.size() &&
+                                ((img[t + 1] == 0x8B && img[t + 2] == 0xEC) || (img[t + 1] == 0x89 && img[t + 2] == 0xE5))))
+                {
+                    helpers.insert(static_cast<uint32_t>(t));
+                    go(static_cast<uint32_t>(t));
+                }
+                go(nx);
+                continue;
+            }
+            if (t >= 0)
+            {
+                go(static_cast<uint32_t>(t));
+                go(nx);
+                continue;
+            }
+            if (op == 0xEA)
+                return out;
+            // jmp word ptr ds:[X]: a tail call through a cell (a thunk);
+            // the callee keeps BP like any C function.
+            if (op == 0xFF && w.size == 4 && wb[1] == 0x26)
+                continue;
+            const bool csx = op == 0x2E && w.size == 5 && wb[1] == 0xFF;
+            const uint8_t* mb = csx ? wb + 1 : wb;
+            if (mb[0] == 0xFF && ((mb[1] >> 3) & 7) >= 4 && ((mb[1] >> 3) & 7) <= 5)
+            {
+                // Jump through a cs: table resolved as a bounded jump table.
+                if (!csx || ((mb[1] >> 3) & 7) != 4)
+                    return out;
+                const uint32_t T = static_cast<uint32_t>(fr) + (wb[3] | (wb[4] << 8));
+                bool any = false;
+                for (uint32_t e = T; off_words_.count(e); e += 2)
+                {
+                    go(off_words_.at(e).target);
+                    any = true;
+                }
+                if (!any)
+                    return out;
+                continue;
+            }
+            if (op == 0xCD && w.size == 2 && cfg_int_noreturn(wb[1], 0x100))
+                continue;
+            go(nx);
+        }
+        for (size_t q = 0; q < code.size(); ++q)
+        {
+            const EmitUnit& w = units_[code[q]];
+            if (img[w.lin] != 0xE8)
+                continue;
+            const int64_t t = rel_target(w);
+            if (t >= 0 && helpers.count(static_cast<uint32_t>(t)) && !seen.count(w.lin))
+                return out;
+        }
+        for (int d : calls)
+            if (d >= 4 && d % 2 == 0 && !other_use.count(d) && !other_use.count(d + 1) && !other_use.count(d - 1))
+                out.insert((d - 4) / 2);
+        return out;
+    };
+    for (size_t j = 0; j < code.size(); ++j)
+    {
+        const EmitUnit& u = units_[code[j]];
+        if (u.size != 3 || img[u.lin] != 0xE8)
+            continue;
+        const int64_t fr = frame(u.lin);
+        const int64_t P = rel_target(u);
+        if (fr < 0 || P < 0 || frame(static_cast<uint32_t>(P)) != fr)
+            continue;
+        const std::set<int>& slots = analyse(static_cast<uint32_t>(P), fr);
+        if (slots.empty())
+            continue;
+        // Pushes before the call, nearest first.
+        std::vector<size_t> pushes;
+        size_t k = j;
+        while (k > 0 && pushes.size() < 16 && contiguous_units(code[k - 1], code[k]))
+        {
+            if (k != j && entries.count(units_[code[k]].lin))
+                break;
+            const EmitUnit& w = units_[code[k - 1]];
+            const uint8_t* wb = img.data() + w.lin;
+            const bool push = (w.size == 1 && ((wb[0] >= 0x50 && wb[0] <= 0x57) || wb[0] == 0x06 || wb[0] == 0x0E ||
+                                               wb[0] == 0x16 || wb[0] == 0x1E)) ||
+                              (w.size == 3 && wb[0] == 0x68) || (w.size == 2 && wb[0] == 0x6A) ||
+                              (wb[0] == 0xFF && w.size >= 2 && ((wb[1] >> 3) & 7) == 6);
+            if (push)
+            {
+                pushes.push_back(k - 1);
+                --k;
+                continue;
+            }
+            if (rel_target(w) >= 0 || wb[0] == 0xC2 || wb[0] == 0xC3 || wb[0] == 0xCA || wb[0] == 0xCB ||
+                wb[0] == 0xCC || wb[0] == 0xCD || wb[0] == 0xCF || wb[0] == 0x9A || wb[0] == 0xEA || wb[0] == 0x9D ||
+                (wb[0] == 0xFF && w.size >= 2 && ((wb[1] >> 3) & 7) >= 2) || reg_written(w, 4) != 0)
+                break;
+            --k;
+        }
+        for (int slot : slots)
+        {
+            if (static_cast<size_t>(slot) >= pushes.size())
+                continue;
+            const size_t pj = pushes[static_cast<size_t>(slot)];
+            const EmitUnit& pu = units_[code[pj]];
+            const uint8_t* pb = img.data() + pu.lin;
+            size_t mj = pj;
+            uint32_t imm = 0;
+            if (pu.size == 3 && pb[0] == 0x68)
+                imm = pb[1] | (pb[2] << 8);
+            else if (pu.size == 1 && pb[0] >= 0x50 && pb[0] <= 0x57 && pb[0] != 0x54)
+            {
+                const int r = pb[0] - 0x50;
+                bool found = false;
+                for (size_t q = pj; q > k && !found;)
+                {
+                    --q;
+                    const EmitUnit& w = units_[code[q]];
+                    const int wr = reg_written(w, r);
+                    if (wr == 0)
+                        continue;
+                    if (wr < 0 || w.size != 3 || img[w.lin] != 0xB8 + r)
+                        break;
+                    imm = img[w.lin + 1] | (img[w.lin + 2] << 8);
+                    mj = q;
+                    found = true;
+                }
+                if (!found)
+                    continue;
+            }
+            else
+                continue;
+            EmitUnit& mu = units_[code[mj]];
+            if (in_.reloc_at.count(mu.lin + 1) || !mu.refs.empty())
+                continue;
+            const uint32_t t = static_cast<uint32_t>(fr) + imm;
+            if (t >= n || t < in_.emit_lo || imm >= 0x10000)
+                continue;
+            const int ti = unit_at(t);
+            if (ti >= 0 && units_[static_cast<size_t>(ti)].code)
+            {
+                if (frame(t) != fr)
+                    continue;
+                InsnRef r;
+                r.kind = RefKind::Off;
+                r.off = 1;
+                r.size = 2;
+                r.target = t;
+                r.frame = static_cast<uint32_t>(fr);
+                mu.refs.push_back(r);
+                continue;
+            }
+            const int ci = unit_covering(t);
+            if (ci < 0 || units_[static_cast<size_t>(ci)].code)
+                continue;
+            bool forced = false;
+            for (const auto& [lo, hi] : in_.force_data)
+                forced |= t >= lo && t < hi;
+            if (forced)
+                continue;
+            if (fr == ef)
+            {
+                if (std::find(want_roots_.begin(), want_roots_.end(), t) == want_roots_.end())
+                {
+                    want_roots_.push_back(t);
+                    ++n_cb_roots_;
+                }
+            }
+            else
+            {
+                const std::pair<uint32_t, int32_t> fs{t, static_cast<int32_t>(fr)};
+                if (std::find(want_far_roots_.begin(), want_far_roots_.end(), fs) == want_far_roots_.end())
+                {
+                    want_far_roots_.push_back(fs);
+                    ++n_cb_roots_;
+                }
+            }
+        }
     }
 }
 

@@ -4729,12 +4729,14 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
     size_t st_vec = 0;
     size_t st_ptr = 0;
     size_t st_far = 0;
+    size_t st_cb = 0;
     while (rebuild && fix_rounds < 16)
     {
         std::vector<uint32_t> want = emp->want_roots();
         st_init += emp->init_roots();
         st_vec += emp->vector_roots();
         st_far += emp->far_vector_roots();
+        st_cb += emp->callback_roots();
         st_ptr += emp->ptr_roots();
         for (uint32_t t : sim_roots(*emp))
         {
@@ -4853,11 +4855,15 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
         hdr.push_back(std::format("fixpoint: {} round(s), {} address(es) seeded as entries "
                                   "({} from bounded jump tables, derived)",
                                   fix_rounds, seeds.size(),
-                                  seeds.size() - std::min(seeds.size(), sim_seeded + st_init + st_vec + st_ptr)));
+                                  seeds.size() - std::min(seeds.size(), sim_seeded + st_init + st_vec + st_ptr + st_cb)));
     if (st_init + st_vec + st_ptr != 0)
         hdr.push_back(std::format("startup entries: {} init/exit table record(s), {} DS=CS interrupt handler(s), "
                                   "{} stored code pointer(s) (seeded as entries)",
                                   st_init, st_vec, st_ptr));
+    if (st_cb != 0)
+        hdr.push_back(std::format("callback arguments: {} code pointer(s) passed to a callee that calls through that "
+                                  "parameter (seeded as entries)",
+                                  st_cb));
     if (st_far != 0)
         hdr.push_back(std::format("far interrupt handlers: {} (INT 21h/25h with a relocated DS; seeded as entries in "
                                   "their own segment)",
