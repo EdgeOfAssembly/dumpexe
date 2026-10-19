@@ -4730,13 +4730,15 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
     size_t st_ptr = 0;
     size_t st_far = 0;
     size_t st_cb = 0;
+    std::set<std::pair<uint32_t, int32_t>> cb_seen; // distinct callback seeds across rounds
     while (rebuild && fix_rounds < 16)
     {
         std::vector<uint32_t> want = emp->want_roots();
         st_init += emp->init_roots();
         st_vec += emp->vector_roots();
         st_far += emp->far_vector_roots();
-        st_cb += emp->callback_roots();
+        for (const auto& cs : emp->callback_seeds())
+            st_cb += cb_seen.insert(cs).second ? 1 : 0;
         st_ptr += emp->ptr_roots();
         for (uint32_t t : sim_roots(*emp))
         {

@@ -340,11 +340,12 @@ seeded when it is a relocated segment frame starting with
 Callback arguments: an immediate pushed (\fBpush imm\fR, or \fBmov r, imm\fR
 then \fBpush r\fR) in the argument slot that a near callee calls through
 (\fBcall word ptr [bp+d]\fR, with BP set only by its
-\fBpush bp / mov bp, sp\fR prologue and [bp+d] otherwise only read) is a
-code pointer in the caller's segment: it is seeded as an entry when it lies
+\fBpush bp / mov bp, sp\fR prologue, restored only by a \fBpop bp\fR directly
+before a return, never used as a value, and [bp+d] otherwise only read) is a
+code pointer in the caller's segment (EXE and COM; not 0, not in DGROUP): it is seeded as an entry when it lies
 in data and printed as a symbolic offset. The header line
 .B "; callback arguments: N code pointer(s) ..."
-counts the seeded ones.
+counts the distinct seeded targets.
 .PP
 Segment layout rule
 .RB ( \-\-uasm\-verified

@@ -217,6 +217,7 @@ test: dumpexe bin2exe bin2ne tools/bin2exe/test_header test_p1_model test_p1_flo
 	@$(call run_suite,tests/test_fp_emu.sh)
 	@$(call run_suite,tests/test_tp_noreturn.sh)
 	@$(call run_suite,tests/test_callback_args.sh)
+	@$(call run_suite,tests/test_callback_adv.sh)
 	@$(call run_suite,tests/test_p5_fixpoint.sh)
 	@$(call run_suite,tests/test_u1_u3.sh)
 	@$(call run_suite,tests/test_linker.sh)
@@ -246,6 +247,7 @@ test-uasm: dumpexe
 	@bash tests/test_fp_emu.sh
 	@bash tests/test_tp_noreturn.sh
 	@bash tests/test_callback_args.sh
+	@bash tests/test_callback_adv.sh
 	@bash tests/test_p5_fixpoint.sh
 	@bash tests/test_p5_tools.sh
 	@bash tests/test_p6_sim.sh

@@ -232,6 +232,7 @@ private:
     size_t n_ptr_roots_ = 0;
     size_t n_far_vec_roots_ = 0;
     size_t n_cb_roots_ = 0;
+    std::vector<std::pair<uint32_t, int32_t>> cb_seeds_; // (target, frame) seeded by add_callback_args
     void add_callback_args(const std::vector<size_t>& code);
     std::vector<std::pair<uint32_t, int32_t>> want_far_roots_;
     template <class FrameOk, class InData>
@@ -301,6 +302,7 @@ public:
     size_t far_vector_roots() const { return n_far_vec_roots_; }
     /// Code pointers passed to a callee that calls through that parameter.
     size_t callback_roots() const { return n_cb_roots_; }
+    const std::vector<std::pair<uint32_t, int32_t>>& callback_seeds() const { return cb_seeds_; }
     const std::vector<std::pair<uint32_t, int32_t>>& want_far_roots() const { return want_far_roots_; }
     size_t typed_strings() const { return str_len_.size() - cstr_scanned_.size(); }
     /// U2: NUL-terminated strings found by the data scan (not by a reference).
@@ -1106,8 +1108,7 @@ inline void UasmEmitter::add_value_refs()
     }
     add_pointer_refs(code, frame_ok, in_data);
     add_startup_roots(code, in_data);
-    if (!pure_com)
-        add_callback_args(code);
+    add_callback_args(code);
 }
 
 /**
@@ -1707,20 +1708,55 @@ inline void UasmEmitter::add_callback_args(const std::vector<size_t>& code)
                 if (seen.insert(t).second)
                     work.push_back(t);
             };
-            if (!(w.size == 1 && wb[0] == 0x5D) && reg_written(w, 5) != 0)
-                return out; // BP rewritten (or undecodable)
-            // [bp+d8] operands: modrm mod=01 rm=110, no prefix.
-            if (w.size >= 3 && (wb[1] & 0xC7) == 0x46)
+            // pop bp only as the epilogue (directly before a ret); any other
+            // BP write rebases the frame (push si / pop bp, mov bp,..).
+            if (w.size == 1 && wb[0] == 0x5D)
             {
-                const int d = static_cast<int8_t>(wb[2]);
-                const uint8_t op = wb[0], rg = (wb[1] >> 3) & 7;
-                if (op == 0xFF && rg == 2 && w.size == 3)
+                const uint32_t r = w.lin + 1;
+                if (r >= n || !(img[r] == 0xC2 || img[r] == 0xC3 || img[r] == 0xCA || img[r] == 0xCB))
+                    return out;
+            }
+            else if (reg_written(w, 5) != 0)
+                return out; // BP rewritten (or undecodable)
+            const cs_insn* ci = decode(w);
+            if (ci == nullptr || ci->detail == nullptr)
+                return out;
+            const cs_x86& x = ci->detail->x86;
+            // [bp+d] operands of any displacement size, prefix or index.
+            // Only the plain read forms below leave slot d intact; BP
+            // used as a register value (mov si,bp, push bp to a nested
+            // routine, ...) lets the slot be written elsewhere: reject.
+            const bool is_call = wb[0] == 0xFF && w.size == 3 && (wb[1] & 0xC7) == 0x46 && ((wb[1] >> 3) & 7) == 2;
+            const bool pop_bp = w.size == 1 && wb[0] == 0x5D; // epilogue, checked above
+            const bool sp_from_bp = w.size == 2 && ((wb[0] == 0x8B && wb[1] == 0xE5) || (wb[0] == 0x89 && wb[1] == 0xEC));
+            for (uint8_t oi = 0; oi < x.op_count; ++oi)
+            {
+                const cs_x86_op& o = x.operands[oi];
+                if (o.type == X86_OP_REG && (o.reg == X86_REG_BP || o.reg == X86_REG_EBP) && !sp_from_bp && !pop_bp)
+                    return out;
+                if (o.type != X86_OP_MEM || (o.mem.base != X86_REG_BP && o.mem.base != X86_REG_EBP &&
+                                             o.mem.index != X86_REG_BP && o.mem.index != X86_REG_EBP))
+                    continue;
+                const int d = static_cast<int>(o.mem.disp);
+                const bool idx = o.mem.index != X86_REG_INVALID || o.mem.base != X86_REG_BP;
+                const bool wr = (o.access & CS_AC_WRITE) != 0 || ci->id == X86_INS_LEA;
+                if (idx)
+                {
+                    // [bp+si+d]: a local array when d < 0; otherwise it may
+                    // reach any parameter slot.
+                    if (d >= 0 && wr)
+                        return out;
+                    continue;
+                }
+                if (is_call)
+                {
                     calls.insert(d);
-                else if ((op == 0xFF && rg == 6) || op == 0x8B || op == 0x8A || op == 0x3B || op == 0x3A ||
-                         (op == 0x83 && rg == 7) || (op == 0x80 && rg == 7) || (op == 0x81 && rg == 7))
-                    ;
-                else
-                    other_use[d] = true;
+                    continue;
+                }
+                const bool rd_only = !wr && (ci->id == X86_INS_PUSH || ci->id == X86_INS_MOV || ci->id == X86_INS_CMP);
+                if (!rd_only)
+                    for (int b = 0; b < std::max<int>(1, o.size); ++b)
+                        other_use[d + b] = true;
             }
             const uint8_t op = wb[0];
             const int64_t t = rel_target(w);
@@ -1739,7 +1775,9 @@ inline void UasmEmitter::add_callback_args(const std::vector<size_t>& code)
                 // A local helper without its own frame (no push bp / mov
                 // bp, sp) shares F's BP: it is part of the body, and every
                 // call to it must come from the body (checked below).
-                if (t >= 0 && !(img[static_cast<size_t>(t)] == 0x55 && static_cast<size_t>(t) + 2 < img.size() &&
+                if (t >= static_cast<int64_t>(n))
+                    return out; // call past the end of the image
+                if (t >= 0 && !(static_cast<size_t>(t) + 2 < img.size() && img[static_cast<size_t>(t)] == 0x55 &&
                                 ((img[t + 1] == 0x8B && img[t + 2] == 0xEC) || (img[t + 1] == 0x89 && img[t + 2] == 0xE5))))
                 {
                     helpers.insert(static_cast<uint32_t>(t));
@@ -1870,7 +1908,10 @@ inline void UasmEmitter::add_callback_args(const std::vector<size_t>& code)
             if (in_.reloc_at.count(mu.lin + 1) || !mu.refs.empty())
                 continue;
             const uint32_t t = static_cast<uint32_t>(fr) + imm;
-            if (t >= n || t < in_.emit_lo || imm >= 0x10000)
+            // imm 0 is a NULL callback; DGROUP (above the code) is data.
+            if (imm == 0 || t >= n || t < in_.emit_lo || imm >= 0x10000)
+                continue;
+            if (dgroup_ > fr && static_cast<int64_t>(t) >= dgroup_)
                 continue;
             const int ti = unit_at(t);
             if (ti >= 0 && units_[static_cast<size_t>(ti)].code)
@@ -1899,6 +1940,7 @@ inline void UasmEmitter::add_callback_args(const std::vector<size_t>& code)
                 if (std::find(want_roots_.begin(), want_roots_.end(), t) == want_roots_.end())
                 {
                     want_roots_.push_back(t);
+                    cb_seeds_.emplace_back(t, static_cast<int32_t>(fr));
                     ++n_cb_roots_;
                 }
             }
@@ -1908,6 +1950,7 @@ inline void UasmEmitter::add_callback_args(const std::vector<size_t>& code)
                 if (std::find(want_far_roots_.begin(), want_far_roots_.end(), fs) == want_far_roots_.end())
                 {
                     want_far_roots_.push_back(fs);
+                    cb_seeds_.push_back(fs);
                     ++n_cb_roots_;
                 }
             }
