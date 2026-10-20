@@ -3197,9 +3197,22 @@ inline void UasmEmitter::name_call_targets()
             if (r.kind == RefKind::Rel)
                 call_targets_.insert(r.target);
     }
+    std::set<std::string> taken;
+    for (const auto& [k, v] : in_.label_names)
+        taken.insert(v);
+    for (const auto& [k, v] : auto_names_)
+        taken.insert(v);
     for (uint32_t t : call_targets_)
-        if (!in_.label_names.count(t) && !auto_names_.count(t))
-            auto_names_.emplace(t, std::format("func_{:05X}", t));
+    {
+        if (in_.label_names.count(t) || auto_names_.count(t))
+            continue;
+        // Never reuse a name already taken (hinted or auto): suffix until free.
+        std::string name = std::format("func_{:05X}", t);
+        for (int i = 1; taken.count(name); ++i)
+            name = std::format("func_{:05X}_{}", t, i);
+        taken.insert(name);
+        auto_names_.emplace(t, name);
+    }
 }
 
 inline std::string UasmEmitter::render(const std::vector<std::string>& header, int64_t shift_at,

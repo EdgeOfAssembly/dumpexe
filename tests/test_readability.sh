@@ -12,7 +12,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="${DUMPEXE_BIN:-$ROOT/dumpexe}"
 [[ -x "$BIN" ]] || { echo "FAIL: dumpexe binary not found"; exit 1; }
 source "$ROOT/tests/lib_uasm.sh"
-N=24
+N=35
 UASM_BIN="$(uasm_resolve)" || { echo "SKIP $N readability checks: no uasm"; exit 77; }
 TD="$(mktemp -d "${TMPDIR:-/tmp}/dumpexe-rd-XXXXXX")"
 trap '[[ -n "${KEEP:-}" ]] || rm -rf "$TD"' EXIT
@@ -105,5 +105,45 @@ check rd_rebuild_hints run b --hints="$TD/h.txt"
 check r4_hint_name grep -qE '^my_helper:' "$TD/b.asm"
 check r4_hint_no_func bash -c "! grep -qE '^func_' '$TD/b.asm'"
 check r4_hint_separator bash -c "grep -B1 '^my_helper:' '$TD/b.asm' | grep -q '^; -----'"
+# M1 (RetroCodeMess 02b7bd140 verify-2d4661b repro/test_collision.sh):
+# a hints label spelled like an auto func_ name must not define a symbol
+# twice (that made verification fail and the listing fall back to db).
+cat > "$TD/n.asm" <<'ASM'
+_TEXT segment para public use16 'CODE'
+assume cs:_TEXT, ds:_TEXT
+org 100h
+start:
+    call f1
+    call f2
+    call f3
+    mov ax, 4C00h
+    int 21h
+f1: mov cx, 1
+    ret
+f2: mov cx, 2
+    ret
+f3: mov cx, 3
+    ret
+_TEXT ends
+end start
+ASM
+(cd "$TD" && env -u UASM -u INCLUDE "$UASM_BIN" -bin -nologo -Fo n.com n.asm >/dev/null)
+nrun() { # $1 stem, $2 hints line
+  local o=$1
+  printf '%s\n' "$2" > "$TD/$o.hints"
+  (cd "$TD" && "$BIN" --uasm --uasm-verified --hints="$o.hints" -o "$o.asm" n.com >"$o.out" 2>&1)
+  (cd "$TD" && env -u UASM -u INCLUDE "$UASM_BIN" -bin -nologo -Fo "$o.bin" "$o.asm" >/dev/null)
+  cmp -s "$TD/n.com" "$TD/$o.bin"
+}
+ninsns() { [ "$(grep -cE '^    (call|mov|ret|int)' "$TD/$1.asm")" -ge 9 ]; }
+nuniq() { [ -z "$(grep -oE '^[A-Za-z_][A-Za-z0-9_]*:' "$TD/$1.asm" | sort | uniq -d)" ]; }
+for h in "override:label 0010E my_helper" "collide_auto:label 0010E func_00112" "collide_nonlabel:label 00109 func_00116"; do
+  st=${h%%:*}
+  check m1_${st}_rebuild nrun "$st" "${h#*:}"
+  check m1_${st}_insns ninsns "$st"
+  check m1_${st}_unique nuniq "$st"
+done
+check m1_func_hint_rejected grep -q "bad or duplicate label 'func_00112'" "$TD/collide_auto.out"
+check m1_override_named grep -qE '^my_helper:' "$TD/override.asm"
 echo "readability passed=$pass failed=$fail"
 [[ $fail -eq 0 ]]

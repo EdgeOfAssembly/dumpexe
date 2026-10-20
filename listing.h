@@ -4629,7 +4629,9 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
                                     return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
                                 }) &&
                                 !(name.size() == 6 && name[0] == 'L' &&
-                                  std::all_of(name.begin() + 1, name.end(), [](char c) { return std::isxdigit(static_cast<unsigned char>(c)); }));
+                                  std::all_of(name.begin() + 1, name.end(), [](char c) { return std::isxdigit(static_cast<unsigned char>(c)); })) &&
+                                !(name.size() == 10 && name.compare(0, 5, "func_") == 0 &&
+                                  std::all_of(name.begin() + 5, name.end(), [](char c) { return std::isxdigit(static_cast<unsigned char>(c)); }));
                 if (ok && uasm_reserved_word(name))
                 {
                     std::cerr << std::format("listing: --hints:{}: label '{}' is an assembler reserved word\n", ln,
