@@ -2,6 +2,8 @@
 # Contract tests for dumpexe CLI (max-quality-testing)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=fixtures.sh
+source "$ROOT/tests/fixtures.sh"
 BIN="${DUMPEXE_BIN:-$ROOT/dumpexe}"
 if [[ ! -x "$BIN" ]]; then
   BIN=$(command -v dumpexe || true)
@@ -31,7 +33,7 @@ check help_mentions_no_pascal_mt bash -c "$BIN -h 2>&1 | grep -q -- '--no-pascal
 check help_no_enable_pascal_mt bash -c "! $BIN -h 2>&1 | grep -qE -- '--pascal-mt[^+]|--enable-pascal'"
 
 # ICON.EXE if present
-ICON="$ROOT/games/icon-quest-for-the-ring/ICON/ICON.EXE"
+ICON="$(fixture icon-quest-for-the-ring/ICON/ICON.EXE || true)"
 if [[ -f "$ICON" ]]; then
   check icon_header bash -c "$BIN '$ICON' 2>&1 | grep -q 'Program Entry Point'"
   # Default path auto-detects Pascal MT+ 3.1.1 (no flag required)
@@ -99,7 +101,7 @@ else
 fi
 
 # CuteMouse fixture (JWASM/TASM + com2exe ground truth)
-CTM="$ROOT/games/cutemouse/bin/ctmouse.exe"
+CTM="$(fixture cutemouse/bin/ctmouse.exe || true)"
 if [[ -f "$CTM" ]]; then
   check ctm_toolchain bash -c "$BIN '$CTM' 2>&1 | grep -q 'COM-in-EXE'"
   check ctm_cutemouse bash -c "$BIN '$CTM' 2>&1 | grep -q 'CuteMouse'"
@@ -125,7 +127,7 @@ else
 fi
 
 # Catacomb / Turbo Pascal 5.5
-CAT="$ROOT/games/catacomb/bin/CATACOMB.EXE"
+CAT="$(fixture catacomb/bin/CATACOMB.EXE || true)"
 if [[ -f "$CAT" ]]; then
   check cat_tp55 bash -c "$BIN '$CAT' 2>&1 | grep -q 'Turbo Pascal 5.5'"
   check cat_no_jwasm bash -c "! $BIN '$CAT' 2>&1 | grep -q 'JWASM 1.8'"
@@ -155,7 +157,7 @@ else
 fi
 
 # Windows 3.x NE (SimLife fixture)
-NE_EXE="$ROOT/games/simlife-win3x/SIMLIFEW.EXE"
+NE_EXE="$(fixture simlife-win3x/SIMLIFEW.EXE || true)"
 if [[ -f "$NE_EXE" ]]; then
   check help_mentions_ne bash -c "$BIN -h 2>&1 | grep -q 'NE EXE'"
   check ne_header bash -c "$BIN '$NE_EXE' 2>&1 | grep -q 'New Executable (NE)'"
@@ -171,7 +173,7 @@ else
 fi
 
 # DOS extender / DPMI (SimLife Huffman; no bare DS false positive)
-SML="$ROOT/games/simlife-dos/SML.EXE"
+SML="$(fixture simlife-dos/SML.EXE || true)"
 if [[ -f "$SML" ]]; then
   check help_mentions_dos_extender bash -c "$BIN -h 2>&1 | grep -q -- '--no-dos-extender'"
   check help_mentions_bits bash -c "$BIN -h 2>&1 | grep -q -- '--bits='"
@@ -193,4 +195,4 @@ fi
 
 echo "---"
 echo "passed=$pass failed=$fail"
-[[ "$fail" -eq 0 ]]
+fixtures_exit "$fail"

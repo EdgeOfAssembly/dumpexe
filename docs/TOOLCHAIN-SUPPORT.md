@@ -31,7 +31,7 @@ assemblable) output.
      officially add support in dumpexe:
        • fingerprint / detect (default ON; only --no-… to disable)
        • listing / export tuned for that tool
-       • tests + fixture under games/ or fixtures/
+       • tests + fixture under games/ in the private fixtures repo (docs/FIXTURES.md)
        • notes in RE-NOTES + this doc
 
 7. Dual-write durable facts:
@@ -152,6 +152,9 @@ Deark's MIT modules unpack in-process. dumpexe does not shell out to `deark`,
 `unlzexe`, or `unexepack`.
 
 ## Related paths
+
+`games/...` paths live in the private repo `EdgeOfAssembly/dumpexe-fixtures`
+(see `docs/FIXTURES.md`), not in this repository.
 
 | Path | Role |
 |------|------|

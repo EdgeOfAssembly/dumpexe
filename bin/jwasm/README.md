@@ -11,7 +11,7 @@ Kept for **ground-truth rebuilds** of era DOS software (e.g. CuteMouse 2.1b4).
 
 ## CuteMouse proof
 
-With **jwasm-1.8** + CuteMouse sources + wlink/exe2bin + com2exe-style wrap, the load image (and full EXE with matching header) is **byte-identical** to shipped `games/cutemouse/bin/ctmouse.exe`.
+With **jwasm-1.8** + CuteMouse sources + wlink/exe2bin + com2exe-style wrap, the load image (and full EXE with matching header) is **byte-identical** to shipped `games/cutemouse/bin/ctmouse.exe` (private fixtures repo, see `docs/FIXTURES.md`).
 
 ```bash
 # Example (Linux host):

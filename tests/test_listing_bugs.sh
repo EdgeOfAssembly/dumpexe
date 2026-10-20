@@ -3,6 +3,8 @@
 # Invoked by `make test`.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=fixtures.sh
+source "$ROOT/tests/fixtures.sh"
 cd "$ROOT"
 
 if [[ -z "${PKG_CONFIG_PATH:-}" && -d /usr/local/lib/pkgconfig ]]; then
@@ -469,10 +471,9 @@ PY
 check help_keeps_default_outputs bash -c "$BIN -h 2>&1 | grep -q 'unless -o or --repack-output'"
 
 # Repack: existing default <stem>.repack.exe is kept. --repack-output may replace.
-CAT="$ROOT/games/catacomb/bin/CATACOMB.EXE"
+CAT="$(fixture catacomb/bin/CATACOMB.EXE || true)"
 if [[ ! -f "$CAT" ]]; then
-  echo "FAIL repack_fixture_missing"
-  fail=$((fail + 1))
+  echo "SKIP repack tests (fixture unavailable)"
 else
   mkdir -p "$TD/re"
   cp -f "$CAT" "$TD/re/CATACOMB.EXE"
@@ -696,4 +697,4 @@ PY
 
 echo "---"
 echo "passed=$pass failed=$fail"
-[[ "$fail" -eq 0 ]]
+fixtures_exit "$fail"
