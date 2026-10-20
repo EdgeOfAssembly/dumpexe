@@ -14,8 +14,8 @@ trap 'rm -rf "$TD"' EXIT
 pass=0; fail=0
 check() { local name=$1; shift; if "$@"; then echo "PASS $name"; pass=$((pass + 1)); else echo "FAIL $name"; fail=$((fail + 1)); fi; }
 
-WS="$ROOT/SOURCER/WINSMALL.EXE"
-if [[ -f "$WS" ]]; then
+WS="$(fixture SOURCER/WINSMALL.EXE || true)"
+if [[ -n "$WS" && -f "$WS" ]]; then
   "$BIN" -d "$WS" > "$TD/ws.txt" 2>&1
   check ws_inittask grep -qE '^ +0000  9AFFFF0000 +call +far KERNEL\.91  ; InitTask \[reloc 0\]' "$TD/ws.txt"
   check ws_labels_kept grep -qE '^func_[0-9A-F]{4}:' "$TD/ws.txt"
