@@ -6,6 +6,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=fixtures.sh
+source "$ROOT/tests/fixtures.sh"
 BIN="${DUMPEXE_BIN:-$ROOT/dumpexe}"
 [[ -x "$BIN" ]] || { echo "FAIL: dumpexe binary not found"; exit 1; }
 # shellcheck source=lib_uasm.sh
@@ -26,7 +28,7 @@ V="$BIN --uasm --uasm-verified --uasm-bin $UASM_BIN"
 # Option rules.
 check header_needs_verified bash -c "! '$BIN' --uasm --uasm-header '$ROOT/dumpexe' >/dev/null 2>&1"
 
-AR="$ROOT/games/alternate-reality-the-city/CITY.EXE"
+AR="$(fixture alternate-reality-the-city/CITY.EXE || true)"
 if [[ -f "$AR" ]]; then
   cp "$AR" "$TD/CITY.EXE"
   (cd "$TD" && $V --uasm-header -o city.asm CITY.EXE >/dev/null 2>&1) || true
@@ -49,4 +51,4 @@ printf '\xb4\x4c\xcd\x21' > "$TD/t.com"
 check com_no_header bash -c "grep -q '^; VERIFIED identical' '$TD/t.asm' && ! grep -q '^DXHDR' '$TD/t.asm'"
 
 echo "p3_header passed=$pass failed=$fail"
-[[ $fail -eq 0 ]]
+fixtures_exit "$fail"

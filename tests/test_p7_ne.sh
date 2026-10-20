@@ -5,6 +5,8 @@
 # DUMPEXE_NE_FIXTURES; their checks are skipped when it is unset.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=fixtures.sh
+source "$ROOT/tests/fixtures.sh"
 BIN="${DUMPEXE_BIN:-$ROOT/dumpexe}"
 [[ -x "$BIN" ]] || { echo "FAIL: dumpexe binary not found"; exit 1; }
 TD="$(mktemp -d "${TMPDIR:-/tmp}/dumpexe-p7-XXXXXX")"
@@ -25,7 +27,7 @@ if [[ -f "$WS" ]]; then
     check "detect_$f" bash -c "'$BIN' '$TD/$f' | grep -q '^=== New Executable (NE)'"
   done
 fi
-SL="$ROOT/games/simlife-win3x/SIMLIFEW.EXE"
+SL="$(fixture simlife-win3x/SIMLIFEW.EXE || true)"
 if [[ -f "$SL" ]]; then
   "$BIN" "$SL" > "$TD/sl.txt" 2>&1
   check sl_exports grep -qE '^ +1  MAINWNDPROC +nonresident +11:CC3A' "$TD/sl.txt"
@@ -234,4 +236,4 @@ else
   echo "SKIP fixture checks (DUMPEXE_NE_FIXTURES unset)"
 fi
 echo "p7_ne passed=$pass failed=$fail"
-[[ $fail -eq 0 ]]
+fixtures_exit "$fail"

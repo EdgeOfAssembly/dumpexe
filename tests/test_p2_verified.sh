@@ -5,6 +5,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=fixtures.sh
+source "$ROOT/tests/fixtures.sh"
 BIN="${DUMPEXE_BIN:-$ROOT/dumpexe}"
 [[ -x "$BIN" ]] || { echo "FAIL: dumpexe binary not found"; exit 1; }
 # shellcheck source=lib_uasm.sh
@@ -84,7 +86,7 @@ check no_assembler_pairs_only grep -qE '^; lines: mnemonic [0-9]+ .*symbolic db 
 
 # MZ with relocations: relocated words are segment expressions, the
 # rebuilt load image is identical, and both shifts keep every reference.
-AR="$ROOT/games/alternate-reality-the-city/CITY.EXE"
+AR="$(fixture alternate-reality-the-city/CITY.EXE || true)"
 if [[ -f "$AR" ]]; then
   cp "$AR" "$TD/CITY.EXE"
   (cd "$TD" && $V -o city.asm CITY.EXE >/dev/null 2>&1) || true
@@ -120,7 +122,7 @@ if [[ -x "$ROOT/dumpexe-asan" ]]; then
 fi
 
 # G15: with -o FILE the unpacked listing is <FILE stem>_UNPACKED.asm.
-PK="$ROOT/games/psychic-war/PW.EXE"
+PK="$(fixture psychic-war/PW.EXE || true)"
 if [[ -f "$PK" ]]; then
   mkdir -p "$TD/pk" "$TD/pkout"
   cp "$PK" "$TD/pk/PW.EXE"
@@ -200,4 +202,4 @@ check pairs_some_mnemonic grep -qE '^; lines: mnemonic [1-9]' "$TD/nou.asm"
 check pairs_reassemble bash -c "cd '$TD' && env -u UASM '$UASM_BIN' -bin -nologo -Fonou.bin nou.asm >/dev/null 2>&1 && cmp -s nou.bin s.com"
 
 echo "p2_verified passed=$pass failed=$fail"
-[[ $fail -eq 0 ]]
+fixtures_exit "$fail"

@@ -2,6 +2,8 @@
 # Regression tests for dumpexe 2.9 report/header bugs.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=fixtures.sh
+source "$ROOT/tests/fixtures.sh"
 BIN="${DUMPEXE_BIN:-$ROOT/dumpexe}"
 [[ -x "$BIN" ]] || { echo "FAIL: dumpexe binary not found"; exit 1; }
 
@@ -21,10 +23,13 @@ check() {
 
 TD="$(mktemp -d /tmp/dumpexe-bugs-XXXXXX)"
 export TD
+CTM="$(fixture cutemouse/bin/ctmouse.exe || true)"
+CTMD="$(dirname "${CTM:-/nonexistent/x}")"
 cleanup() {
   rm -rf "$TD"
-  rm -f "$ROOT/games/cutemouse/bin/ctmouse.repack.exe" \
-        "$ROOT/games/cutemouse/bin/ctmouse.asm"
+  if [[ -n "$CTM" ]]; then
+    rm -f "$CTMD/ctmouse.repack.exe" "$CTMD/ctmouse.asm"
+  fi
 }
 trap cleanup EXIT
 
@@ -351,17 +356,18 @@ print("fixtures ok", td)
 PY
 
 # Bug 1: .sym load must not trip ASan stack-use-after-scope.
+if [[ -n "$CTM" ]]; then
 check asan_ctmouse bash -c "
   set -euo pipefail
   make -C '$ROOT' asan
   err=\$(mktemp)
   out=\$(mktemp)
   set +e
-  '$ROOT/dumpexe-asan' -d --no-asm-file '$ROOT/games/cutemouse/bin/ctmouse.exe' >\"\$out\" 2>\"\$err\"
+  '$ROOT/dumpexe-asan' -d --no-asm-file '$CTM' >\"\$out\" 2>\"\$err\"
   rc=\$?
   set -e
-  rm -f '$ROOT/games/cutemouse/bin/ctmouse.repack.exe' \
-        '$ROOT/games/cutemouse/bin/ctmouse.asm'
+  rm -f '$CTMD/ctmouse.repack.exe' \
+        '$CTMD/ctmouse.asm'
   if grep -q AddressSanitizer \"\$err\" || grep -q stack-use-after-scope \"\$err\"; then
     echo 'sanitizer output:' >&2
     cat \"\$err\" >&2
@@ -374,6 +380,9 @@ check asan_ctmouse bash -c "
   fi
   rm -f \"\$err\" \"\$out\"
 "
+else
+  echo "SKIP asan_ctmouse (fixture unavailable)"
+fi
 
 check le_no_false_positive bash -c "
   set -euo pipefail
@@ -411,7 +420,7 @@ check tp_portions90_is_60 bash -c "
   ! grep -q 'Turbo Pascal 5.5' '$TD/tp_portions.out'
 "
 
-CAT="$ROOT/games/catacomb/bin/CATACOMB.EXE"
+CAT="$(fixture catacomb/bin/CATACOMB.EXE || true)"
 if [[ -f "$CAT" ]]; then
   check cat_still_55 bash -c "
     set -euo pipefail
@@ -855,7 +864,7 @@ check com_turboc_fingerprint bash -c "
   grep -q 'Compiler:    Turbo C' '$TD/turboc.out'
 "
 
-ICON="$ROOT/games/icon-quest-for-the-ring/ICON/ICON.EXE"
+ICON="$(fixture icon-quest-for-the-ring/ICON/ICON.EXE || true)"
 if [[ -f "$ICON" ]]; then
   check icon_not_turbo_c bash -c "! '$BIN' '$ICON' | grep -q 'Turbo C'"
 fi
@@ -1496,4 +1505,4 @@ fi
 
 echo "---"
 echo "passed=$pass failed=$fail"
-[[ "$fail" -eq 0 ]]
+fixtures_exit "$fail"

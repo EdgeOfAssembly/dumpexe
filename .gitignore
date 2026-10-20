@@ -31,3 +31,8 @@ a.out
 # Experimental map decode intermediates (keep selected .png)
 games/**/map_preview/*.ppm
 /bin2ne
+
+# Binary fixtures live in the PRIVATE repo EdgeOfAssembly/dumpexe-fixtures
+# (see tests/fixtures.sh). Never commit them here.
+games/
+tests/.fixtures/
