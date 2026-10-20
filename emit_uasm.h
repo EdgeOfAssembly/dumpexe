@@ -14,6 +14,7 @@
 #ifndef DX_EMIT_UASM_H
 #define DX_EMIT_UASM_H
 
+#include "int_annotate.h"
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -241,6 +242,9 @@ private:
     std::map<uint32_t, std::string> auto_names_;    ///< P4 names (hints win)
     size_t n_pointers_ = 0;
     std::string data_lines(uint32_t lin, uint32_t len);
+    std::string hex_lines(uint32_t lin, uint32_t len);
+    std::set<uint32_t> call_targets_;   ///< R4: near call targets (func_ labels)
+    void name_call_targets();
     const cs_insn* decode(const EmitUnit& u);
 
     const CfgGraph& g_;
@@ -267,6 +271,10 @@ private:
     uint32_t tail_len_ = 0;
     std::vector<std::string> hdr_literal_;
     size_t data_seg_words_ = 0;
+public:
+    /// Readability counters of the last render (R1..R4).
+    size_t r_ascii_ = 0, r_hibit_ = 0, r_int21_ = 0, r_funcs_ = 0;
+private:
     std::string header_lines();
     std::string data_word(uint32_t at);
     std::string string_text(uint32_t lin, uint32_t len) const;
@@ -2803,7 +2811,7 @@ inline std::vector<std::string> UasmEmitter::symdb_lines(const EmitUnit& u, bool
     return lines;
 }
 
-inline std::string UasmEmitter::data_lines(uint32_t lin, uint32_t len)
+inline std::string UasmEmitter::hex_lines(uint32_t lin, uint32_t len)
 {
     const uint8_t* b = in_.image->data();
     std::string out;
@@ -2838,6 +2846,163 @@ inline std::string UasmEmitter::data_lines(uint32_t lin, uint32_t len)
         out += "    db " + row + "\n";
         p = r;
     }
+    return out;
+}
+
+/** @brief R1/R2: true for a printable ASCII byte (0x20..0x7E). */
+inline bool rd_print(uint8_t c) { return c >= 0x20 && c < 0x7F; }
+
+/**
+ * @brief R1/R2 text score on 7-bit chars: >= 60% letters/space, >= 3 distinct
+ * letters, a run of >= 3 letters, no char above half the run, and not
+ * mostly a period-2 pattern or a constant-stride table; >= 15% vowels.
+ */
+inline bool rd_texty(const uint8_t* b, uint32_t n, uint8_t mask)
+{
+    uint32_t letters = 0, spaces = 0, run = 0, best = 0, cnt[128] = {};
+    std::set<uint8_t> dl;
+    uint32_t pr = 0;
+    for (uint32_t k = 0; k < n; ++k)
+    {
+        const uint8_t c = b[k] & mask;
+        if (!rd_print(c))
+        {
+            run = 0;
+            continue;
+        }
+        ++pr;
+        ++cnt[c];
+        const bool l = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+        if (l)
+        {
+            ++letters;
+            dl.insert(c);
+            best = std::max(best, ++run);
+        }
+        else
+        {
+            spaces += c == ' ';
+            run = 0;
+        }
+    }
+    if (pr == 0 || dl.size() < 3 || best < 3 || (letters + spaces) * 10 < pr * 6)
+        return false;
+    for (uint32_t c = 0; c < 128; ++c)
+        if (cnt[c] * 2 > pr)
+            return false;
+    // Period-2 patterns (AbAbAb) and ascending tables (abcdef) are not text.
+    uint32_t per2 = 0, asc = 0, vowels = 0;
+    for (uint32_t k = 0; k < n; ++k)
+        if (std::strchr("aeiouyAEIOUY", b[k] & mask) && (b[k] & mask))
+            ++vowels;
+    if (vowels * 100 < letters * 15)
+        return false;
+    for (uint32_t k = 0; k + 1 < n; ++k)
+    {
+        if (k + 2 < n && (b[k] & mask) == (b[k + 2] & mask))
+            ++per2;
+        // Constant stride (ascending tables, 16-step key maps).
+        if (k + 2 < n && ((b[k + 1] & mask) - (b[k] & mask)) == ((b[k + 2] & mask) - (b[k + 1] & mask)))
+            ++asc;
+    }
+    if (n >= 4 && (per2 * 2 > n || asc * 2 > n))
+        return false;
+    return true;
+}
+
+/**
+ * @brief Data bytes as db lines, with two game-agnostic readability rules.
+ *
+ * R1: a run of printable ASCII (CR, LF and TAB allowed inside) whose longest
+ * printable stretch is >= 6 bytes (>= 4 when followed by NUL, '$' or CRLF) and
+ * that has at least two distinct bytes is quoted; a following NUL is kept on
+ * the same line. Quote and macro-sensitive chars stay numeric (string_text).
+ * R2: >= 8 bytes all with bit 7 set whose low 7 bits are printable (plus at
+ * most one trailing printable byte with bit 7 clear) stay hex, preceded by a
+ * comment with the decoded text. Bytes are unchanged either way.
+ */
+inline std::string UasmEmitter::data_lines(uint32_t lin, uint32_t len)
+{
+    const uint8_t* b = in_.image->data();
+    const uint32_t end = lin + len;
+    std::string out;
+    uint32_t p = lin, flushed = lin;
+    auto flush = [&](uint32_t to) {
+        if (to > flushed)
+            out += hex_lines(flushed, to - flushed);
+        flushed = to;
+    };
+    auto inner = [](uint8_t c) { return rd_print(c) || c == 0x09 || c == 0x0A || c == 0x0D; };
+    while (p < end)
+    {
+        // R2: high-bit text.
+        if ((b[p] & 0x80) && rd_print(b[p] & 0x7F))
+        {
+            uint32_t q = p;
+            while (q < end && (b[q] & 0x80) && rd_print(b[q] & 0x7F))
+                ++q;
+            uint32_t te = q;
+            if (te < end && rd_print(b[te]))
+                ++te;
+            if (q - p >= 8 && rd_texty(b + p, te - p, 0x7F))
+            {
+                flush(p);
+                std::string t;
+                for (uint32_t k = p; k < te; ++k)
+                {
+                    const char c = static_cast<char>(b[k] & 0x7F);
+                    if (c == '"' || c == '\\')
+                        t += '\\';
+                    t += c;
+                }
+                out += std::format("    ; hi-bit text: \"{}\"\n", t);
+                ++r_hibit_;
+                flush(te);
+                p = te;
+                continue;
+            }
+            p = q;
+            continue;
+        }
+        if (!rd_print(b[p]))
+        {
+            ++p;
+            continue;
+        }
+        // R1: ASCII run.
+        uint32_t q = p, best = 0, cur = 0;
+        std::set<uint8_t> distinct;
+        while (q < end && inner(b[q]))
+        {
+            if (rd_print(b[q]))
+            {
+                best = std::max(best, ++cur);
+                distinct.insert(b[q]);
+            }
+            else
+                cur = 0;
+            ++q;
+        }
+        while (q > p && !rd_print(b[q - 1]) && !(b[q - 1] == 0x0A && q - p >= 2 && b[q - 2] == 0x0D))
+            --q;
+        const bool term = (q < end && (b[q] == 0)) || b[q - 1] == '$' ||
+                          (q - p >= 2 && b[q - 2] == 0x0D && b[q - 1] == 0x0A);
+        if ((best >= 6 || (term && best >= 4)) && distinct.size() >= 2 && rd_texty(b + p, q - p, 0xFF))
+        {
+            flush(p);
+            uint32_t se = q;
+            if (se < end && b[se] == 0)
+                ++se;
+            for (uint32_t c = p; c < se; c += 64)
+                out += "    db " + string_text(c, std::min<uint32_t>(64, se - c)) + "\n";
+            ++r_ascii_;
+            flushed = se;
+            p = se;
+            continue;
+        }
+        p = q > p ? q : p + 1;
+    }
+    flush(end);
     return out;
 }
 
@@ -2978,12 +3143,73 @@ inline std::string UasmEmitter::header_lines()
     return out;
 }
 
+/**
+ * @brief R3: true when a 1-unit instruction surely leaves AX alone and does
+ * not end the block (conservative whitelist on raw bytes).
+ */
+inline bool rd_keeps_ax(const EmitUnit& u, const uint8_t* b)
+{
+    if (u.size == 0)
+        return false;
+    const uint8_t op = b[0];
+    // mov r16/r8 imm other than AX/AH/AL
+    if ((op >= 0xB1 && op <= 0xB3) || (op >= 0xB5 && op <= 0xB7) || (op >= 0xB9 && op <= 0xBF))
+        return true;
+    // push r16 / push seg / clc stc cld std cli sti
+    if ((op >= 0x50 && op <= 0x57) || op == 0x06 || op == 0x0E || op == 0x16 || op == 0x1E ||
+        op == 0xF8 || op == 0xF9 || op == 0xFC || op == 0xFD || op == 0xFA || op == 0xFB)
+        return true;
+    // pop r16 except AX; pop es/ds
+    if ((op >= 0x59 && op <= 0x5F) || op == 0x07 || op == 0x1F)
+        return true;
+    // mov r/m, r and mov r, r/m (88-8B) with destination not AX/AH/AL
+    if ((op >= 0x88 && op <= 0x8B) && u.size >= 2)
+    {
+        const uint8_t m = b[1];
+        const uint8_t reg = (m >> 3) & 7, rm = m & 7, mod = m >> 6;
+        if (op == 0x88 || op == 0x89)   // dest r/m
+            return !(mod == 3 && (rm == 0 || (op == 0x88 && rm == 4)));
+        return !(reg == 0 || (op == 0x8A && reg == 4)); // dest reg
+    }
+    // mov sreg, r/m (8E) and lea (8D) to a non-AX register
+    if (op == 0x8E)
+        return true;
+    if (op == 0x8D && u.size >= 2)
+        return ((b[1] >> 3) & 7) != 0;
+    // inc/dec r16 other than AX
+    if ((op >= 0x41 && op <= 0x47) || (op >= 0x49 && op <= 0x4F))
+        return true;
+    // xor/sub r16, r16 on a non-AX register (31/33/29/2B C0+..)
+    if ((op == 0x31 || op == 0x33 || op == 0x29 || op == 0x2B) && u.size == 2 && (b[1] >> 6) == 3)
+        return (b[1] & 7) != 0 && ((b[1] >> 3) & 7) != 0;
+    return false;
+}
+
+/** @brief R4: near call (E8) targets get func_ names unless already named. */
+inline void UasmEmitter::name_call_targets()
+{
+    call_targets_.clear();
+    for (const EmitUnit& u : units_)
+    {
+        if (!u.code || u.size != 3 || (*in_.image)[u.lin] != 0xE8)
+            continue;
+        for (const InsnRef& r : u.refs)
+            if (r.kind == RefKind::Rel)
+                call_targets_.insert(r.target);
+    }
+    for (uint32_t t : call_targets_)
+        if (!in_.label_names.count(t) && !auto_names_.count(t))
+            auto_names_.emplace(t, std::format("func_{:05X}", t));
+}
+
 inline std::string UasmEmitter::render(const std::vector<std::string>& header, int64_t shift_at,
                                        std::string_view shift_text)
 {
     used_macros_.clear();
     sym_relocs_.clear();
     data_seg_words_ = 0;
+    r_ascii_ = r_hibit_ = r_int21_ = r_funcs_ = 0;
+    name_call_targets();
     collect_labels();
     const uint32_t n = static_cast<uint32_t>(in_.image->size());
 
@@ -3189,6 +3415,7 @@ inline std::string UasmEmitter::render(const std::vector<std::string>& header, i
     }
 
     line_unit_.clear();
+    int ah_known = -1, al_known = -1;
     for (size_t i = 0; i < units_.size(); ++i)
     {
         const EmitUnit& u = units_[i];
@@ -3196,6 +3423,7 @@ inline std::string UasmEmitter::render(const std::vector<std::string>& header, i
             put("    " + std::string(shift_text) + "\t; inserted by shift test");
         if (!u.code)
         {
+            ah_known = al_known = -1;
             // Split data at labels and at relocated words.
             uint32_t p = u.lin;
             const uint32_t end = u.lin + u.size;
@@ -3256,8 +3484,13 @@ inline std::string UasmEmitter::render(const std::vector<std::string>& header, i
                 }
                 std::string d = data_lines(p, q - p);
                 // Tag the first line so the verifier can map this chunk.
-                if (const size_t nl = d.find('\n'); nl != std::string::npos)
-                    d.insert(nl, std::format("\t; {:05X}:", p));
+                {
+                    size_t ls = 0;
+                    while (d.compare(ls, 5, "    ;") == 0 && d.find('\n', ls) != std::string::npos)
+                        ls = d.find('\n', ls) + 1;
+                    if (const size_t nl = d.find('\n', ls); nl != std::string::npos)
+                        d.insert(nl, std::format("\t; {:05X}:", p));
+                }
                 for (char c : d)
                     if (c == '\n')
                         ++line;
@@ -3265,6 +3498,11 @@ inline std::string UasmEmitter::render(const std::vector<std::string>& header, i
                 p = q;
             }
             continue;
+        }
+        if (labels_.count(u.lin) && call_targets_.count(u.lin))
+        {
+            put("; ------------------------------------------------------------");
+            ++r_funcs_;
         }
         if (static_cast<int64_t>(u.lin) == main_hint_)
             put(std::format("; hint: possibly _main (C startup calls it, then passes AX to the call at {:05X}); "
@@ -3274,8 +3512,45 @@ inline std::string UasmEmitter::render(const std::vector<std::string>& header, i
             if (frame_bases_.count(u.lin) && u.lin > in_.emit_lo && u.lin % 16 == 0)
                 put("align 16");
             put(lbl(u.lin) + ":");
+            ah_known = -1;
         }
         const uint8_t* b = in_.image->data() + u.lin;
+        // R3: AH from an immediate mov earlier in the same block.
+        std::string int21;
+        {
+            size_t k = 0;
+            while (k < u.size && (b[k] == 0x26 || b[k] == 0x2E || b[k] == 0x36 || b[k] == 0x3E))
+                ++k;
+            const uint8_t op = k < u.size ? b[k] : 0;
+            if (op == 0xCD && k + 1 < u.size && b[k + 1] == 0x21)
+            {
+                if (ah_known >= 0)
+                {
+                    auto d = annotate_int(0x21, static_cast<uint8_t>(ah_known), 0xFF);
+                    int21 = std::format("  DOS AH={}{}", uasm_hex(static_cast<uint32_t>(ah_known)),
+                                        d ? std::string(": ") + std::string(*d) : std::string());
+                    ++r_int21_;
+                }
+                ah_known = al_known = -1;
+            }
+            else if (op == 0xB4 && k == 0 && u.size == 2)
+                ah_known = b[1];
+            else if (op == 0xB0 && k == 0 && u.size == 2)
+                al_known = b[1];
+            else if (op == 0xB8 && k == 0 && u.size == 3)
+            {
+                al_known = b[1];
+                ah_known = b[2];
+            }
+            else if (rd_keeps_ax(u, b))
+            {
+            }
+            else
+                ah_known = al_known = -1;
+        }
+        for (auto& c : int21)
+            if (c == '\n' || c == '\r' || c == ';')
+                c = ' ';
         std::string bytes;
         for (uint32_t k = 0; k < u.size; ++k)
             bytes += std::format("{}{:02X}", k ? " " : "", b[k]);
@@ -3288,6 +3563,7 @@ inline std::string UasmEmitter::render(const std::vector<std::string>& header, i
                 ln += std::format("\t; {:05X}: {}", u.lin, bytes);
                 if (u.rung != Rung::Mnemonic)
                     ln += "  " + dec;
+                ln += int21;
             }
             line_unit_[line + 1] = i;
             put(ln);

@@ -82,11 +82,11 @@ check u2_count grep -qF '; C strings: 2 NUL-terminated string(s) found in data' 
 check u2_short_not_labeled bash -c "! grep -qF \"'Hi', 0h\" '$O'"
 check u2_dollar_still_str grep -qE '^    mov dx, offset str_[0-9A-F]{5}' "$O"
 check u2_typed_unchanged grep -qF 'pointers and types: 0 code pointer(s) through a register, 1 typed string(s)' "$O"
-check u3_header grep -qE '^; hint: possibly _main at L[0-9A-F]{5} \(C startup pattern.*not verified, label not renamed' "$O"
+check u3_header grep -qE '^; hint: possibly _main at (L|func_)[0-9A-F]{5} \(C startup pattern.*not verified, label not renamed' "$O"
 check u3_comment grep -qE '^; hint: possibly _main \(C startup calls it' "$O"
 check u3_not_named bash -c "! grep -qE '^_?main:' '$O'"
 # The comment sits right before the label of cmain (0x10F).
-check u3_target bash -c "grep -A1 '^; hint: possibly _main (' '$O' | grep -q '^L0010F:'"
+check u3_target bash -c "grep -A1 '^; hint: possibly _main (' '$O' | grep -qE '^(L|func_)0010F:'"
 # No startup pattern: no hint.
 printf '\xb4\x4c\xcd\x21' > "$TD/n.com"
 (cd "$TD" && "$BIN" --uasm --uasm-verified --uasm-bin "$UASM_BIN" -o n_out.asm n.com >/dev/null 2>&1) || true

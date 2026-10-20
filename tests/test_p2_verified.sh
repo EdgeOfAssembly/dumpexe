@@ -58,7 +58,7 @@ V="$BIN --uasm --uasm-verified --uasm-bin $UASM_BIN"
 $V -o "$TD/s_out.asm" "$TD/s.com" >"$TD/s.stdout" 2>"$TD/s.stderr" || true
 check com_verified grep -q '^; VERIFIED identical' "$TD/s_out.asm"
 check com_reassembles bash -c "cd '$TD' && env -u UASM '$UASM_BIN' -bin -nologo -Fos_re.bin s_out.asm >/dev/null 2>&1 && cmp -s s_re.bin s.com"
-check com_branch_symbolic grep -q 'call near ptr L' "$TD/s_out.asm"
+check com_branch_symbolic grep -q -E 'call near ptr (L|func_)' "$TD/s_out.asm"
 check com_pin_used grep -qE '^    (mov_rm|add_aw|add_iw) ' "$TD/s_out.asm"
 check com_shift_start_clean grep -qE '^; shift start: [1-9][0-9]* references checked, 0 broken' "$TD/s_out.asm"
 check com_shift_mid_clean grep -qE '^; shift mid: [1-9][0-9]* references checked, 0 broken' "$TD/s_out.asm"

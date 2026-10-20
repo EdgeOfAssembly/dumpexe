@@ -269,6 +269,25 @@ and does not say verified.
 If verify is on and no assembler can be run, dumpexe writes an error
 on stderr and exits non-zero.
 .PP
+Readability (UASM output, bytes unchanged):
+printable ASCII runs in data that look like text are quoted
+.B db
+strings (quote and macro characters stay numeric);
+data runs of 8+ bytes with bit 7 set that decode to text keep hex
+.B db
+under a
+.B "; hi-bit text:"
+comment (one trailing bit-7-clear printable byte is included);
+.B int 21h
+gets a DOS function comment when AH is set by an immediate
+.B mov
+earlier in the same block;
+near call targets are named
+.B func_XXXXX
+(a
+.B \-\-hints
+label wins) after a separator comment line.
+.PP
 With
 .BR \-\-uasm\-verified ,
 NUL-terminated text in data is labeled

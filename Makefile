@@ -226,6 +226,7 @@ test: dumpexe bin2exe bin2ne tools/bin2exe/test_header test_p1_model test_p1_flo
 	@$(call run_suite,tests/test_p5_tools.sh)
 	@$(call run_suite,tests/test_p6_sim.sh)
 	@$(call run_suite,tests/test_p7_ne.sh)
+	@$(call run_suite,tests/test_readability.sh)
 	@./tools/bin2exe/test_header
 	@$(call run_suite,tools/bin2exe/tests/test_cli.sh)
 
@@ -252,6 +253,7 @@ test-uasm: dumpexe
 	@bash tests/test_p5_tools.sh
 	@bash tests/test_p6_sim.sh
 	@bash tests/test_p7_ne.sh
+	@bash tests/test_readability.sh
 
 tests: test
 
