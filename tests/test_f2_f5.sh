@@ -86,7 +86,7 @@ end start
 ASM
 build p1
 check f2_p1_verified grep -q '^; VERIFIED identical' "$TD/p1_out.asm"
-check f2_chain_exit_hint grep -qE '^; hint: possibly _main at L00126 ' "$TD/p1_out.asm"
+check f2_chain_exit_hint grep -qE '^; hint: possibly _main at (L|func_)00126 ' "$TD/p1_out.asm"
 
 # F2 negative: a real exit, but the pattern is more than 512 bytes past the entry.
 cat > "$TD/n2.asm" <<'ASM'
