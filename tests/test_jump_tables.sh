@@ -21,7 +21,7 @@
 #  J10 COM: rule 7 (branch-target promotion). A call target in data whose
 #     next byte only a heuristic head decoded is promoted; a call target one
 #     byte before flow-proven code is not (the proven decode is kept).
-#  K1a-K1c, K2a: review repros (see the block at the end).
+#  K1a-K1c, K2a, M1a, M1b, L1a: review repros (see the blocks at the end).
 # Every listing must rebuild byte-identical. Missing assembler: exit 77.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -553,6 +553,138 @@ check k2a_verified grep -q '^; VERIFIED identical' "$O"
 check k2a_four_entries grep -qE '^; jump tables: 1 generic table\(s\), 4 entries, 0 hole\(s\)' "$O"
 check k2a_handlers bash -c "grep -qE '^    mov al, 2h' '$O' && grep -qE '^    mov al, 3h' '$O'"
 check k2a_rebuild same k2a_out.asm k2a.com bin
+
+# ---- M1/L1 (verify-ce17c82 repros e1, e5, f2) ----
+#  M1a e1: unguarded byte dispatcher, a hole, then pointers to handlers of
+#      another table and a pointer into text; nothing hard-bounds the slots,
+#      so the table ends at the hole.
+#  M1b e5: several holes with another table's handlers between them.
+#  L1a f2: `mov bx, offset tbl+4 ; add bx, 40 ; mov al, [bx]`: the register
+#      is modified before use, so the immediate does not end the table.
+cat > "$TD/m1a.asm" <<'ASM'
+_TEXT segment para public use16 'CODE'
+assume cs:_TEXT, ds:_TEXT
+org 100h
+start:
+    mov bx, 1
+    cmp bx, 1
+    ja skip
+    shl bx, 1
+    jmp word ptr [bx+gtab]
+g0: mov al, 20h
+    jmp next
+g1: mov al, 21h
+    jmp next
+skip:
+    mov si, offset prog
+next:
+    lodsb
+    xor ah, ah
+    mov bx, ax
+    shl bx, 1
+    jmp word ptr [bx+tbl]
+h0: mov ax, 4C00h
+    int 21h
+h1: mov al, 1
+    jmp next
+tbl dw h0, h1
+    dw 0
+    dw g0, g1
+    dw m1
+m1 db 'ABC', 0C3h
+gtab dw g0, g1
+prog db 1, 0
+_TEXT ends
+end start
+ASM
+asm m1a.asm m1a.com
+lst m1a.com m1a_out.asm
+O="$TD/m1a_out.asm"
+check m1a_verified grep -q '^; VERIFIED identical' "$O"
+check m1a_two_entries grep -qE '^; jump tables: 1 generic table\(s\), 2 entries, 0 hole\(s\)' "$O"
+check m1a_no_false_code bash -c "! grep -qE '^    inc (cx|dx|bx)' '$O'"
+check m1a_text_is_data grep -qE '^    db .*41h, 42h, 43h, 0C3h' "$O"
+check m1a_rebuild same m1a_out.asm m1a.com bin
+cat > "$TD/m1b.asm" <<'ASM'
+_TEXT segment para public use16 'CODE'
+assume cs:_TEXT, ds:_TEXT
+org 100h
+start:
+    mov bx, 1
+    cmp bx, 1
+    ja skip
+    shl bx, 1
+    jmp word ptr [bx+gtab]
+g0: mov al, 20h
+    jmp next
+g1: mov al, 21h
+    jmp next
+skip:
+    mov si, offset prog
+next:
+    lodsb
+    xor ah, ah
+    mov bx, ax
+    shl bx, 1
+    jmp word ptr [bx+tbl]
+h0: mov ax, 4C00h
+    int 21h
+h1: mov al, 1
+    jmp next
+tbl dw h0, h1
+    dw 0, 0
+    dw g0
+    dw 0
+    dw g1, m1
+m1 db 'ABC', 0C3h
+gtab dw g0, g1
+prog db 1, 0
+_TEXT ends
+end start
+ASM
+asm m1b.asm m1b.com
+lst m1b.com m1b_out.asm
+O="$TD/m1b_out.asm"
+check m1b_verified grep -q '^; VERIFIED identical' "$O"
+check m1b_two_entries grep -qE '^; jump tables: 1 generic table\(s\), 2 entries, 0 hole\(s\)' "$O"
+check m1b_no_false_code bash -c "! grep -qE '^    inc (cx|dx|bx)' '$O'"
+check m1b_text_is_data grep -qE '^    db .*41h, 42h, 43h, 0C3h' "$O"
+check m1b_rebuild same m1b_out.asm m1b.com bin
+cat > "$TD/l1a.asm" <<'ASM'
+_TEXT segment para public use16 'CODE'
+assume cs:_TEXT, ds:_TEXT
+org 100h
+start:
+    mov bx, offset tbl+4
+    add bx, 40
+    mov al, [bx]
+    mov si, offset prog
+next:
+    lodsb
+    xor ah, ah
+    mov bx, ax
+    shl bx, 1
+    jmp word ptr [bx+tbl]
+h0: mov ax, 4C00h
+    int 21h
+h1: mov al, 1
+    jmp next
+h2: mov al, 2
+    jmp next
+h3: mov al, 3
+    jmp next
+tbl dw h0, h1, h2, h3
+prog db 1, 2, 3, 0
+_TEXT ends
+end start
+ASM
+asm l1a.asm l1a.com
+lst l1a.com l1a_out.asm
+O="$TD/l1a_out.asm"
+check l1a_verified grep -q '^; VERIFIED identical' "$O"
+check l1a_four_entries grep -qE '^; jump tables: 1 generic table\(s\), 4 entries, 0 hole\(s\)' "$O"
+check l1a_handlers bash -c "grep -qE '^    mov al, 2h' '$O' && grep -qE '^    mov al, 3h' '$O'"
+check l1a_rebuild same l1a_out.asm l1a.com bin
 
 echo "---"
 echo "passed=$pass failed=$fail"

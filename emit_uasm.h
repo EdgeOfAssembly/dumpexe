@@ -2187,11 +2187,19 @@ inline bool UasmEmitter::jt_imm_is_pointer(size_t i, uint8_t reg) const
         for (uint8_t o = 0; o < x.op_count; ++o)
         {
             const cs_x86_op& op = x.operands[o];
-            if (op.type == X86_OP_MEM && (op.mem.base == r || op.mem.index == r))
+            if (op.type == X86_OP_MEM && (op.mem.base == r || op.mem.index == r) && ci->id != X86_INS_LEA)
                 used = true;
-            if (op.type == X86_OP_REG && op.reg == r && (op.access & CS_AC_WRITE) && !(op.access & CS_AC_READ))
+            // Any write (mov, add, sub, inc, xchg, pop, lea, ...) changes the
+            // value: it is no longer the loaded immediate.
+            if (op.type == X86_OP_REG && (op.access & CS_AC_WRITE) &&
+                (op.reg == r ||
+                 (reg == 3 && (op.reg == X86_REG_BL || op.reg == X86_REG_BH))))
                 writes = true;
         }
+        for (uint8_t q = 0; q < ci->detail->regs_write_count; ++q)
+            if (ci->detail->regs_write[q] == r)
+                writes = true;
+
         // String ops and xlat read si/di/bx implicitly.
         const std::string_view m(ci->mnemonic);
         const bool str = m.starts_with("lods") || m.starts_with("movs") || m.starts_with("stos") ||
@@ -2208,7 +2216,7 @@ inline bool UasmEmitter::jt_imm_is_pointer(size_t i, uint8_t reg) const
                     (reg == 3 && m.starts_with("xlat"))))
             used = true;
         if (used || writes)
-            break;
+            break; // a use in the same instruction as a write comes first (mov bx, [bx]; lodsb)
         // Still live at a call or an indirect jump: the value is handed to
         // the callee or the dispatched handler (an argument pointer).
         if (m == "call" || m == "lcall" || (m == "jmp" && x.op_count >= 1 && x.operands[0].type != X86_OP_IMM))
@@ -2372,8 +2380,15 @@ inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool fa
         }
         a = units_[static_cast<size_t>(ci)].lin + units_[static_cast<size_t>(ci)].size - 1;
     }
-    if (count > 0)
-        end = std::min<uint64_t>(end, T + static_cast<uint64_t>(count) * esz);
+    // A hard end: the next code start, label, known table start, data-load
+    // address, segment base or named word list. The image end, and a count
+    // from a byte-sized index, are not independent of the table's contents.
+    bool hard_end = end < n;
+    if (count > 0 && T + static_cast<uint64_t>(count) * esz < end)
+    {
+        end = static_cast<uint32_t>(T + static_cast<uint64_t>(count) * esz);
+        hard_end = false;
+    }
     struct Ent
     {
         uint32_t at, target, frame;
@@ -2382,23 +2397,22 @@ inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool fa
     std::vector<Ent> ents;
     int bad_run = 0;
     // Holes (0000 or out-of-image words):
-    //  - no compare guard, mask, byte-sized index or hint: nothing bounds
-    //    the table, so the first hole ends it;
-    //  - byte-bounded only (no guard): after a hole the next entry must be
-    //    plausible dispatch code (already decoded, or a clean run anchored
-    //    to known code); otherwise the table ends at the hole. A function
-    //    that is called directly is not dispatch evidence: a pointer to one,
-    //    or a run that only reaches one, ends the table at the hole;
-    //  - guarded or hinted: holes are skipped.
-    const bool hole_ends = !guarded && !byte_bounded && !hinted && !far;
-    const bool hole_check = !guarded && byte_bounded && !hinted && !far;
-    bool after_hole = false;
-    size_t hole_start = 0;
+    //  - guarded (compare or mask) or hinted: holes are skipped;
+    //  - otherwise a hole ends the table, unless the slots run up to a hard
+    //    end (see above) and every slot up to it is a 0000 hole or a valid
+    //    entry. Being decoded (for example as another table's target) or
+    //    decoding cleanly is not evidence on its own: the independent hard
+    //    end is what bounds the slot count. After a hole, a pointer to a
+    //    directly called function is never a valid entry.
+    const bool hole_rule = !guarded && !hinted && !far;
+    bool after_hole = false, any_hole = false, filled = true;
+    size_t first_hole = 0;
     for (uint32_t at = T; at + esz <= end; at += esz)
     {
         if (!in_.com && (in_.reloc_at.count(at) || (!far && in_.reloc_at.count(at + 1))))
         {
             ents.push_back({at, 0, 0, 2});
+            filled = false;
             if (++bad_run >= 2)
                 break;
             continue;
@@ -2419,12 +2433,14 @@ inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool fa
         const uint64_t t = static_cast<uint64_t>(tf) + w;
         if ((w == 0 && !far) || t < in_.emit_lo || t >= n)
         {
-            if (hole_ends)
-                break; // trailing holes are trimmed below
-            if (!after_hole)
-                hole_start = ents.size();
-            after_hole = true;
+            if (w != 0)
+                filled = false; // only 0000 is a hole in a hard-bounded table
+            if (!any_hole)
+                first_hole = ents.size();
+            any_hole = after_hole = true;
             ents.push_back({at, 0, 0, 0});
+            if (hole_rule && !filled)
+                break;
             continue;
         }
         const uint32_t tt = static_cast<uint32_t>(t);
@@ -2433,38 +2449,33 @@ inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool fa
             valid = false; // into the table itself
         else if (const int ui = unit_at(tt); ui >= 0 && units_[static_cast<size_t>(ui)].code)
             valid = frame_of_.count(tt) && static_cast<uint32_t>(frame_of_.at(tt)) == tf &&
-                    !(hole_check && after_hole && jt_called_.count(tt));
+                    !(hole_rule && after_hole && jt_called_.count(tt));
         else if (const int cv = unit_covering(tt); cv >= 0 && units_[static_cast<size_t>(cv)].code)
             valid = false; // mid-instruction
         else
         {
-            bool anchored = false, strong = false;
-            valid = hinted || jt_clean(tt, tf, nullptr, nullptr, &anchored, &strong);
-            if (valid && hole_check && after_hole && !strong)
-                valid = false;
+            valid = hinted || jt_clean(tt, tf);
         }
-        if (hole_check && after_hole && !valid)
-        {
-            ents.resize(hole_start); // the table ends at the hole
+        if (!valid)
+            filled = false;
+        if (hole_rule && any_hole && !valid)
             break;
-        }
-        after_hole = false;
         ents.push_back({at, tt, tf, valid ? 1 : 2});
         bad_run = valid ? 0 : bad_run + 1;
         if (bad_run >= 2)
             break;
     }
+    // Unguarded with a hole: keep the slots past it only when they fill the
+    // table exactly up to a hard end; otherwise the table ends at the hole.
+    if (hole_rule && any_hole)
+    {
+        const bool reached = !ents.empty() && ents.back().at + esz >= end;
+        if (!(filled && hard_end && reached))
+            ents.resize(first_hole);
+    }
     // Trim trailing holes and invalid entries.
     while (!ents.empty() && ents.back().state != 1)
         ents.pop_back();
-    // A lone pointer after the last hole of an unguarded table is not a
-    // table word: one entry that happens to follow zero padding.
-    if (hole_check && ents.size() >= 2 && ents[ents.size() - 2].state == 0)
-    {
-        ents.pop_back();
-        while (!ents.empty() && ents.back().state != 1)
-            ents.pop_back();
-    }
     size_t valid = 0, holes = 0;
     for (const Ent& e : ents)
         valid += e.state == 1, holes += e.state == 0;

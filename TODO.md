@@ -69,6 +69,7 @@ Living roadmap for the DOS RE toolkit and ICON preservation work.
 - [ ] Better COM simulation parity with EXE engine
 - [ ] ICON: document jump-table @ `0090h` slot → procedure names
 - [ ] Self-modifying opcode slots (review J3, arch/jump-tables). A `mov [imm], reg` inside code that writes into a later routine (install-time patching) changes the instruction stream: with the slot patched, the real stream reaches `int 10h` (ctmouse.exe 0504), while the listing shows the unpacked static bytes (`dec ch / adc`). Rule 7 (branch-target promotion) is not the cause: its extra re-run resolves the flow through the slot before the int-scan head the first round kept. The listing still rebuilds byte-identical. Possible fix: treat bytes written by `mov [imm], reg` from code as a slot that stops flow, and note it in the listing. Rule 7 itself is pinned by J10 in tests/test_jump_tables.sh.
+- [ ] Pointer into a table ends it (review I1, arch/jump-tables; accepted as is). `mov si, offset tbl+4` followed by `lodsb` is a real pointer load into the table, so the immediate counts as a word-list address and the table ends there (2 of 4 entries; no false code, the cut handlers stay data). Kept on purpose: telling a pointer into a table from one to a separate word list needs the table's own bound. Possible fix: ignore an immediate inside the range a compare guard or mask already bounds. Pinned by no test yet (repro f3 in verify-ce17c82).
 
 ## Last / polish
 
