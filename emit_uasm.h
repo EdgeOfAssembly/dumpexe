@@ -233,15 +233,17 @@ private:
     // Generic jump/call tables (see add_generic_table).
     void jt_prepare();
     bool jt_clean(uint32_t t, uint32_t fr, int* insns = nullptr, int* known_hits = nullptr,
-                  bool* anchored = nullptr) const;
+                  bool* anchored = nullptr, bool* strong = nullptr) const;
     bool add_generic_table(const std::vector<size_t>& code, size_t j);
     void jt_table(uint32_t T, int64_t fr, int64_t count, bool far, bool hinted, size_t unit_idx, uint8_t disp_off,
-                  bool guarded = false);
+                  bool guarded = false, bool byte_bounded = false);
     void jt_direct_targets(const std::vector<size_t>& code);
     bool jt_ready_ = false;
     std::set<uint32_t> jt_bounds_;   ///< code starts, labels, data-load addresses
     std::set<uint32_t> jt_loads_;    ///< addresses read by direct-address loads
-    std::set<uint32_t> jt_imm_;      ///< addresses named by `mov r16, imm` loads
+    std::set<uint32_t> jt_imm_;      ///< addresses named by pointer-register immediate loads
+    std::set<uint32_t> jt_called_;   ///< targets of direct near calls (function heads)
+    bool jt_imm_is_pointer(size_t i, uint8_t reg) const;
     std::set<uint32_t> jt_weak_;     ///< instructions whose block head is below Derived
     bool jt_is_code(uint32_t lin) const;
     std::set<uint32_t> jt_roots_;    ///< valid table entries / promoted targets
@@ -2064,14 +2066,19 @@ inline void UasmEmitter::jt_prepare()
                 for (const CfgInsn& ci : blk.insns)
                     jt_weak_.insert(static_cast<uint32_t>(ci.ip));
         }
-    for (const EmitUnit& u : units_)
+    for (size_t ui = 0; ui < units_.size(); ++ui)
     {
+        const EmitUnit& u = units_[ui];
         if (!u.code || jt_weak_.count(u.lin))
             continue;
         jt_bounds_.insert(u.lin);
         for (const InsnRef& r : u.refs)
+        {
             if (r.kind == RefKind::Rel || r.kind == RefKind::FarOff || r.kind == RefKind::Off)
                 jt_bounds_.insert(r.target);
+            if (r.kind == RefKind::Rel && img[u.lin] == 0xE8)
+                jt_called_.insert(r.target);
+        }
         // Direct-address memory operands (mod=00 rm=110 or A0-A3 moffs).
         const uint8_t* b = img.data() + u.lin;
         uint32_t k = 0;
@@ -2089,10 +2096,15 @@ inline void UasmEmitter::jt_prepare()
         }
         if (k >= u.size)
             continue;
-        // Immediate address loads (mov r16, imm16; not sp): the word list a
-        // `mov si, offset X` points at is data, so X ends a table before it.
+        // Immediate address loads: the word list a `mov si, offset X` points
+        // at is data, so X ends a table before it. Only bx/si/di/bp loads
+        // whose value is then used as a memory base or string pointer count;
+        // a loop count or other constant (mov cx, N) is not an address.
         if (k == 0 && u.size == 3 && b[0] >= 0xB8 && b[0] <= 0xBF && b[0] != 0xBC)
         {
+            const uint8_t reg = b[0] - 0xB8;
+            if ((reg != 3 && reg != 5 && reg != 6 && reg != 7) || !jt_imm_is_pointer(ui, reg))
+                continue;
             const uint32_t imm = b[1] | (b[2] << 8);
             const int32_t ifr = frame_of_.count(u.lin) ? frame_of_.at(u.lin) : 0;
             for (int64_t ib : {in_.com ? int64_t{0} : int64_t{ifr}, in_.com ? int64_t{-1} : int64_t{dgroup_}})
@@ -2141,6 +2153,80 @@ inline void UasmEmitter::jt_prepare()
  * arpl/lock, a near branch or call out of the image, or no terminator within
  * 400 instructions.
  */
+/**
+ * @brief True when the value a `mov reg, imm16` (unit @p i) loads into
+ *        bx/bp/si/di is used as a memory base/index or a string pointer by
+ *        the straight-line code after it, before the register is rewritten,
+ *        or is still live at a call or indirect jump (handed on as an argument).
+ */
+inline bool UasmEmitter::jt_imm_is_pointer(size_t i, uint8_t reg) const
+{
+    static const x86_reg cs_regs[8] = {X86_REG_AX, X86_REG_CX, X86_REG_DX, X86_REG_BX,
+                                       X86_REG_SP, X86_REG_BP, X86_REG_SI, X86_REG_DI};
+    const x86_reg r = cs_regs[reg];
+    const std::vector<uint8_t>& img = *in_.image;
+    csh h = 0;
+    if (cs_open(CS_ARCH_X86, CS_MODE_16, &h) != CS_ERR_OK)
+        return false;
+    cs_option(h, CS_OPT_DETAIL, CS_OPT_ON);
+    cs_insn* ci = cs_malloc(h);
+    bool used = false;
+    for (size_t j = i + 1; j < units_.size() && j <= i + 12 && ci != nullptr; ++j)
+    {
+        const EmitUnit& u = units_[j];
+        const EmitUnit& pv = units_[j - 1];
+        if (!u.code || pv.lin + pv.size != u.lin)
+            break;
+        const uint8_t* ptr = img.data() + u.lin;
+        size_t sz = u.size;
+        uint64_t addr = 0;
+        if (!cs_disasm_iter(h, &ptr, &sz, &addr, ci) || ci->detail == nullptr)
+            break;
+        const cs_x86& x = ci->detail->x86;
+        bool writes = false;
+        for (uint8_t o = 0; o < x.op_count; ++o)
+        {
+            const cs_x86_op& op = x.operands[o];
+            if (op.type == X86_OP_MEM && (op.mem.base == r || op.mem.index == r))
+                used = true;
+            if (op.type == X86_OP_REG && op.reg == r && (op.access & CS_AC_WRITE) && !(op.access & CS_AC_READ))
+                writes = true;
+        }
+        // String ops and xlat read si/di/bx implicitly.
+        const std::string_view m(ci->mnemonic);
+        const bool str = m.starts_with("lods") || m.starts_with("movs") || m.starts_with("stos") ||
+                         m.starts_with("scas") || m.starts_with("cmps") || m.starts_with("outs") ||
+                         m.starts_with("ins") || m.starts_with("xlat");
+        if (str)
+            for (uint8_t q = 0; q < ci->detail->regs_read_count; ++q)
+                if (ci->detail->regs_read[q] == r)
+                    used = true;
+        if (str && ((reg == 6 && (m.starts_with("lods") || m.starts_with("movs") || m.starts_with("cmps") ||
+                                  m.starts_with("outs"))) ||
+                    (reg == 7 && (m.starts_with("stos") || m.starts_with("movs") || m.starts_with("scas") ||
+                                  m.starts_with("cmps") || m.starts_with("ins"))) ||
+                    (reg == 3 && m.starts_with("xlat"))))
+            used = true;
+        if (used || writes)
+            break;
+        // Still live at a call or an indirect jump: the value is handed to
+        // the callee or the dispatched handler (an argument pointer).
+        if (m == "call" || m == "lcall" || (m == "jmp" && x.op_count >= 1 && x.operands[0].type != X86_OP_IMM))
+        {
+            used = true;
+            break;
+        }
+        const uint8_t o0 = img[u.lin];
+        if (o0 == 0xC3 || o0 == 0xCB || o0 == 0xC2 || o0 == 0xCA || o0 == 0xCF || o0 == 0xE9 || o0 == 0xEB ||
+            o0 == 0xEA || (o0 >= 0x70 && o0 <= 0x7F) || (o0 >= 0xE0 && o0 <= 0xE3))
+            break; // end of straight-line code
+    }
+    if (ci != nullptr)
+        cs_free(ci, 1);
+    cs_close(&h);
+    return used;
+}
+
 /** @brief A decoded instruction starts at @p lin and its head is Derived or stronger. */
 inline bool UasmEmitter::jt_is_code(uint32_t lin) const
 {
@@ -2148,9 +2234,14 @@ inline bool UasmEmitter::jt_is_code(uint32_t lin) const
     return ui >= 0 && units_[static_cast<size_t>(ui)].code && !jt_weak_.count(lin);
 }
 
-inline bool UasmEmitter::jt_clean(uint32_t t, uint32_t fr, int* insns, int* known_hits, bool* anchored) const
+inline bool UasmEmitter::jt_clean(uint32_t t, uint32_t fr, int* insns, int* known_hits, bool* anchored,
+                                       bool* strong) const
 {
-    bool anch = false;
+    // strong: anchored by something other than a direct-call function head
+    // (running into one, a jmp to one, or any call): a text byte followed by
+    // a jump into a called function is not evidence of a dispatch entry.
+    bool anch = false, anch_strong = false;
+    int hits_strong = 0;
     int n_ins = 0, hits = 0;
     const std::vector<uint8_t>& img = *in_.image;
     const uint32_t n = static_cast<uint32_t>(img.size());
@@ -2170,6 +2261,7 @@ inline bool UasmEmitter::jt_clean(uint32_t t, uint32_t fr, int* insns, int* know
         if (ui >= 0 && jt_is_code(p))
         {
             ok = anch = true; // runs into known code
+            anch_strong = !jt_called_.count(p);
             break;
         }
         const int cv = unit_covering(p);
@@ -2208,7 +2300,11 @@ inline bool UasmEmitter::jt_clean(uint32_t t, uint32_t fr, int* insns, int* know
             if ((j0 == 0xE9 || j0 == 0xEB) && ci->detail->x86.op_count >= 1 &&
                 ci->detail->x86.operands[0].type == X86_OP_IMM &&
                 jt_is_code(fr + (static_cast<uint32_t>(ci->detail->x86.operands[0].imm) & 0xFFFFu)))
+            {
                 anch = true;
+                anch_strong =
+                    !jt_called_.count(fr + (static_cast<uint32_t>(ci->detail->x86.operands[0].imm) & 0xFFFFu));
+            }
             break;
         }
         const uint8_t op0 = ci->detail ? ci->detail->x86.opcode[0] : 0;
@@ -2219,7 +2315,11 @@ inline bool UasmEmitter::jt_clean(uint32_t t, uint32_t fr, int* insns, int* know
             if (tg < in_.emit_lo || tg >= n)
                 break;
             if (jt_is_code(tg))
+            {
                 ++hits;
+                if (op0 != 0xE8 && !jt_called_.count(tg))
+                    ++hits_strong;
+            }
         }
         p += ci->size;
     }
@@ -2232,6 +2332,8 @@ inline bool UasmEmitter::jt_clean(uint32_t t, uint32_t fr, int* insns, int* know
         *known_hits = hits;
     if (anchored != nullptr)
         *anchored = ok && (anch || hits > 0);
+    if (strong != nullptr)
+        *strong = ok && (anch_strong || hits_strong > 0);
     return ok;
 }
 
@@ -2241,7 +2343,7 @@ inline bool UasmEmitter::jt_clean(uint32_t t, uint32_t fr, int* insns, int* know
  *        invalid entries in a row end the table.
  */
 inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool far, bool hinted, size_t unit_idx,
-                                  uint8_t disp_off, bool guarded)
+                                  uint8_t disp_off, bool guarded, bool byte_bounded)
 {
     const std::vector<uint8_t>& img = *in_.image;
     const uint32_t n = static_cast<uint32_t>(img.size());
@@ -2279,10 +2381,17 @@ inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool fa
     };
     std::vector<Ent> ents;
     int bad_run = 0;
-    // Unguarded tables (no compare guard, no mask, no hint): after a 0000
-    // hole the next entry must be plausible code (already decoded, or a clean
-    // run anchored to known code); otherwise the table ends at the hole.
-    const bool hole_check = !guarded && !hinted && !far;
+    // Holes (0000 or out-of-image words):
+    //  - no compare guard, mask, byte-sized index or hint: nothing bounds
+    //    the table, so the first hole ends it;
+    //  - byte-bounded only (no guard): after a hole the next entry must be
+    //    plausible dispatch code (already decoded, or a clean run anchored
+    //    to known code); otherwise the table ends at the hole. A function
+    //    that is called directly is not dispatch evidence: a pointer to one,
+    //    or a run that only reaches one, ends the table at the hole;
+    //  - guarded or hinted: holes are skipped.
+    const bool hole_ends = !guarded && !byte_bounded && !hinted && !far;
+    const bool hole_check = !guarded && byte_bounded && !hinted && !far;
     bool after_hole = false;
     size_t hole_start = 0;
     for (uint32_t at = T; at + esz <= end; at += esz)
@@ -2310,6 +2419,8 @@ inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool fa
         const uint64_t t = static_cast<uint64_t>(tf) + w;
         if ((w == 0 && !far) || t < in_.emit_lo || t >= n)
         {
+            if (hole_ends)
+                break; // trailing holes are trimmed below
             if (!after_hole)
                 hole_start = ents.size();
             after_hole = true;
@@ -2321,14 +2432,15 @@ inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool fa
         if (tt >= T && tt < at + esz)
             valid = false; // into the table itself
         else if (const int ui = unit_at(tt); ui >= 0 && units_[static_cast<size_t>(ui)].code)
-            valid = frame_of_.count(tt) && static_cast<uint32_t>(frame_of_.at(tt)) == tf;
+            valid = frame_of_.count(tt) && static_cast<uint32_t>(frame_of_.at(tt)) == tf &&
+                    !(hole_check && after_hole && jt_called_.count(tt));
         else if (const int cv = unit_covering(tt); cv >= 0 && units_[static_cast<size_t>(cv)].code)
             valid = false; // mid-instruction
         else
         {
-            bool anchored = false;
-            valid = hinted || jt_clean(tt, tf, nullptr, nullptr, &anchored);
-            if (valid && hole_check && after_hole && !anchored)
+            bool anchored = false, strong = false;
+            valid = hinted || jt_clean(tt, tf, nullptr, nullptr, &anchored, &strong);
+            if (valid && hole_check && after_hole && !strong)
                 valid = false;
         }
         if (hole_check && after_hole && !valid)
@@ -2345,6 +2457,14 @@ inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool fa
     // Trim trailing holes and invalid entries.
     while (!ents.empty() && ents.back().state != 1)
         ents.pop_back();
+    // A lone pointer after the last hole of an unguarded table is not a
+    // table word: one entry that happens to follow zero padding.
+    if (hole_check && ents.size() >= 2 && ents[ents.size() - 2].state == 0)
+    {
+        ents.pop_back();
+        while (!ents.empty() && ents.back().state != 1)
+            ents.pop_back();
+    }
     size_t valid = 0, holes = 0;
     for (const Ent& e : ents)
         valid += e.state == 1, holes += e.state == 0;
@@ -2569,7 +2689,7 @@ inline bool UasmEmitter::add_generic_table(const std::vector<size_t>& code, size
     if (count < 0 || count > 256)
         count = 256;
     const uint8_t disp_off = static_cast<uint8_t>(k + 2);
-    jt_table(static_cast<uint32_t>(tbase + disp), fr, count, far, false, ui, disp_off, guarded);
+    jt_table(static_cast<uint32_t>(tbase + disp), fr, count, far, false, ui, disp_off, guarded, byte_idx);
     return true;
 }
 

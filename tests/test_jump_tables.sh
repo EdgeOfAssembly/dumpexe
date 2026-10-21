@@ -21,6 +21,7 @@
 #  J10 COM: rule 7 (branch-target promotion). A call target in data whose
 #     next byte only a heuristic head decoded is promoted; a call target one
 #     byte before flow-proven code is not (the proven decode is kept).
+#  K1a-K1c, K2a: review repros (see the block at the end).
 # Every listing must rebuild byte-identical. Missing assembler: exit 77.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -393,6 +394,165 @@ check j10b_verified grep -q '^; VERIFIED identical' "$O"
 check j10b_not_promoted bash -c "! grep -qE '[1-9][0-9]* direct target\(s\) promoted' '$O'"
 check j10b_proven_kept grep -qE '^    push es	; 00113:' "$O"
 check j10b_rebuild same j10b_out.asm j10b.com bin
+
+# ---- K1/K2 (verify-29e977e repros b1, b3, b4, c1) ----
+#  K1a b1: byte dispatcher, 2 holes, then a callback array of directly
+#      called functions and a pointer into text: the table ends at the hole.
+#  K1b b3: several holes with called-function pointers between them.
+#  K1c b4: a hole, then a pointer to a text byte followed by a jmp into a
+#      called function: not dispatch evidence, the table ends at the hole.
+#  K2a c1: `mov cx, offset tbl+4` is a loop count, not an address; it must
+#      not cut the 4-entry table.
+cat > "$TD/k1a.asm" <<'ASM'
+_TEXT segment para public use16 'CODE'
+assume cs:_TEXT, ds:_TEXT
+org 100h
+start:
+    call f1
+    call f2
+    mov si, offset prog
+next:
+    lodsb
+    xor ah, ah
+    mov bx, ax
+    shl bx, 1
+    jmp word ptr [bx+tbl]
+h0: mov ax, 4C00h
+    int 21h
+h1: mov al, 1
+    jmp next
+f1: mov al, 11h
+    ret
+f2: mov al, 12h
+    ret
+tbl dw h0, h1
+    dw 0, 0
+cbs dw f1, f2
+    dw m1
+m1 db 'ABC', 0C3h
+prog db 1, 0
+_TEXT ends
+end start
+ASM
+asm k1a.asm k1a.com
+lst k1a.com k1a_out.asm
+O="$TD/k1a_out.asm"
+check k1a_verified grep -q '^; VERIFIED identical' "$O"
+check k1a_two_entries grep -qE '^; jump tables: 1 generic table\(s\), 2 entries, 0 hole\(s\)' "$O"
+check k1a_no_false_code bash -c "! grep -qE '^    inc (cx|dx|bx)' '$O'"
+check k1a_no_cb_table_word bash -c "! grep -qE 'offset func_[0-9A-F]+\s; [0-9A-F]+: table word' '$O'"
+check k1a_rebuild same k1a_out.asm k1a.com bin
+cat > "$TD/k1b.asm" <<'ASM'
+_TEXT segment para public use16 'CODE'
+assume cs:_TEXT, ds:_TEXT
+org 100h
+start:
+    call f1
+    call f2
+    mov si, offset prog
+next:
+    lodsb
+    xor ah, ah
+    mov bx, ax
+    shl bx, 1
+    jmp word ptr [bx+tbl]
+h0: mov ax, 4C00h
+    int 21h
+h1: mov al, 1
+    jmp next
+f1: mov al, 11h
+    ret
+f2: mov al, 12h
+    ret
+tbl dw h0, h1
+    dw 0, 0, 0
+    dw f2
+    dw 0, 0
+    dw f1, m1
+m1 db 'ABC', 0C3h
+prog db 1, 0
+_TEXT ends
+end start
+ASM
+asm k1b.asm k1b.com
+lst k1b.com k1b_out.asm
+O="$TD/k1b_out.asm"
+check k1b_verified grep -q '^; VERIFIED identical' "$O"
+check k1b_two_entries grep -qE '^; jump tables: 1 generic table\(s\), 2 entries, 0 hole\(s\)' "$O"
+check k1b_no_false_code bash -c "! grep -qE '^    inc (cx|dx|bx)' '$O'"
+check k1b_no_cb_table_word bash -c "! grep -qE 'offset func_[0-9A-F]+\s; [0-9A-F]+: table word' '$O'"
+check k1b_rebuild same k1b_out.asm k1b.com bin
+cat > "$TD/k1c.asm" <<'ASM'
+_TEXT segment para public use16 'CODE'
+assume cs:_TEXT, ds:_TEXT
+org 100h
+start:
+    call f1
+    call f2
+    mov si, offset prog
+next:
+    lodsb
+    xor ah, ah
+    mov bx, ax
+    shl bx, 1
+    jmp word ptr [bx+tbl]
+h0: mov ax, 4C00h
+    int 21h
+h1: mov al, 1
+    jmp next
+f1: mov al, 11h
+    ret
+f2: mov al, 12h
+    ret
+tbl dw h0, h1
+    dw 0
+    dw m2
+m2 db 'A', 0EBh, (f1 - ($+1)) and 0FFh
+prog db 1, 0
+_TEXT ends
+end start
+ASM
+asm k1c.asm k1c.com
+lst k1c.com k1c_out.asm
+O="$TD/k1c_out.asm"
+check k1c_verified grep -q '^; VERIFIED identical' "$O"
+check k1c_two_entries grep -qE '^; jump tables: 1 generic table\(s\), 2 entries, 0 hole\(s\)' "$O"
+check k1c_no_false_code bash -c "! grep -qE '^    inc (cx|dx|bx)' '$O'"
+check k1c_no_cb_table_word bash -c "! grep -qE 'offset func_[0-9A-F]+\s; [0-9A-F]+: table word' '$O'"
+check k1c_rebuild same k1c_out.asm k1c.com bin
+cat > "$TD/k2a.asm" <<'ASM'
+_TEXT segment para public use16 'CODE'
+assume cs:_TEXT, ds:_TEXT
+org 100h
+start:
+    mov cx, offset tbl+4   ; a loop count that happens to equal an address inside the table
+    mov si, offset prog
+next:
+    lodsb
+    xor ah, ah
+    mov bx, ax
+    shl bx, 1
+    jmp word ptr [bx+tbl]
+h0: mov ax, 4C00h
+    int 21h
+h1: mov al, 1
+    jmp next
+h2: mov al, 2
+    jmp next
+h3: mov al, 3
+    jmp next
+tbl dw h0, h1, h2, h3
+prog db 1, 2, 3, 0
+_TEXT ends
+end start
+ASM
+asm k2a.asm k2a.com
+lst k2a.com k2a_out.asm
+O="$TD/k2a_out.asm"
+check k2a_verified grep -q '^; VERIFIED identical' "$O"
+check k2a_four_entries grep -qE '^; jump tables: 1 generic table\(s\), 4 entries, 0 hole\(s\)' "$O"
+check k2a_handlers bash -c "grep -qE '^    mov al, 2h' '$O' && grep -qE '^    mov al, 3h' '$O'"
+check k2a_rebuild same k2a_out.asm k2a.com bin
 
 echo "---"
 echo "passed=$pass failed=$fail"
