@@ -10,6 +10,17 @@
 #  J4 EXE: cs: near table in a second code segment.
 #  J5 EXE: far table (call dword ptr cs:[bx+T]), relocated segment words.
 #  J6 COM: hint `table ADDR N near` overrides.
+#  J7 COM (negative): unguarded byte dispatcher, then zero padding and a word
+#     list pointing at text; a 0000 hole followed by an entry that is not
+#     plausible code ends the table (no false code from the text).
+#  J8 EXE (negative): cs: table at the very end of its segment; the next
+#     segment starts with words pointing at text. The table never runs past
+#     its segment.
+#  J9 COM (negative): `mov si, offset X` names the word list just past the
+#     table; an immediate address load ends the table.
+#  J10 COM: rule 7 (branch-target promotion). A call target in data whose
+#     next byte only a heuristic head decoded is promoted; a call target one
+#     byte before flow-proven code is not (the proven decode is kept).
 # Every listing must rebuild byte-identical. Missing assembler: exit 77.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -221,6 +232,167 @@ lst j6.com j6_out.asm --hints="$TD/j6.hints"
 check j6_verified grep -q '^; VERIFIED identical' "$TD/j6_out.asm"
 check j6_hinted test "$(grep -cE '^    mov al, [01]h?' "$TD/j6_out.asm")" -eq 2
 check j6_rebuild same j6_out.asm j6.com bin
+
+# ---- J7: 0000 hole + pointer list (negative) ----
+cat > "$TD/j7.asm" <<'ASM'
+_TEXT segment para public use16 'CODE'
+assume cs:_TEXT, ds:_TEXT
+org 100h
+start:
+    mov si, offset prog
+next:
+    lodsb
+    xor ah, ah
+    mov bx, ax
+    shl bx, 1
+    jmp word ptr [bx+tbl]
+h0: mov ax, 4C00h
+    int 21h
+h1: mov al, 1
+    jmp next
+tbl dw h0, h1
+    dw 6 dup(0)
+msgp dw m1, m2
+m1 db 'ABC', 0C3h
+m2 db 'GHI', 0C3h
+prog db 1, 0
+ASM
+printf '_TEXT ends\nend start\n' >> "$TD/j7.asm"
+asm j7.asm j7.com
+lst j7.com j7_out.asm
+O="$TD/j7_out.asm"
+check j7_verified grep -q '^; VERIFIED identical' "$O"
+check j7_two_entries grep -qE '^; jump tables: 1 generic table\(s\), 2 entries, 0 hole\(s\)' "$O"
+check j7_text_is_data grep -qE '^    db .*41h, 42h, 43h, 0C3h, 47h, 48h, 49h, 0C3h' "$O"
+check j7_no_false_code bash -c "! grep -qE '^    inc (cx|dx|bx)' '$O'"
+check j7_rebuild same j7_out.asm j7.com bin
+
+# ---- J8: table at the end of its segment (negative) ----
+cat > "$TD/j8.asm" <<'ASM'
+_TEXT segment para public use16 'CODE'
+assume cs:_TEXT, ds:_DATA
+start:
+    mov ax, _DATA
+    mov ds, ax
+    mov bx, 0
+    shl bx, 1
+    jmp word ptr cs:[bx+tbl]
+c0: mov ax, 4C00h
+    int 21h
+c1: mov al, 1
+    ret
+    db 0FFh, 0FFh
+txt db 'AB', 0C3h
+tbl dw c0, c1
+_TEXT ends
+_DATA segment para public use16 'DATA'
+    dw txt, txt, 0
+_DATA ends
+_STACK segment para stack 'STACK'
+    db 64 dup(0)
+_STACK ends
+end start
+ASM
+asmz j8.asm j8.exe
+lst j8.exe j8_out.asm
+O="$TD/j8_out.asm"
+check j8_verified grep -q '^; VERIFIED identical' "$O"
+check j8_two_entries grep -qE '^; jump tables: 1 generic table\(s\), 2 entries, 0 hole\(s\)' "$O"
+check j8_text_is_data grep -qE '^    db .*41h, 42h, 0C3h' "$O"
+check j8_no_false_code bash -c "! grep -qE '^    inc (cx|dx)' '$O'"
+check j8_built test -s "$TD/j8.exe"
+
+# ---- J9: immediate address load just past the table (negative) ----
+cat > "$TD/j9.asm" <<'ASM'
+_TEXT segment para public use16 'CODE'
+assume cs:_TEXT, ds:_TEXT
+org 100h
+start:
+    mov si, offset after
+    mov bx, 0
+    shl bx, 1
+    jmp word ptr [bx+tbl]
+c0: mov ax, 4C00h
+    int 21h
+c1: mov al, 1
+    ret
+tbl dw c0, c1
+after dw m1, m1
+m1 db 'AB', 0C3h
+ASM
+printf '_TEXT ends\nend start\n' >> "$TD/j9.asm"
+asm j9.asm j9.com
+lst j9.com j9_out.asm
+O="$TD/j9_out.asm"
+check j9_verified grep -q '^; VERIFIED identical' "$O"
+check j9_two_entries grep -qE '^; jump tables: 1 generic table\(s\), 2 entries, 0 hole\(s\)' "$O"
+check j9_no_false_code bash -c "! grep -qE '^    inc (cx|dx)' '$O'"
+check j9_rebuild same j9_out.asm j9.com bin
+
+# ---- J10: rule 7, branch-target promotion (positive and negative) ----
+cat > "$TD/j10a.asm" <<'ASM'
+_TEXT segment para public use16 'CODE'
+assume cs:_TEXT, ds:_TEXT
+org 100h
+start:
+    mov ax, 4C00h
+    int 21h
+    db 0FFh, 0FFh
+orphan:
+    mov dx, offset msg
+    mov ah, 9
+    int 21h
+    call tgt
+    ret
+    db 0FFh, 0FFh
+tgt:
+    mov byte ptr ds:[168h], 1
+    jmp orphan
+    db 0FFh
+    mov ah, 9
+    int 21h
+    ret
+msg db 'Hi$'
+ASM
+printf '_TEXT ends\nend start\n' >> "$TD/j10a.asm"
+asm j10a.asm j10a.com
+lst j10a.com j10a_out.asm
+O="$TD/j10a_out.asm"
+check j10a_verified grep -q '^; VERIFIED identical' "$O"
+check j10a_promoted grep -qE '1 direct target\(s\) promoted' "$O"
+check j10a_target_decoded grep -qE '^    mov byte ptr ds:\[168h\], 1h?	; 00114:' "$O"
+check j10a_rebuild same j10a_out.asm j10a.com bin
+cat > "$TD/j10b.asm" <<'ASM'
+_TEXT segment para public use16 'CODE'
+assume cs:_TEXT, ds:_TEXT
+org 100h
+start:
+    jmp near ptr tgt1
+    db 0FFh, 0FFh
+orphan:
+    mov dx, offset msg
+    mov ah, 9
+    int 21h
+    call tgt
+    ret
+    db 0FFh, 0FFh
+tgt:
+    db 0C6h
+tgt1:
+    push es
+    pop es
+    mov ax, 4C00h
+    int 21h
+msg db 'Hi$'
+ASM
+printf '_TEXT ends\nend start\n' >> "$TD/j10b.asm"
+asm j10b.asm j10b.com
+lst j10b.com j10b_out.asm
+O="$TD/j10b_out.asm"
+check j10b_verified grep -q '^; VERIFIED identical' "$O"
+check j10b_not_promoted bash -c "! grep -qE '[1-9][0-9]* direct target\(s\) promoted' '$O'"
+check j10b_proven_kept grep -qE '^    push es	; 00113:' "$O"
+check j10b_rebuild same j10b_out.asm j10b.com bin
 
 echo "---"
 echo "passed=$pass failed=$fail"

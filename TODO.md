@@ -68,6 +68,7 @@ Living roadmap for the DOS RE toolkit and ICON preservation work.
 - [x] `--strings` standalone string dumper with file offsets
 - [ ] Better COM simulation parity with EXE engine
 - [ ] ICON: document jump-table @ `0090h` slot → procedure names
+- [ ] Self-modifying opcode slots (review J3, arch/jump-tables). A `mov [imm], reg` inside code that writes into a later routine (install-time patching) changes the instruction stream: with the slot patched, the real stream reaches `int 10h` (ctmouse.exe 0504), while the listing shows the unpacked static bytes (`dec ch / adc`). Rule 7 (branch-target promotion) is not the cause: its extra re-run resolves the flow through the slot before the int-scan head the first round kept. The listing still rebuilds byte-identical. Possible fix: treat bytes written by `mov [imm], reg` from code as a slot that stops flow, and note it in the listing. Rule 7 itself is pinned by J10 in tests/test_jump_tables.sh.
 
 ## Last / polish
 

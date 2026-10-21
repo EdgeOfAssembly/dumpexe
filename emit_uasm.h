@@ -232,13 +232,16 @@ private:
     int64_t mask_bound(const std::vector<size_t>& code, size_t j, uint8_t rm);
     // Generic jump/call tables (see add_generic_table).
     void jt_prepare();
-    bool jt_clean(uint32_t t, uint32_t fr, int* insns = nullptr, int* known_hits = nullptr) const;
+    bool jt_clean(uint32_t t, uint32_t fr, int* insns = nullptr, int* known_hits = nullptr,
+                  bool* anchored = nullptr) const;
     bool add_generic_table(const std::vector<size_t>& code, size_t j);
-    void jt_table(uint32_t T, int64_t fr, int64_t count, bool far, bool hinted, size_t unit_idx, uint8_t disp_off);
+    void jt_table(uint32_t T, int64_t fr, int64_t count, bool far, bool hinted, size_t unit_idx, uint8_t disp_off,
+                  bool guarded = false);
     void jt_direct_targets(const std::vector<size_t>& code);
     bool jt_ready_ = false;
     std::set<uint32_t> jt_bounds_;   ///< code starts, labels, data-load addresses
     std::set<uint32_t> jt_loads_;    ///< addresses read by direct-address loads
+    std::set<uint32_t> jt_imm_;      ///< addresses named by `mov r16, imm` loads
     std::set<uint32_t> jt_weak_;     ///< instructions whose block head is below Derived
     bool jt_is_code(uint32_t lin) const;
     std::set<uint32_t> jt_roots_;    ///< valid table entries / promoted targets
@@ -2086,6 +2089,17 @@ inline void UasmEmitter::jt_prepare()
         }
         if (k >= u.size)
             continue;
+        // Immediate address loads (mov r16, imm16; not sp): the word list a
+        // `mov si, offset X` points at is data, so X ends a table before it.
+        if (k == 0 && u.size == 3 && b[0] >= 0xB8 && b[0] <= 0xBF && b[0] != 0xBC)
+        {
+            const uint32_t imm = b[1] | (b[2] << 8);
+            const int32_t ifr = frame_of_.count(u.lin) ? frame_of_.at(u.lin) : 0;
+            for (int64_t ib : {in_.com ? int64_t{0} : int64_t{ifr}, in_.com ? int64_t{-1} : int64_t{dgroup_}})
+                if (ib >= 0 && ib + imm < n && ib + imm > in_.emit_lo)
+                    jt_imm_.insert(static_cast<uint32_t>(ib + imm));
+            continue;
+        }
         int64_t disp = -1;
         const uint8_t op = b[k];
         if (op >= 0xA0 && op <= 0xA3 && k + 3 <= u.size)
@@ -2134,8 +2148,9 @@ inline bool UasmEmitter::jt_is_code(uint32_t lin) const
     return ui >= 0 && units_[static_cast<size_t>(ui)].code && !jt_weak_.count(lin);
 }
 
-inline bool UasmEmitter::jt_clean(uint32_t t, uint32_t fr, int* insns, int* known_hits) const
+inline bool UasmEmitter::jt_clean(uint32_t t, uint32_t fr, int* insns, int* known_hits, bool* anchored) const
 {
+    bool anch = false;
     int n_ins = 0, hits = 0;
     const std::vector<uint8_t>& img = *in_.image;
     const uint32_t n = static_cast<uint32_t>(img.size());
@@ -2154,7 +2169,7 @@ inline bool UasmEmitter::jt_clean(uint32_t t, uint32_t fr, int* insns, int* know
         const int ui = unit_at(p);
         if (ui >= 0 && jt_is_code(p))
         {
-            ok = true; // runs into known code
+            ok = anch = true; // runs into known code
             break;
         }
         const int cv = unit_covering(p);
@@ -2188,6 +2203,12 @@ inline bool UasmEmitter::jt_clean(uint32_t t, uint32_t fr, int* insns, int* know
         if (m == "ret" || m == "retf" || m == "iret" || m == "jmp" || m == "ljmp")
         {
             ok = true;
+            // A direct near jmp into known code anchors the run.
+            const uint8_t j0 = ci->detail ? ci->detail->x86.opcode[0] : 0;
+            if ((j0 == 0xE9 || j0 == 0xEB) && ci->detail->x86.op_count >= 1 &&
+                ci->detail->x86.operands[0].type == X86_OP_IMM &&
+                jt_is_code(fr + (static_cast<uint32_t>(ci->detail->x86.operands[0].imm) & 0xFFFFu)))
+                anch = true;
             break;
         }
         const uint8_t op0 = ci->detail ? ci->detail->x86.opcode[0] : 0;
@@ -2209,6 +2230,8 @@ inline bool UasmEmitter::jt_clean(uint32_t t, uint32_t fr, int* insns, int* know
         *insns = n_ins;
     if (known_hits != nullptr)
         *known_hits = hits;
+    if (anchored != nullptr)
+        *anchored = ok && (anch || hits > 0);
     return ok;
 }
 
@@ -2218,7 +2241,7 @@ inline bool UasmEmitter::jt_clean(uint32_t t, uint32_t fr, int* insns, int* know
  *        invalid entries in a row end the table.
  */
 inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool far, bool hinted, size_t unit_idx,
-                                  uint8_t disp_off)
+                                  uint8_t disp_off, bool guarded)
 {
     const std::vector<uint8_t>& img = *in_.image;
     const uint32_t n = static_cast<uint32_t>(img.size());
@@ -2226,6 +2249,16 @@ inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool fa
     uint32_t end = n;
     if (auto it = jt_bounds_.upper_bound(T); it != jt_bounds_.end())
         end = std::min(end, *it);
+    if (!hinted)
+    {
+        // A table never runs past the end of its segment (the next
+        // relocation-derived segment base) ...
+        if (auto it = bases_.upper_bound(T); it != bases_.end())
+            end = std::min(end, *it);
+        // ... nor into a word list an immediate address load names.
+        if (auto it = jt_imm_.upper_bound(T); it != jt_imm_.end())
+            end = std::min(end, *it);
+    }
     // The table must sit in data: stop at the first code byte.
     for (uint32_t a = T; a < end; ++a)
     {
@@ -2246,6 +2279,12 @@ inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool fa
     };
     std::vector<Ent> ents;
     int bad_run = 0;
+    // Unguarded tables (no compare guard, no mask, no hint): after a 0000
+    // hole the next entry must be plausible code (already decoded, or a clean
+    // run anchored to known code); otherwise the table ends at the hole.
+    const bool hole_check = !guarded && !hinted && !far;
+    bool after_hole = false;
+    size_t hole_start = 0;
     for (uint32_t at = T; at + esz <= end; at += esz)
     {
         if (!in_.com && (in_.reloc_at.count(at) || (!far && in_.reloc_at.count(at + 1))))
@@ -2271,6 +2310,9 @@ inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool fa
         const uint64_t t = static_cast<uint64_t>(tf) + w;
         if ((w == 0 && !far) || t < in_.emit_lo || t >= n)
         {
+            if (!after_hole)
+                hole_start = ents.size();
+            after_hole = true;
             ents.push_back({at, 0, 0, 0});
             continue;
         }
@@ -2283,7 +2325,18 @@ inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool fa
         else if (const int cv = unit_covering(tt); cv >= 0 && units_[static_cast<size_t>(cv)].code)
             valid = false; // mid-instruction
         else
-            valid = hinted || jt_clean(tt, tf);
+        {
+            bool anchored = false;
+            valid = hinted || jt_clean(tt, tf, nullptr, nullptr, &anchored);
+            if (valid && hole_check && after_hole && !anchored)
+                valid = false;
+        }
+        if (hole_check && after_hole && !valid)
+        {
+            ents.resize(hole_start); // the table ends at the hole
+            break;
+        }
+        after_hole = false;
         ents.push_back({at, tt, tf, valid ? 1 : 2});
         bad_run = valid ? 0 : bad_run + 1;
         if (bad_run >= 2)
@@ -2510,12 +2563,13 @@ inline bool UasmEmitter::add_generic_table(const std::vector<size_t>& code, size
         if (count < 0 || mb < count)
             count = mb;
     }
+    const bool guarded = count > 0 || mask >= 0;
     if (count < 0 && byte_idx)
         count = doubled ? 256 : 128;
     if (count < 0 || count > 256)
         count = 256;
     const uint8_t disp_off = static_cast<uint8_t>(k + 2);
-    jt_table(static_cast<uint32_t>(tbase + disp), fr, count, far, false, ui, disp_off);
+    jt_table(static_cast<uint32_t>(tbase + disp), fr, count, far, false, ui, disp_off, guarded);
     return true;
 }
 

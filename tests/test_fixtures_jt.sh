@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Generic jump tables on the private fixtures (skip if absent; nothing from
-# the fixtures is committed). DRAGON.COM is not in dumpexe-fixtures yet:
-# point DUMPEXE_FIXTURES at a tree with games/dragon-wars/DRAGON.COM, or it
-# skips. Every listing must verify byte-identical; code coverage must not
+# the fixtures is committed). Checks 4 fixtures (DRAGON, AR, KOL, ICON);
+# all are in the private dumpexe-fixtures repo. Every listing must verify byte-identical; code coverage must not
 # drop below the pre-jump-table baseline (bytes from --bytemap).
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
