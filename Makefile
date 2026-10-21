@@ -227,6 +227,7 @@ test: dumpexe bin2exe bin2ne tools/bin2exe/test_header test_p1_model test_p1_flo
 	@$(call run_suite,tests/test_p6_sim.sh)
 	@$(call run_suite,tests/test_p7_ne.sh)
 	@$(call run_suite,tests/test_readability.sh)
+	@$(call run_suite,tests/test_jump_tables.sh)
 	@./tools/bin2exe/test_header
 	@$(call run_suite,tools/bin2exe/tests/test_cli.sh)
 
@@ -254,6 +255,12 @@ test-uasm: dumpexe
 	@bash tests/test_p6_sim.sh
 	@bash tests/test_p7_ne.sh
 	@bash tests/test_readability.sh
+	@bash tests/test_jump_tables.sh
+
+# Private fixtures (skip if absent): generic jump tables, coverage vs baseline.
+.PHONY: test-fixtures-jt
+test-fixtures-jt: dumpexe
+	@$(call run_suite,tests/test_fixtures_jt.sh)
 
 tests: test
 

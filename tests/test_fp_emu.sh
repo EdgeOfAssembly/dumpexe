@@ -66,7 +66,10 @@ check masked_table_bounded grep -qE '^; value references: 1 bounded jump table\(
 check masked_targets_code bash -c "for o in 90 94 98 9C; do grep -qE \"^    mov cx, [0-9A-F]+h	; 000\$o: B9\" '$TD/masked.asm' || exit 1; done"
 check open_verified grep -q '^; VERIFIED identical' "$TD/open.asm"
 check open_handler_code grep -qE '^    mov bx, ax	; 00060: 8B D8' "$TD/open.asm"
-check open_targets_data bash -c "! grep -qE '^    mov cx, [0-9A-F]+h	; 00090: B9' '$TD/open.asm'"
+# Unbounded index: the bounded rule leaves the table alone; the generic
+# table rule (arch/jump-tables) bounds it by the following data and two
+# invalid words, and each entry decodes cleanly to iret.
+check open_targets_generic bash -c "grep -qE '^    mov cx, [0-9A-F]+h	; 00090: B9' '$TD/open.asm' && grep -q '^; jump tables: 1 generic table' '$TD/open.asm'"
 # A compare bound wins over the (looser) mask bound 0..1FEh.
 check cmp_verified grep -q '^; VERIFIED identical' "$TD/cmp.asm"
 check cmp_table_bounded grep -qE '^; value references: 1 bounded jump table\(s\) \(2 entries\)' "$TD/cmp.asm"

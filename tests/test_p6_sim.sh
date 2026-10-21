@@ -49,7 +49,10 @@ V="$BIN --uasm --uasm-verified --uasm-bin $UASM_BIN"
 (cd "$TD" && $V -o s.asm t.com >/dev/null 2>&1) || true
 (cd "$TD" && $V --evidence=sim -o d.asm t.com >/dev/null 2>&1) || true
 (cd "$TD" && $V --evidence=sim -o d2.asm t.com >/dev/null 2>&1) || true
-check static_misses test "$(grep -c '^    mov al, ' "$TD/s.asm")" -eq 0
+# The generic jump-table rule (arch/jump-tables) now finds the handlers
+# statically: the cs: table is bounded by the next decoded code (none) and
+# two invalid words; each entry decodes to a ret.
+check static_finds test "$(grep -c '^    mov al, ' "$TD/s.asm")" -eq 4
 check sim_decodes test "$(grep -c '^    mov al, ' "$TD/d.asm")" -eq 4
 check sim_verified grep -q '^; VERIFIED identical' "$TD/d.asm"
 check sim_header grep -qE '^; simulation evidence: [0-9]+ address\(es\) executed, [0-9]+ confirm decoded heads, [1-9][0-9]* seeded' "$TD/d.asm"
