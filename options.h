@@ -926,6 +926,8 @@ static inline void show_usage(const char* progname) {
         "  --hints=FILE        With --uasm-verified: lines 'code HEX', 'data HEX LEN',\n"
         "                      'label HEX NAME' (# comments). Code hints become entries,\n"
         "                      data hints are never printed as code, names replace L%05X.\n"
+        "                      'table HEX N [near|far]' forces a jump table of N (hex) entries\n"
+        "                      (0000 words are holes); its entries become entries.\n"
         "  --hints-out=FILE    Write the hints this run used (seeded entries, names).\n"
         "  --bytemap=FILE      Write one line per run: LO-HI code|data rung.\n"
         "  --explain=HEX       Print why the byte at linear HEX is code or data (stderr).\n"

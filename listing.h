@@ -4619,6 +4619,24 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
                 }
                 in.force_data.emplace_back(lin, lin + std::max<uint32_t>(n, 1));
             }
+            else if (kw == "table")
+            {
+                // table ADDR N [near|far]: a jump table override.
+                std::string cnt, kind;
+                ss >> cnt >> kind;
+                uint32_t c = 0;
+                try
+                {
+                    c = static_cast<uint32_t>(std::stoul(cnt, nullptr, 16));
+                }
+                catch (...)
+                {
+                }
+                if (c == 0 || c > 4096 || (!kind.empty() && kind != "near" && kind != "far"))
+                    std::cerr << std::format("listing: --hints:{}: table needs ADDR N [near|far]\n", ln);
+                else
+                    in.table_hints.push_back({lin, c, kind == "far"});
+            }
             else if (kw == "label")
             {
                 std::string name;
@@ -4733,7 +4751,9 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
     size_t st_far = 0;
     size_t st_cb = 0;
     std::set<std::pair<uint32_t, int32_t>> cb_seen; // distinct callback seeds across rounds
-    while (rebuild && fix_rounds < 16)
+    size_t jt_rounds = 0;
+    std::set<std::set<uint32_t>> jt_history;
+    while (rebuild && fix_rounds < 32)
     {
         std::vector<uint32_t> want = emp->want_roots();
         st_init += emp->init_roots();
@@ -4749,7 +4769,13 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
                 ++sim_seeded;
         }
         const bool want_far = far_seeds != nullptr && !emp->want_far_roots().empty();
-        if (want.empty() && !want_far)
+        // Generic jump tables: the current set of valid entries replaces the
+        // last one, so a table cut by later-found code drops its old roots.
+        // A set seen before (oscillation) ends the iteration.
+        bool jt_changed = emp->jt_roots() != in.jt_prev;
+        if (jt_changed && !jt_history.insert(emp->jt_roots()).second)
+            jt_changed = false;
+        if (want.empty() && !want_far && !jt_changed)
             break;
         size_t added = 0;
         for (uint32_t t : want)
@@ -4766,11 +4792,22 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
                     far_seeds->push_back(fs);
                     ++added;
                 }
-        if (added == 0)
+        if (added == 0 && !jt_changed)
             break;
         std::sort(seeds.begin(), seeds.end());
+        std::vector<CfgLin> all = seeds;
+        if (jt_changed)
+        {
+            in.jt_prev = emp->jt_roots();
+            ++jt_rounds;
+        }
+        in.jt_prev_firm = emp->jt_firm();
+        for (uint32_t t : in.jt_prev)
+            if (std::find(seeds.begin(), seeds.end(), t) == seeds.end())
+                all.push_back(t);
+        std::sort(all.begin(), all.end());
         emp.reset();
-        g2 = rebuild(seeds);
+        g2 = rebuild(all);
         emp = make_em(*g2);
         ++fix_rounds;
     }
@@ -4875,6 +4912,13 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
     if (em.value_tables() + em.value_strings() != 0)
         hdr.push_back(std::format("value references: {} bounded jump table(s) ({} entries), {} $-string pointer(s)",
                                   em.value_tables(), em.off_words().size() - em.value_pointers(), em.value_strings()));
+    if (em.jt_tables() + em.jt_direct() + em.jt_far_unresolved() != 0)
+        hdr.push_back(std::format("jump tables: {} generic table(s), {} entries, {} hole(s), {} far table(s) not "
+                                  "followed, {} direct target(s) promoted; {} re-run(s)",
+                                  em.jt_tables(), em.jt_entries(), em.jt_holes(), em.jt_far_unresolved(),
+                                  em.jt_direct(), jt_rounds));
+    for (const std::string& note : em.jt_notes())
+        hdr.push_back("jump table note: " + note);
     if (em.value_pointers() + em.typed_strings() != 0)
         hdr.push_back(std::format("pointers and types: {} code pointer(s) through a register, {} typed string(s)",
                                   em.value_pointers(), em.typed_strings()));
@@ -4957,7 +5001,7 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
         return false;
 
     Options cfg_opts = opts;
-    // --strict and --explain read model facts: record the walk (recording
+    // --strict, --explain and the jump-table rule read model facts: record the walk (recording
     // only; the graph is the same).
     struct FlowRecordScope
     {
@@ -4968,7 +5012,7 @@ static inline bool listing_generate(const std::vector<uint8_t>& fileData,
                 cfg_set_record_flow(true);
         }
         ~FlowRecordScope() { cfg_set_record_flow(was); }
-    } flow_scope(opts.strict || !opts.explain.empty());
+    } flow_scope(true); // also read by the generic jump-table rule (weak heads)
     cfg_opts.showCfg = false;
     CfgGraph g{};
     // An entry outside the image is not seeded. *cfg_out stays untouched

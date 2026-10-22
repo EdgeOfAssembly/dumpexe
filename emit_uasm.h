@@ -108,6 +108,18 @@ struct EmitInput
     std::set<uint32_t> weak_heads;
     /// U2: label NUL-terminated printable runs found in data as cstr_.
     bool scan_cstrings = false;
+    /// Generic jump tables: hint `table ADDR N [near|far]` (linear, count, far).
+    struct TableHint
+    {
+        uint32_t lin = 0;
+        uint32_t count = 0;
+        bool far = false;
+    };
+    std::vector<TableHint> table_hints;
+    /// Generic jump tables: roots the previous round seeded (non-sticky).
+    std::set<uint32_t> jt_prev;
+    /// Targets of non-tentative entries of the previous round -> table bases.
+    std::map<uint32_t, std::set<uint32_t>> jt_prev_firm;
     /// Segment layout: when set, the U2 scan only looks at [cstr_lo, cstr_hi).
     uint32_t cstr_lo = 0;
     uint32_t cstr_hi = UINT32_MAX;
@@ -220,6 +232,27 @@ private:
     void scan_cstrings();
     void find_main_hint();
     int64_t mask_bound(const std::vector<size_t>& code, size_t j, uint8_t rm);
+    // Generic jump/call tables (see add_generic_table).
+    void jt_prepare();
+    bool jt_clean(uint32_t t, uint32_t fr, int* insns = nullptr, int* known_hits = nullptr,
+                  bool* anchored = nullptr) const;
+    bool add_generic_table(const std::vector<size_t>& code, size_t j);
+    void jt_table(uint32_t T, int64_t fr, int64_t count, bool far, bool hinted, size_t unit_idx, uint8_t disp_off,
+                  bool guarded = false, bool byte_bounded = false);
+    void jt_direct_targets(const std::vector<size_t>& code);
+    bool jt_ready_ = false;
+    std::set<uint32_t> jt_bounds_;   ///< code starts, labels, data-load addresses
+    std::set<uint32_t> jt_loads_;    ///< addresses read by direct-address loads
+    std::set<uint32_t> jt_imm_;      ///< addresses named by pointer-register immediate loads
+    std::set<uint32_t> jt_called_;   ///< targets of direct near calls (function heads)
+    std::set<uint32_t> jt_xref_;     ///< entry point, direct branch/call and far-pointer targets in code
+    std::map<uint32_t, std::set<uint32_t>> jt_firm_; ///< non-tentative entry target -> table bases
+    bool jt_imm_is_pointer(size_t i, uint8_t reg) const;
+    std::set<uint32_t> jt_weak_;     ///< instructions whose block head is below Derived
+    bool jt_is_code(uint32_t lin) const;
+    std::set<uint32_t> jt_roots_;    ///< valid table entries / promoted targets
+    size_t n_jt_ = 0, n_jt_entries_ = 0, n_jt_holes_ = 0, n_jt_far_unres_ = 0, n_jt_direct_ = 0;
+    std::vector<std::string> jt_notes_;
     bool contiguous_units(size_t a, size_t b) const { return units_[a].lin + units_[a].size == units_[b].lin; }
     bool exit_like(uint32_t y) const;
     std::set<uint32_t> cstr_scanned_;
@@ -298,6 +331,15 @@ public:
     /// P5: bounded-table targets that the graph did not decode.
     const std::vector<uint32_t>& want_roots() const { return want_roots_; }
     size_t value_tables() const { return n_tables_; }
+    /// Generic jump tables: all currently valid entries (decoded or not).
+    const std::set<uint32_t>& jt_roots() const { return jt_roots_; }
+    const std::map<uint32_t, std::set<uint32_t>>& jt_firm() const { return jt_firm_; }
+    size_t jt_tables() const { return n_jt_; }
+    size_t jt_entries() const { return n_jt_entries_; }
+    size_t jt_holes() const { return n_jt_holes_; }
+    size_t jt_far_unresolved() const { return n_jt_far_unres_; }
+    size_t jt_direct() const { return n_jt_direct_; }
+    const std::vector<std::string>& jt_notes() const { return jt_notes_; }
     size_t value_strings() const { return n_strings_; }
     size_t value_pointers() const { return n_pointers_; }
     /// Coverage: entries asked for from Borland init/exit tables and from
@@ -505,6 +547,13 @@ inline UasmEmitter::UasmEmitter(const CfgGraph& g, EmitInput in)
         }
     }
     add_value_refs();
+    {
+        std::vector<size_t> jc;
+        for (size_t i = 0; i < units_.size(); ++i)
+            if (units_[i].code && units_[i].rung != Rung::RawDb)
+                jc.push_back(i);
+        jt_direct_targets(jc);
+    }
     if (in_.scan_cstrings)
         scan_cstrings();
     if (in_.hint_main)
@@ -941,6 +990,7 @@ inline void UasmEmitter::add_value_refs()
                          (b[2] == 0xA7 || b[2] == 0x97 || b[2] == 0xA4 || b[2] == 0xA5 || b[2] == 0xA6 ||
                           b[2] == 0x94 || b[2] == 0x95 || b[2] == 0x96);
         const bool nop = u.size == 4 && b[0] == 0xFF && b[1] == 0xA7;
+        const size_t jt_n0 = n_tables_, jt_w0 = want_roots_.size(), jt_f0 = want_far_roots_.size();
         if ((csp && (pure_com || frame_ok(frame_of_[u.lin]))) || (nop && pure_com))
         {
             const uint32_t k = csp ? 3 : 2;
@@ -1031,6 +1081,9 @@ inline void UasmEmitter::add_value_refs()
                     }
                     tg.push_back(t);
                 }
+                if (ok)
+                    for (uint32_t t : tg)
+                        jt_firm_[t].insert(T); // a bounded table's entries are non-tentative
                 if (ok && !undecoded.empty())
                 {
                     // Bounded table with entries in data: ask for a rebuild
@@ -1063,8 +1116,12 @@ inline void UasmEmitter::add_value_refs()
                     ++n_tables_;
                 }
             }
+            if (n_tables_ == jt_n0 && want_roots_.size() == jt_w0 && want_far_roots_.size() == jt_f0)
+                (void)add_generic_table(code, j);
             continue;
         }
+        if (add_generic_table(code, j))
+            continue;
         // $-string: BA iw with B4 09 and CD 21 in the same contiguous run.
         if (u.size == 3 && b[0] == 0xBA)
         {
@@ -1980,6 +2037,750 @@ inline void UasmEmitter::add_callback_args(const std::vector<size_t>& code)
  * the index mask must be 2^k - 2 (k >= 2): the index is an even value
  * 0..mask, so the word entries are 0..mask/2.
  */
+/**
+ * @brief Generic jump/call tables: collect the addresses that end a table.
+ *
+ * A table never runs into a decoded instruction, a branch target, a word
+ * another reference already names, or an address an ordinary direct-address
+ * load reads as data.
+ */
+inline void UasmEmitter::jt_prepare()
+{
+    if (jt_ready_)
+        return;
+    jt_ready_ = true;
+    const std::vector<uint8_t>& img = *in_.image;
+    const uint32_t n = static_cast<uint32_t>(img.size());
+    // Heuristic heads (below Derived, e.g. an E9-run slot inside data) do
+    // not bound a table and do not block an entry: a seed overrides them.
+    if (g_.flow.has_value())
+        for (const auto& [ip, blk] : g_.blocks)
+        {
+            if (blk.insns.empty())
+                continue;
+            // A head is weak when its best fact is below Derived, or when
+            // nothing but its own decode explains it (a heuristic leader:
+            // only `flow` facts from itself, no entry or branch to it).
+            dx::Strength best = dx::Strength::Hint;
+            bool explained = false;
+            for (const dx::Fact& f : g_.flow->facts().at(dx::Lin{blk.insns.front().ip}))
+            {
+                if (f.strength > best)
+                    best = f.strength;
+                if (f.why != dx::Why::DirectFlow || f.source.v != f.subject.v)
+                    explained = true;
+            }
+            if (best < dx::Strength::Derived || !explained)
+                for (const CfgInsn& ci : blk.insns)
+                    jt_weak_.insert(static_cast<uint32_t>(ci.ip));
+        }
+    jt_xref_.insert(in_.entry);
+    // Targets of the graph's own (bounded) jump-table edges from proven code.
+    for (const auto& [ip, blk] : g_.blocks)
+        if (!blk.insns.empty() && !jt_weak_.count(static_cast<uint32_t>(blk.insns.back().ip)))
+            for (const CfgEdge& e : blk.outs)
+                if (e.kind == CfgEdgeKind::Table && e.has_target)
+                    jt_xref_.insert(static_cast<uint32_t>(e.to_ip));
+    for (size_t ui = 0; ui < units_.size(); ++ui)
+    {
+        const EmitUnit& u = units_[ui];
+        if (!u.code || jt_weak_.count(u.lin))
+            continue;
+        jt_bounds_.insert(u.lin);
+        for (const InsnRef& r : u.refs)
+        {
+            if (r.kind == RefKind::Rel || r.kind == RefKind::FarOff || r.kind == RefKind::Off)
+                jt_bounds_.insert(r.target);
+            if (r.kind == RefKind::Rel && img[u.lin] == 0xE8)
+                jt_called_.insert(r.target);
+            if (r.kind == RefKind::Rel || r.kind == RefKind::FarOff)
+                jt_xref_.insert(r.target);
+        }
+        // Direct-address memory operands (mod=00 rm=110 or A0-A3 moffs).
+        const uint8_t* b = img.data() + u.lin;
+        uint32_t k = 0;
+        int seg = -1;
+        while (k < u.size && (b[k] == 0x26 || b[k] == 0x2E || b[k] == 0x36 || b[k] == 0x3E || b[k] == 0xF2 ||
+                              b[k] == 0xF3 || b[k] == 0xF0))
+        {
+            if (b[k] == 0x2E)
+                seg = 1;
+            else if (b[k] == 0x3E)
+                seg = 3;
+            else if (b[k] == 0x26 || b[k] == 0x36)
+                seg = 0;
+            ++k;
+        }
+        if (k >= u.size)
+            continue;
+        // Immediate address loads: the word list a `mov si, offset X` points
+        // at is data, so X ends a table before it. Only bx/si/di/bp loads
+        // whose value is then used as a memory base or string pointer count;
+        // a loop count or other constant (mov cx, N) is not an address.
+        if (k == 0 && u.size == 3 && b[0] >= 0xB8 && b[0] <= 0xBF && b[0] != 0xBC)
+        {
+            const uint8_t reg = b[0] - 0xB8;
+            if ((reg != 3 && reg != 5 && reg != 6 && reg != 7) || !jt_imm_is_pointer(ui, reg))
+                continue;
+            const uint32_t imm = b[1] | (b[2] << 8);
+            const int32_t ifr = frame_of_.count(u.lin) ? frame_of_.at(u.lin) : 0;
+            for (int64_t ib : {in_.com ? int64_t{0} : int64_t{ifr}, in_.com ? int64_t{-1} : int64_t{dgroup_}})
+                if (ib >= 0 && ib + imm < n && ib + imm > in_.emit_lo)
+                    jt_imm_.insert(static_cast<uint32_t>(ib + imm));
+            continue;
+        }
+        int64_t disp = -1;
+        const uint8_t op = b[k];
+        if (op >= 0xA0 && op <= 0xA3 && k + 3 <= u.size)
+            disp = b[k + 1] | (b[k + 2] << 8);
+        else if (k + 4 <= u.size && op != 0xFF && op != 0x0F)
+        {
+            // Opcodes with a ModRM byte: 00-3F (not segment/BCD/prefix rows),
+            // 80-8F, C0-C7, D0-D3, F6/F7, FE.
+            const bool modrm = (op < 0x40 && (op & 7) < 4) || (op >= 0x80 && op <= 0x8F && op != 0x8D) ||
+                               op == 0xC4 || op == 0xC5 || op == 0xC6 || op == 0xC7 || (op >= 0xD0 && op <= 0xD3) ||
+                               op == 0xF6 || op == 0xF7 || op == 0xFE;
+            if (modrm && (b[k + 1] & 0xC7) == 0x06)
+                disp = b[k + 2] | (b[k + 3] << 8);
+        }
+        if (disp < 0)
+            continue;
+        int64_t base = -1;
+        const int32_t fr = frame_of_.count(u.lin) ? frame_of_.at(u.lin) : 0;
+        if (in_.com)
+            base = 0;
+        else if (seg == 1)
+            base = fr;
+        else if (seg != 0 && dgroup_ >= 0)
+            base = dgroup_;
+        if (base >= 0 && base + disp < n)
+        {
+            jt_loads_.insert(static_cast<uint32_t>(base + disp));
+            jt_bounds_.insert(static_cast<uint32_t>(base + disp));
+        }
+    }
+}
+
+/**
+ * @brief True when decoding from @p t by fall-through stays valid until a
+ *        terminator (ret, retf, iret, jmp) or known code.
+ *
+ * Rejected: a Capstone failure, a run into the middle of a decoded
+ * instruction, two `add [bx+si], al` (00 00) in a row, int3/into/hlt/bound/
+ * arpl/lock, a near branch or call out of the image, or no terminator within
+ * 400 instructions.
+ */
+/**
+ * @brief True when the value a `mov reg, imm16` (unit @p i) loads into
+ *        bx/bp/si/di is used as a memory base/index or a string pointer by
+ *        the straight-line code after it, before the register is rewritten,
+ *        or is still live at a call or indirect jump (handed on as an argument).
+ */
+inline bool UasmEmitter::jt_imm_is_pointer(size_t i, uint8_t reg) const
+{
+    static const x86_reg cs_regs[8] = {X86_REG_AX, X86_REG_CX, X86_REG_DX, X86_REG_BX,
+                                       X86_REG_SP, X86_REG_BP, X86_REG_SI, X86_REG_DI};
+    const x86_reg r = cs_regs[reg];
+    const std::vector<uint8_t>& img = *in_.image;
+    csh h = 0;
+    if (cs_open(CS_ARCH_X86, CS_MODE_16, &h) != CS_ERR_OK)
+        return false;
+    cs_option(h, CS_OPT_DETAIL, CS_OPT_ON);
+    cs_insn* ci = cs_malloc(h);
+    bool used = false;
+    for (size_t j = i + 1; j < units_.size() && j <= i + 12 && ci != nullptr; ++j)
+    {
+        const EmitUnit& u = units_[j];
+        const EmitUnit& pv = units_[j - 1];
+        if (!u.code || pv.lin + pv.size != u.lin)
+            break;
+        const uint8_t* ptr = img.data() + u.lin;
+        size_t sz = u.size;
+        uint64_t addr = 0;
+        if (!cs_disasm_iter(h, &ptr, &sz, &addr, ci) || ci->detail == nullptr)
+            break;
+        const cs_x86& x = ci->detail->x86;
+        bool writes = false;
+        for (uint8_t o = 0; o < x.op_count; ++o)
+        {
+            const cs_x86_op& op = x.operands[o];
+            if (op.type == X86_OP_MEM && (op.mem.base == r || op.mem.index == r) && ci->id != X86_INS_LEA)
+                used = true;
+            // Any write (mov, add, sub, inc, xchg, pop, lea, ...) changes the
+            // value: it is no longer the loaded immediate.
+            if (op.type == X86_OP_REG && (op.access & CS_AC_WRITE) &&
+                (op.reg == r ||
+                 (reg == 3 && (op.reg == X86_REG_BL || op.reg == X86_REG_BH))))
+                writes = true;
+        }
+        for (uint8_t q = 0; q < ci->detail->regs_write_count; ++q)
+            if (ci->detail->regs_write[q] == r)
+                writes = true;
+
+        // String ops and xlat read si/di/bx implicitly.
+        const std::string_view m(ci->mnemonic);
+        const bool str = m.starts_with("lods") || m.starts_with("movs") || m.starts_with("stos") ||
+                         m.starts_with("scas") || m.starts_with("cmps") || m.starts_with("outs") ||
+                         m.starts_with("ins") || m.starts_with("xlat");
+        if (str)
+            for (uint8_t q = 0; q < ci->detail->regs_read_count; ++q)
+                if (ci->detail->regs_read[q] == r)
+                    used = true;
+        if (str && ((reg == 6 && (m.starts_with("lods") || m.starts_with("movs") || m.starts_with("cmps") ||
+                                  m.starts_with("outs"))) ||
+                    (reg == 7 && (m.starts_with("stos") || m.starts_with("movs") || m.starts_with("scas") ||
+                                  m.starts_with("cmps") || m.starts_with("ins"))) ||
+                    (reg == 3 && m.starts_with("xlat"))))
+            used = true;
+        if (used || writes)
+            break; // a use in the same instruction as a write comes first (mov bx, [bx]; lodsb)
+        // Still live at a call or an indirect jump: the value is handed to
+        // the callee or the dispatched handler (an argument pointer).
+        if (m == "call" || m == "lcall" || (m == "jmp" && x.op_count >= 1 && x.operands[0].type != X86_OP_IMM))
+        {
+            used = true;
+            break;
+        }
+        const uint8_t o0 = img[u.lin];
+        if (o0 == 0xC3 || o0 == 0xCB || o0 == 0xC2 || o0 == 0xCA || o0 == 0xCF || o0 == 0xE9 || o0 == 0xEB ||
+            o0 == 0xEA || (o0 >= 0x70 && o0 <= 0x7F) || (o0 >= 0xE0 && o0 <= 0xE3))
+            break; // end of straight-line code
+    }
+    if (ci != nullptr)
+        cs_free(ci, 1);
+    cs_close(&h);
+    return used;
+}
+
+/** @brief A decoded instruction starts at @p lin and its head is Derived or stronger. */
+inline bool UasmEmitter::jt_is_code(uint32_t lin) const
+{
+    const int ui = unit_at(lin);
+    return ui >= 0 && units_[static_cast<size_t>(ui)].code && !jt_weak_.count(lin);
+}
+
+inline bool UasmEmitter::jt_clean(uint32_t t, uint32_t fr, int* insns, int* known_hits, bool* anchored) const
+{
+    bool anch = false;
+    int n_ins = 0, hits = 0;
+    const std::vector<uint8_t>& img = *in_.image;
+    const uint32_t n = static_cast<uint32_t>(img.size());
+    csh h = 0;
+    if (cs_open(CS_ARCH_X86, CS_MODE_16, &h) != CS_ERR_OK)
+        return false;
+    cs_option(h, CS_OPT_DETAIL, CS_OPT_ON);
+    cs_insn* ci = cs_malloc(h);
+    bool ok = false;
+    uint32_t p = t;
+    int zeros = 0;
+    for (int i = 0; i < 400 && ci != nullptr; ++i)
+    {
+        if (p < in_.emit_lo || p >= n)
+            break;
+        const int ui = unit_at(p);
+        if (ui >= 0 && jt_is_code(p))
+        {
+            ok = anch = true; // runs into known code
+            break;
+        }
+        const int cv = unit_covering(p);
+        if (cv >= 0 && units_[static_cast<size_t>(cv)].code && !jt_weak_.count(units_[static_cast<size_t>(cv)].lin))
+            break;
+        const uint8_t* ptr = img.data() + p;
+        size_t sz = std::min<size_t>(15, n - p);
+        uint64_t addr = static_cast<uint16_t>(p - fr);
+        if (!cs_disasm_iter(h, &ptr, &sz, &addr, ci))
+            break;
+        bool overlap = false;
+        for (uint32_t q = p + 1; q < p + ci->size; ++q)
+        {
+            if (jt_is_code(q))
+                overlap = true;
+        }
+        if (overlap)
+            break;
+        const std::string_view m(ci->mnemonic);
+        if (img[p] == 0 && p + 1 < n && img[p + 1] == 0)
+        {
+            if (++zeros >= 2)
+                break;
+        }
+        else
+            zeros = 0;
+        if (m == "int3" || m == "into" || m == "hlt" || m == "bound" || m == "arpl" || m == "lock" ||
+            m == "int1" || m == "ud2" || m == "salc")
+            break;
+        ++n_ins;
+        if (m == "ret" || m == "retf" || m == "iret" || m == "jmp" || m == "ljmp")
+        {
+            ok = true;
+            // A direct near jmp into known code anchors the run.
+            const uint8_t j0 = ci->detail ? ci->detail->x86.opcode[0] : 0;
+            if ((j0 == 0xE9 || j0 == 0xEB) && ci->detail->x86.op_count >= 1 &&
+                ci->detail->x86.operands[0].type == X86_OP_IMM &&
+                jt_is_code(fr + (static_cast<uint32_t>(ci->detail->x86.operands[0].imm) & 0xFFFFu)))
+                anch = true;
+            break;
+        }
+        const uint8_t op0 = ci->detail ? ci->detail->x86.opcode[0] : 0;
+        if ((op0 == 0xE8 || (op0 >= 0x70 && op0 <= 0x7F) || (op0 >= 0xE0 && op0 <= 0xE3)) && ci->detail &&
+            ci->detail->x86.op_count >= 1 && ci->detail->x86.operands[0].type == X86_OP_IMM)
+        {
+            const uint32_t tg = fr + (static_cast<uint32_t>(ci->detail->x86.operands[0].imm) & 0xFFFFu);
+            if (tg < in_.emit_lo || tg >= n)
+                break;
+            if (jt_is_code(tg))
+                ++hits;
+        }
+        p += ci->size;
+    }
+    if (ci != nullptr)
+        cs_free(ci, 1);
+    cs_close(&h);
+    if (insns != nullptr)
+        *insns = n_ins;
+    if (known_hits != nullptr)
+        *known_hits = hits;
+    if (anchored != nullptr)
+        *anchored = ok && (anch || hits > 0);
+    return ok;
+}
+
+/**
+ * @brief One generic table at @p T: walk entries up to @p count, ending at
+ *        the next boundary; 0000 or out-of-image words are holes; two
+ *        invalid entries in a row end the table.
+ */
+inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool far, bool hinted, size_t unit_idx,
+                                  uint8_t disp_off, bool guarded, bool byte_bounded)
+{
+    const std::vector<uint8_t>& img = *in_.image;
+    const uint32_t n = static_cast<uint32_t>(img.size());
+    const uint32_t esz = far ? 4u : 2u;
+    uint32_t end = n;
+    if (auto it = jt_bounds_.upper_bound(T); it != jt_bounds_.end())
+        end = std::min(end, *it);
+    if (!hinted)
+    {
+        // A table never runs past the end of its segment (the next
+        // relocation-derived segment base) ...
+        if (auto it = bases_.upper_bound(T); it != bases_.end())
+            end = std::min(end, *it);
+        // ... nor into a word list an immediate address load names.
+        if (auto it = jt_imm_.upper_bound(T); it != jt_imm_.end())
+            end = std::min(end, *it);
+    }
+    // The table must sit in data: stop at the first code byte.
+    for (uint32_t a = T; a < end; ++a)
+    {
+        const int ci = unit_covering(a);
+        if (ci < 0 || units_[static_cast<size_t>(ci)].code)
+        {
+            end = a;
+            break;
+        }
+        a = units_[static_cast<size_t>(ci)].lin + units_[static_cast<size_t>(ci)].size - 1;
+    }
+    // A hard end: the next code start, label, known table start, data-load
+    // address, segment base or named word list. The image end, and a count
+    // from a byte-sized index, are not independent of the table's contents.
+    bool hard_end = end < n;
+    if (count > 0 && T + static_cast<uint64_t>(count) * esz < end)
+    {
+        end = static_cast<uint32_t>(T + static_cast<uint64_t>(count) * esz);
+        hard_end = false;
+    }
+    struct Ent
+    {
+        uint32_t at, target, frame;
+        int state; // 0 hole, 1 valid, 2 invalid
+        bool tent = false; // after a hole in an unguarded table
+    };
+    std::vector<Ent> ents;
+    int bad_run = 0;
+    // Holes (0000 or out-of-image words):
+    //  - guarded (compare or mask) or hinted: holes are skipped;
+    //  - otherwise a hole ends the table, unless the slots run up to a hard
+    //    end (see above) and every slot up to it is a 0000 hole or a valid
+    //    entry. Every slot after the first hole also needs an independent
+    //    reference to its target (see below).
+    const bool hole_rule = !guarded && !hinted && !far;
+    bool after_hole = false, any_hole = false, filled = true;
+    size_t first_hole = 0;
+    for (uint32_t at = T; at + esz <= end; at += esz)
+    {
+        if (!in_.com && (in_.reloc_at.count(at) || (!far && in_.reloc_at.count(at + 1))))
+        {
+            ents.push_back({at, 0, 0, 2});
+            filled = false;
+            if (++bad_run >= 2)
+                break;
+            continue;
+        }
+        const uint32_t w = img[at] | (img[at + 1] << 8);
+        uint32_t tf = static_cast<uint32_t>(fr);
+        if (far)
+        {
+            if (in_.com || !in_.reloc_at.count(at + 2))
+            {
+                ents.push_back({at, 0, 0, 2});
+                if (++bad_run >= 2)
+                    break;
+                continue;
+            }
+            tf = (img[at + 2] | (img[at + 3] << 8)) * 16u;
+        }
+        const uint64_t t = static_cast<uint64_t>(tf) + w;
+        if ((w == 0 && !far) || t < in_.emit_lo || t >= n)
+        {
+            if (w != 0)
+                filled = false; // only 0000 is a hole in a hard-bounded table
+            if (!any_hole)
+                first_hole = ents.size();
+            any_hole = after_hole = true;
+            ents.push_back({at, 0, 0, 0});
+            if (hole_rule && !filled)
+                break;
+            continue;
+        }
+        const uint32_t tt = static_cast<uint32_t>(t);
+        bool valid;
+        if (tt >= T && tt < at + esz)
+            valid = false; // into the table itself
+        else if (hole_rule && after_hole)
+        {
+            // A slot after a hole needs an independent reference to its
+            // target from outside this table: proven code there that the
+            // entry point, a direct branch or a far pointer in code, or a
+            // non-tentative entry of another table reaches. Decoding
+            // cleanly or joining known code is not evidence. A directly
+            // called function is never a dispatch entry here.
+            bool other = false;
+            for (const auto* m : {&jt_firm_, &in_.jt_prev_firm})
+                if (auto it = m->find(tt); it != m->end())
+                    for (uint32_t b : it->second)
+                        other = other || b != T;
+            valid = jt_is_code(tt) && frame_of_.count(tt) && static_cast<uint32_t>(frame_of_.at(tt)) == tf &&
+                    !jt_called_.count(tt) && (jt_xref_.count(tt) || other);
+        }
+        else if (const int ui = unit_at(tt); ui >= 0 && units_[static_cast<size_t>(ui)].code)
+            valid = frame_of_.count(tt) && static_cast<uint32_t>(frame_of_.at(tt)) == tf;
+        else if (const int cv = unit_covering(tt); cv >= 0 && units_[static_cast<size_t>(cv)].code)
+            valid = false; // mid-instruction
+        else
+        {
+            valid = hinted || jt_clean(tt, tf);
+        }
+        if (!valid)
+            filled = false;
+        if (hole_rule && any_hole && !valid)
+            break;
+        ents.push_back({at, tt, tf, valid ? 1 : 2, hole_rule && after_hole});
+        bad_run = valid ? 0 : bad_run + 1;
+        if (bad_run >= 2)
+            break;
+    }
+    // Unguarded with a hole: keep the slots past it only when they fill the
+    // table exactly up to a hard end; otherwise the table ends at the hole.
+    if (hole_rule && any_hole)
+    {
+        const bool reached = !ents.empty() && ents.back().at + esz >= end;
+        if (!(filled && hard_end && reached))
+            ents.resize(first_hole);
+    }
+    // Trim trailing holes and invalid entries.
+    while (!ents.empty() && ents.back().state != 1)
+        ents.pop_back();
+    size_t valid = 0, holes = 0;
+    for (const Ent& e : ents)
+        valid += e.state == 1, holes += e.state == 0;
+    if (valid < (hinted ? 1u : 2u) || (!hinted && ents.front().state != 1))
+        return;
+    bool all_code = true;
+    for (const Ent& e : ents)
+        if (e.state == 1)
+        {
+            if (far)
+            {
+                const std::pair<uint32_t, int32_t> fs{e.target, static_cast<int32_t>(e.frame)};
+                const int fi = unit_at(e.target);
+                if ((fi < 0 || !units_[static_cast<size_t>(fi)].code) &&
+                    std::find(want_far_roots_.begin(), want_far_roots_.end(), fs) == want_far_roots_.end())
+                    want_far_roots_.push_back(fs);
+            }
+            else if (!in_.com && e.frame != in_.entry_frame)
+            {
+                // Another code segment: seeded in its own frame (sticky).
+                const std::pair<uint32_t, int32_t> fs{e.target, static_cast<int32_t>(e.frame)};
+                if (!jt_is_code(e.target) &&
+                    std::find(want_far_roots_.begin(), want_far_roots_.end(), fs) == want_far_roots_.end())
+                    want_far_roots_.push_back(fs);
+            }
+            else if (!jt_is_code(e.target) || in_.jt_prev.count(e.target))
+                // Seed only what the graph left in data, and keep what an
+                // earlier round seeded; decoded code is not re-seeded (a new
+                // entry would change the graph around it).
+                jt_roots_.insert(e.target);
+            const int ui = unit_at(e.target);
+            if (ui < 0 || !units_[static_cast<size_t>(ui)].code)
+                all_code = false;
+        }
+    for (const Ent& e : ents)
+        if (e.state == 1 && !e.tent)
+            jt_firm_[e.target].insert(T);
+    ++n_jt_;
+    n_jt_entries_ += valid;
+    n_jt_holes_ += holes;
+    if (!all_code)
+        return;
+    // Every valid entry decoded: print the words as `dw label` (holes and
+    // invalid words stay plain data) and the table base symbolically.
+    // A word another table already printed with the same target is not a
+    // clash (two views of one table, e.g. a hint and the generic rule).
+    bool clash = false;
+    for (const Ent& e : ents)
+        if (auto it = off_words_.find(e.at);
+            e.state == 1 && it != off_words_.end() && (it->second.target != e.target || it->second.frame != e.frame))
+            clash = true;
+    if (clash)
+        return;
+    for (const Ent& e : ents)
+        if (e.state == 1 && !far)
+            off_words_[e.at] = {e.target, e.frame};
+    if (unit_idx != SIZE_MAX && !far)
+    {
+        EmitUnit& u = units_[unit_idx];
+        InsnRef r;
+        r.kind = RefKind::Off;
+        r.off = disp_off;
+        r.size = 2;
+        r.target = T;
+        r.frame = static_cast<uint32_t>(fr);
+        u.refs.push_back(r);
+    }
+    auto_names_.emplace(T, std::format("jt_{:05X}", T));
+}
+
+/**
+ * @brief Generic rule for `jmp|call [base+index+disp16]` (FF /2 /3 /4 /5,
+ *        mod=10). `[disp16]` alone is a variable, not a table.
+ *
+ * Bound, smallest wins: an unsigned compare guard (bias from a later
+ * sub/add), an `and` mask, a byte-sized index (at most 256), the next
+ * boundary (jt_prepare), two invalid entries in a row.
+ * @return true when @p j was an indirect jump/call through memory.
+ */
+inline bool UasmEmitter::add_generic_table(const std::vector<size_t>& code, size_t j)
+{
+    jt_prepare();
+    const std::vector<uint8_t>& img = *in_.image;
+    const uint32_t n = static_cast<uint32_t>(img.size());
+    const size_t ui = code[j];
+    const EmitUnit& u = units_[ui];
+    const uint8_t* b = img.data() + u.lin;
+    uint32_t k = 0;
+    int seg = -1; // -1 none, 0 es/ss, 1 cs, 3 ds
+    while (k < u.size && (b[k] == 0x26 || b[k] == 0x2E || b[k] == 0x36 || b[k] == 0x3E))
+    {
+        seg = b[k] == 0x2E ? 1 : (b[k] == 0x3E ? 3 : 0);
+        ++k;
+    }
+    if (k + 4 != u.size || b[k] != 0xFF)
+        return false;
+    const uint8_t modrm = b[k + 1];
+    const uint8_t reg = (modrm >> 3) & 7;
+    if (reg < 2 || reg > 5 || (modrm >> 6) != 2)
+        return false;
+    const bool far = reg == 3 || reg == 5;
+    const uint8_t rm = modrm & 7;
+    const uint32_t disp = b[k + 2] | (b[k + 3] << 8);
+    const int32_t fr = frame_of_.count(u.lin) ? frame_of_.at(u.lin) : 0;
+    int64_t tbase = -1;
+    const bool bp_based = rm == 2 || rm == 3 || rm == 6;
+    if (in_.com)
+        tbase = (seg == 0 || (bp_based && seg < 0)) ? -1 : 0;
+    else if (seg == 1)
+        tbase = fr;
+    else if ((seg == 3 || (seg < 0 && !bp_based)) && dgroup_ >= 0)
+        tbase = dgroup_;
+    if (tbase < 0 || tbase + disp >= n)
+    {
+        if (far)
+            ++n_jt_far_unres_, jt_notes_.push_back(std::format("{:05X}: far table, segment unresolved", u.lin));
+        return true;
+    }
+    if (far && in_.com)
+    {
+        ++n_jt_far_unres_;
+        jt_notes_.push_back(std::format("{:05X}: far table in a COM (segment is the load segment), not followed", u.lin));
+        return true;
+    }
+    // Index register(s) of the ModRM form.
+    static const uint8_t idx_regs[8][2] = {{3, 6}, {3, 7}, {5, 6}, {5, 7}, {6, 0xFF}, {7, 0xFF}, {5, 0xFF}, {3, 0xFF}};
+    // reg numbers: ax0 cx1 dx2 bx3 sp4 bp5 si6 di7
+    const uint8_t ir = idx_regs[rm][0];
+    int64_t count = -1;
+    bool byte_idx = false, doubled = false;
+    int64_t bias = 0;
+    int64_t mask = -1;
+    for (size_t back = 1; back <= 12 && back <= j; ++back)
+    {
+        const EmitUnit& c = units_[code[j - back]];
+        const EmitUnit& nx = units_[code[j - back + 1]];
+        if (c.lin + c.size != nx.lin)
+            break;
+        const uint8_t* cb = img.data() + c.lin;
+        // shl r,1 / add r,r: the index was doubled after this point.
+        if (c.size == 2 && cb[0] == 0xD1 && (cb[1] & 0xF8) == 0xE0)
+        {
+            doubled = true;
+            continue;
+        }
+        if (c.size == 2 && (cb[0] == 0x03 || cb[0] == 0x01) && (cb[1] >> 6) == 3 && ((cb[1] >> 3) & 7) == (cb[1] & 7))
+        {
+            doubled = true;
+            continue;
+        }
+        // Byte-sized index: xor/sub r8h,r8h, mov r8h,0, lodsb, movzx, cbw.
+        if (c.size == 2 && (cb[0] == 0x32 || cb[0] == 0x30 || cb[0] == 0x2A || cb[0] == 0x28) && (cb[1] >> 6) == 3 &&
+            ((cb[1] >> 3) & 7) == (cb[1] & 7) && (cb[1] & 7) >= 4)
+            byte_idx = true;
+        if (c.size == 2 && cb[0] >= 0xB4 && cb[0] <= 0xB7 && cb[1] == 0)
+            byte_idx = true;
+        if (c.size == 1 && (cb[0] == 0xAC || cb[0] == 0x98))
+            byte_idx = true;
+        if (c.size == 3 && cb[0] == 0x0F && cb[1] == 0xB6)
+            byte_idx = true;
+        // and r, imm (mask bound).
+        if (mask < 0)
+        {
+            if (c.size == 2 && cb[0] == 0x24)
+                mask = cb[1];
+            else if (c.size == 3 && cb[0] == 0x25)
+                mask = cb[1] | (cb[2] << 8);
+            else if (c.size == 3 && cb[0] == 0x83 && (cb[1] & 0xF8) == 0xE0)
+                mask = cb[2];
+            else if (c.size == 4 && cb[0] == 0x81 && (cb[1] & 0xF8) == 0xE0)
+                mask = cb[2] | (cb[3] << 8);
+            // Seen before a later doubling: entries = mask+1. Seen after it
+            // (a mask on the byte offset): entries = mask/2+1.
+            if (mask >= 0 && !doubled)
+                mask = mask >> 1;
+        }
+        // sub r, imm / add r, imm between the guard and the jump.
+        if (count < 0)
+        {
+            if ((c.size == 3 && cb[0] == 0x83 && (cb[1] & 0xF8) == 0xE8) || (c.size == 2 && cb[0] == 0x2C))
+                bias += c.size == 2 ? cb[1] : cb[2];
+            else if (c.size == 3 && cb[0] == 0x2D)
+                bias += cb[1] | (cb[2] << 8);
+        }
+        int64_t imm = -1;
+        if (c.size == 3 && cb[0] == 0x83 && (cb[1] & 0xF8) == 0xF8)
+            imm = cb[2];
+        else if (c.size == 4 && cb[0] == 0x81 && (cb[1] & 0xF8) == 0xF8)
+            imm = cb[2] | (cb[3] << 8);
+        else if (c.size == 3 && cb[0] == 0x80 && (cb[1] & 0xF8) == 0xF8)
+            imm = cb[2];
+        else if (c.size == 2 && cb[0] == 0x3C)
+            imm = cb[1];
+        else if (c.size == 3 && cb[0] == 0x3D)
+            imm = cb[1] | (cb[2] << 8);
+        if (imm >= 0 && count < 0)
+        {
+            const uint8_t jo = img[nx.lin];
+            const uint32_t jt = nx.size == 2 ? nx.lin + 2 + static_cast<int8_t>(img[nx.lin + 1]) : 0;
+            int64_t c0 = -1;
+            if (jo == 0x77) // ja: fall-through reaches the table, 0..imm
+                c0 = imm + 1;
+            else if (jo == 0x73)
+                c0 = imm;
+            else if ((jo == 0x76 || jo == 0x72) && jt > nx.lin && jt <= u.lin) // taken path to the table
+                c0 = jo == 0x76 ? imm + 1 : imm;
+            if (c0 > 0)
+            {
+                c0 -= bias;
+                if (!doubled)
+                    c0 = (c0 + 1) / 2; // compare on the byte offset
+                if (c0 > 0)
+                    count = c0;
+            }
+            break;
+        }
+        (void)ir;
+    }
+    if (mask >= 0)
+    {
+        const int64_t mb = mask + 1;
+        if (count < 0 || mb < count)
+            count = mb;
+    }
+    const bool guarded = count > 0 || mask >= 0;
+    if (count < 0 && byte_idx)
+        count = doubled ? 256 : 128;
+    if (count < 0 || count > 256)
+        count = 256;
+    const uint8_t disp_off = static_cast<uint8_t>(k + 2);
+    jt_table(static_cast<uint32_t>(tbase + disp), fr, count, far, false, ui, disp_off, guarded, byte_idx);
+    return true;
+}
+
+/**
+ * @brief Table hints, and direct near branch targets the graph left in data
+ *        that decode cleanly to a terminator (guards: not a typed string, not
+ *        a zero run, not an address only loads read, and a call or jump into
+ *        known code within the run, or a terminator in at most 32 instructions).
+ */
+inline void UasmEmitter::jt_direct_targets(const std::vector<size_t>& code)
+{
+    jt_prepare();
+    const std::vector<uint8_t>& img = *in_.image;
+    const uint32_t n = static_cast<uint32_t>(img.size());
+    for (const EmitInput::TableHint& h : in_.table_hints)
+    {
+        const uint32_t fr = in_.com ? 0u : in_.entry_frame;
+        jt_table(h.lin, fr, h.count, h.far, true, SIZE_MAX, 0);
+    }
+    for (size_t ci : code)
+    {
+        const EmitUnit& u = units_[ci];
+        for (const InsnRef& r : u.refs)
+        {
+            if (r.kind != RefKind::Rel)
+                continue;
+            const uint32_t t = r.target;
+            if (t < in_.emit_lo || t + 2 > n)
+                continue;
+            const int ui = unit_at(t);
+            const bool was = in_.jt_prev.count(t) != 0;
+            if (ui >= 0 && units_[static_cast<size_t>(ui)].code)
+            {
+                if (was && jt_roots_.insert(t).second)
+                    ++n_jt_direct_; // keep what an earlier round seeded
+                continue;
+            }
+            const int cv = unit_covering(t);
+            if (cv < 0 || units_[static_cast<size_t>(cv)].code)
+                continue;
+            if (str_len_.count(t) || (img[t] == 0 && img[t + 1] == 0) || jt_loads_.count(t))
+                continue;
+            const uint32_t fr = frame_of_.count(u.lin) ? static_cast<uint32_t>(frame_of_.at(u.lin)) : 0u;
+            // Text guard: eight printable bytes in a row are not code.
+            bool text = t + 8 <= n;
+            for (uint32_t q = t; text && q < t + 8; ++q)
+                text = img[q] >= 0x20 && img[q] < 0x7F;
+            int ni = 0, kh = 0;
+            if (text || (!in_.com && fr != in_.entry_frame) || !jt_clean(t, fr, &ni, &kh))
+                continue;
+            // Call density: a branch into known code, or a short run.
+            if (kh == 0 && ni > 32)
+                continue;
+            if (jt_roots_.insert(t).second)
+                ++n_jt_direct_;
+        }
+    }
+}
+
 inline int64_t UasmEmitter::mask_bound(const std::vector<size_t>& code, size_t j, uint8_t rm)
 {
     const std::vector<uint8_t>& img = *in_.image;

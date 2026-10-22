@@ -59,8 +59,9 @@ check fx_rounds grep -qE '^; fixpoint: 2 round\(s\), 1 address\(es\) seeded as e
 check fx_table_symbolic test "$(grep -c 'table word' "$O")" -eq 3
 check fx_shift_clean grep -qE '^; shift mid: [0-9]+ references checked, 0 broken' "$O"
 check fx_reassembles bash -c "cd '$TD' && env -u UASM '$UASM_BIN' -bin -nologo -Fore.bin fx_out.asm >/dev/null 2>&1 && cmp -s re.bin fx.com"
-# A table with an entry outside the image seeds nothing.
+# A table with an entry outside the image: the bounded rule seeds nothing;
+# the generic rule skips the word as a hole and keeps the decoded entries.
 gen bad 0
-check bad_no_fixpoint bash -c "! grep -q '^; fixpoint' '$TD/bad_out.asm'"
+check bad_no_bounded_seed bash -c "! grep -q '(1 from bounded jump tables' '$TD/bad_out.asm' && grep -q '1 hole(s)' '$TD/bad_out.asm' && grep -q '^; VERIFIED identical' '$TD/bad_out.asm'"
 echo "p5_fixpoint passed=$pass failed=$fail"
 [[ $fail -eq 0 ]]

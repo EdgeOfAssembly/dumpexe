@@ -59,9 +59,11 @@ check s02_three_entries test "$(grep -c 'table word' "$O")" -eq 3
 check s02_header grep -q '^; value references: 1 bounded jump table(s) (3 entries), 1 \$-string pointer(s)' "$O"
 check shift_mid_clean grep -qE '^; shift mid: [0-9]+ references checked, 0 broken' "$O"
 check reassembles bash -c "cd '$TD' && env -u UASM '$UASM_BIN' -bin -nologo -Fore.bin all_out.asm >/dev/null 2>&1 && cmp -s re.bin all.com"
-# All-or-nothing: one entry points outside the image, so the table stays literal.
+# The bounded rule is all-or-nothing; the generic table rule (arch/jump-tables)
+# treats the out-of-image word as a hole: two entries become offsets, the
+# hole stays a literal word, and the listing stays identical.
 gen part 0
-check partial_table_literal bash -c "! grep -q 'table word' '$TD/part_out.asm' && grep -q '^; VERIFIED identical' '$TD/part_out.asm'"
+check partial_table_hole bash -c "test \"\$(grep -c 'table word' '$TD/part_out.asm')\" -eq 2 && grep -q '1 hole(s)' '$TD/part_out.asm' && grep -q '^; VERIFIED identical' '$TD/part_out.asm'"
 # S06: code pointer loaded through a register from a table.
 cat > "$TD/s06.asm" <<'ASM'
 _TEXT segment para public use16 'CODE'
