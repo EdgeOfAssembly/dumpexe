@@ -21,7 +21,7 @@
 #  J10 COM: rule 7 (branch-target promotion). A call target in data whose
 #     next byte only a heuristic head decoded is promoted; a call target one
 #     byte before flow-proven code is not (the proven decode is kept).
-#  K1a-K1c, K2a, M1a, M1b, L1a, N1a: review repros (see the blocks at the end).
+#  K1a-K1c, K2a, M1a, M1b, L1a, N1a-N1c: review repros (see the blocks at the end).
 # Every listing must rebuild byte-identical. Missing assembler: exit 77.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -738,6 +738,117 @@ check n1a_verified grep -q '^; VERIFIED identical' "$O"
 check n1a_two_entries grep -qE '^; jump tables: 1 generic table\(s\), 2 entries, 0 hole\(s\)' "$O"
 check n1a_no_false_code bash -c "! grep -qE '^    inc (cx|dx|bx)' '$O'"
 check n1a_rebuild same n1a_out.asm n1a.com bin
+
+# ---- N1 follow-up: provenance and explicit joins ----
+#  N1b: the slot after the hole points at 'A' + call fn + ret. A call is not
+#      a join, so nothing proves it; on a22069d the call counted, the slot
+#      was seeded and decoded in the next round only because of itself, and
+#      that decode then confirmed it. Now rejected in every round.
+#  N1c: the slot points at text sitting right in front of a function that
+#      is reached by a direct jmp; it decodes cleanly and falls through into
+#      the function. Fall-through into proven code is not a join: rejected.
+cat > "$TD/n1b.asm" <<'ASM'
+_TEXT segment para public use16 'CODE'
+assume cs:_TEXT, ds:_TEXT
+org 100h
+start:
+    mov dx, offset msg
+    mov bx, 1
+    cmp bx, 1
+    ja skip
+    shl bx, 1
+    jmp word ptr [bx+gtab]
+g0: mov al, 20h
+    jmp next
+skip:
+    test dl, dl
+    jz fn
+    mov si, offset prog
+next:
+    lodsb
+    xor ah, ah
+    mov bx, ax
+    shl bx, 1
+    jmp word ptr [bx+tbl]
+h0: mov ax, 4C00h
+    int 21h
+h1: mov al, 1
+    jmp next
+tbl dw h0, h1
+    dw 0
+    dw txt
+
+fn: mov al, 22h
+    jmp next
+gtab dw g0, fn
+prog db 1, 0
+msg db 'hi$'
+txt db 'A', 0E8h
+    dw fn - ($ + 2)
+    db 0C3h
+
+_TEXT ends
+end start
+ASM
+asm n1b.asm n1b.com
+lst n1b.com n1b_out.asm
+O="$TD/n1b_out.asm"
+check n1b_verified grep -q '^; VERIFIED identical' "$O"
+check n1b_two_entries grep -qE '^; jump tables: 1 generic table\(s\), 2 entries, 0 hole\(s\)' "$O"
+check n1b_no_false_code bash -c "! grep -qE '^    inc (cx|dx|bx)' '$O'"
+check n1b_rebuild same n1b_out.asm n1b.com bin
+cat > "$TD/n1c.asm" <<'ASM'
+_TEXT segment para public use16 'CODE'
+assume cs:_TEXT, ds:_TEXT
+org 100h
+start:
+    mov dx, offset msg
+    mov bx, 1
+    cmp bx, 1
+    ja skip
+    shl bx, 1
+    jmp word ptr [bx+gtab]
+g0: mov al, 20h
+    jmp next
+skip:
+    test dl, dl
+    jz fn
+    test dh, dh
+    jz fn2
+    mov si, offset prog
+next:
+    lodsb
+    xor ah, ah
+    mov bx, ax
+    shl bx, 1
+    jmp word ptr [bx+tbl]
+h0: mov ax, 4C00h
+    int 21h
+h1: mov al, 1
+    jmp next
+tbl dw h0, h1
+    dw 0
+    dw txt
+
+fn: mov al, 22h
+    jmp next
+txt db 'AB'
+fn2: mov al, 23h
+    jmp next
+gtab dw g0, fn
+prog db 1, 0
+msg db 'hi$'
+
+_TEXT ends
+end start
+ASM
+asm n1c.asm n1c.com
+lst n1c.com n1c_out.asm
+O="$TD/n1c_out.asm"
+check n1c_verified grep -q '^; VERIFIED identical' "$O"
+check n1c_two_entries grep -qE '^; jump tables: 1 generic table\(s\), 2 entries, 0 hole\(s\)' "$O"
+check n1c_no_false_code bash -c "! grep -qE '^    inc (cx|dx|bx)' '$O'"
+check n1c_rebuild same n1c_out.asm n1c.com bin
 
 echo "---"
 echo "passed=$pass failed=$fail"

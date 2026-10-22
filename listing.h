@@ -4799,6 +4799,7 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
         if (jt_changed)
         {
             in.jt_prev = emp->jt_roots();
+            in.jt_prev_tent = emp->jt_tent_roots();
             ++jt_rounds;
         }
         for (uint32_t t : in.jt_prev)

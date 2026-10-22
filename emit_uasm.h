@@ -118,6 +118,8 @@ struct EmitInput
     std::vector<TableHint> table_hints;
     /// Generic jump tables: roots the previous round seeded (non-sticky).
     std::set<uint32_t> jt_prev;
+    /// The subset of jt_prev seeded only by tentative slots (after a hole).
+    std::set<uint32_t> jt_prev_tent;
     /// Segment layout: when set, the U2 scan only looks at [cstr_lo, cstr_hi).
     uint32_t cstr_lo = 0;
     uint32_t cstr_hi = UINT32_MAX;
@@ -250,6 +252,10 @@ private:
     std::set<uint32_t> jt_weak_;     ///< instructions whose block head is below Derived
     bool jt_is_code(uint32_t lin) const;
     std::set<uint32_t> jt_roots_;    ///< valid table entries / promoted targets
+    std::set<uint32_t> jt_firm_roots_; ///< roots some table accepted non-tentatively
+    std::set<uint32_t> jt_tent_roots_; ///< roots from tentative slots
+    std::set<uint32_t> jt_tent_only_;  ///< instructions reached only from tentative seeds
+    bool jt_proven(uint32_t lin) const { return jt_is_code(lin) && !jt_tent_only_.count(lin); }
     size_t n_jt_ = 0, n_jt_entries_ = 0, n_jt_holes_ = 0, n_jt_far_unres_ = 0, n_jt_direct_ = 0;
     std::vector<std::string> jt_notes_;
     bool contiguous_units(size_t a, size_t b) const { return units_[a].lin + units_[a].size == units_[b].lin; }
@@ -332,6 +338,15 @@ public:
     size_t value_tables() const { return n_tables_; }
     /// Generic jump tables: all currently valid entries (decoded or not).
     const std::set<uint32_t>& jt_roots() const { return jt_roots_; }
+    /// Roots seeded only by tentative slots (no table accepted them firmly).
+    std::set<uint32_t> jt_tent_roots() const
+    {
+        std::set<uint32_t> r;
+        for (uint32_t t : jt_tent_roots_)
+            if (!jt_firm_roots_.count(t))
+                r.insert(t);
+        return r;
+    }
     size_t jt_tables() const { return n_jt_; }
     size_t jt_entries() const { return n_jt_entries_; }
     size_t jt_holes() const { return n_jt_holes_; }
@@ -2069,6 +2084,52 @@ inline void UasmEmitter::jt_prepare()
                 for (const CfgInsn& ci : blk.insns)
                     jt_weak_.insert(static_cast<uint32_t>(ci.ip));
         }
+    // Provenance: code reached only from tentative table seeds of an
+    // earlier round (flow from those seeds that no other root, branch or
+    // call from outside reaches) is not proven code for a tentative slot.
+    if (!in_.jt_prev_tent.empty())
+    {
+        std::set<uint32_t> tset;
+        std::vector<uint32_t> work;
+        for (uint32_t t : in_.jt_prev_tent)
+            if (g_.blocks.count(t))
+                work.push_back(t);
+        while (!work.empty())
+        {
+            const uint32_t b = work.back();
+            work.pop_back();
+            if (!tset.insert(b).second)
+                continue;
+            for (const CfgEdge& e : g_.blocks.at(b).outs)
+                if (e.has_target && g_.blocks.count(e.to_ip))
+                    work.push_back(static_cast<uint32_t>(e.to_ip));
+        }
+        std::set<uint32_t> indep;
+        for (uint32_t b : tset)
+        {
+            const CfgBlock& blk = g_.blocks.at(b);
+            bool outside = blk.is_entry;
+            for (CfgLin pr : blk.preds)
+                if (!tset.count(static_cast<uint32_t>(pr)))
+                    outside = true;
+            if (outside)
+                work.push_back(b);
+        }
+        while (!work.empty())
+        {
+            const uint32_t b = work.back();
+            work.pop_back();
+            if (!indep.insert(b).second)
+                continue;
+            for (const CfgEdge& e : g_.blocks.at(b).outs)
+                if (e.has_target && tset.count(static_cast<uint32_t>(e.to_ip)))
+                    work.push_back(static_cast<uint32_t>(e.to_ip));
+        }
+        for (uint32_t b : tset)
+            if (!indep.count(b))
+                for (const CfgInsn& ci : g_.blocks.at(b).insns)
+                    jt_tent_only_.insert(static_cast<uint32_t>(ci.ip));
+    }
     for (size_t ui = 0; ui < units_.size(); ++ui)
     {
         const EmitUnit& u = units_[ui];
@@ -2243,7 +2304,9 @@ inline bool UasmEmitter::jt_imm_is_pointer(size_t i, uint8_t reg) const
  *        following fall-through and direct jmp/jcc/loop targets (calls are
  *        not followed). Fails on anything jt_clean rejects, on a run into
  *        the middle of known or probed code, or past 400 instructions.
- *        @p joins: some path reaches decoded code or a @p join start.
+ *        @p joins: an explicit jmp/jcc/loop reaches an instruction start
+ *        of proven code (jt_proven) or of @p join. Fall-through into
+ *        proven code and calls do not join.
  *        @p starts receives the probe's instruction starts.
  */
 inline bool UasmEmitter::jt_probe(uint32_t t, uint32_t fr, const std::set<uint32_t>& join, std::set<uint32_t>& starts,
@@ -2253,7 +2316,10 @@ inline bool UasmEmitter::jt_probe(uint32_t t, uint32_t fr, const std::set<uint32
     starts.clear();
     const std::vector<uint8_t>& img = *in_.image;
     const uint32_t n = static_cast<uint32_t>(img.size());
-    const auto known = [&](uint32_t a) { return jt_is_code(a) || join.count(a) != 0; };
+    // Proven code: decoded code not reached only from tentative seeds, or
+    // a start in @p join. Code reached only from tentative seeds is probed
+    // through like data.
+    const auto known = [&](uint32_t a) { return jt_proven(a) || join.count(a) != 0; };
     csh h = 0;
     if (cs_open(CS_ARCH_X86, CS_MODE_16, &h) != CS_ERR_OK)
         return false;
@@ -2277,13 +2343,17 @@ inline bool UasmEmitter::jt_probe(uint32_t t, uint32_t fr, const std::set<uint32
             }
             if (known(p))
             {
-                joins = true;
+                // The target itself is proven code (an exact start);
+                // fall-through into proven code is not a join.
+                if (p == t)
+                    joins = true;
                 break;
             }
             if (got.count(p))
                 break; // already probed
             const int cv = unit_covering(p);
-            if (cv >= 0 && units_[static_cast<size_t>(cv)].code && !jt_weak_.count(units_[static_cast<size_t>(cv)].lin))
+            if (cv >= 0 && units_[static_cast<size_t>(cv)].code && !jt_weak_.count(units_[static_cast<size_t>(cv)].lin) &&
+                !jt_tent_only_.count(units_[static_cast<size_t>(cv)].lin))
             {
                 ok = false; // into the middle of decoded code
                 break;
@@ -2343,13 +2413,15 @@ inline bool UasmEmitter::jt_probe(uint32_t t, uint32_t fr, const std::set<uint32
                     ok = false;
                     break;
                 }
-                if (op0 == 0xE8)
+                // Only an explicit jmp/jcc/loop to an instruction start of
+                // proven code joins; a call does not.
+                if (op0 != 0xE8)
                 {
                     if (known(tg))
                         joins = true;
+                    else
+                        work.push_back(tg);
                 }
-                else
-                    work.push_back(tg);
                 if (op0 == 0xE9 || op0 == 0xEB)
                     break;
             }
@@ -2519,6 +2591,7 @@ inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool fa
     {
         uint32_t at, target, frame;
         int state; // 0 hole, 1 valid, 2 invalid
+        bool tent = false; // after a hole in an unguarded table
     };
     std::vector<Ent> ents;
     int bad_run = 0;
@@ -2575,11 +2648,13 @@ inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool fa
         bool valid;
         if (tt >= T && tt < at + esz)
             valid = false; // into the table itself
-        else if (const int ui = unit_at(tt); ui >= 0 && units_[static_cast<size_t>(ui)].code)
+        else if (const int ui = unit_at(tt); ui >= 0 && units_[static_cast<size_t>(ui)].code &&
+                                             !(hole_rule && after_hole && !jt_proven(tt)))
             valid = frame_of_.count(tt) && static_cast<uint32_t>(frame_of_.at(tt)) == tf &&
                     !(hole_rule && after_hole && jt_called_.count(tt));
-        else if (const int cv = unit_covering(tt); cv >= 0 && units_[static_cast<size_t>(cv)].code)
-            valid = false; // mid-instruction
+        else if (const int cv = unit_covering(tt); cv >= 0 && units_[static_cast<size_t>(cv)].code &&
+                                                   !(hole_rule && after_hole && jt_tent_only_.count(units_[static_cast<size_t>(cv)].lin)))
+            valid = false; // mid-instruction (of code proven or not)
         else
         {
             // After a hole the slot is tentative: its target is probed in
@@ -2621,7 +2696,7 @@ inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool fa
             filled = false;
         if (hole_rule && any_hole && !valid)
             break;
-        ents.push_back({at, tt, tf, valid ? 1 : 2});
+        ents.push_back({at, tt, tf, valid ? 1 : 2, hole_rule && after_hole});
         bad_run = valid ? 0 : bad_run + 1;
         if (bad_run >= 2)
             break;
@@ -2689,7 +2764,10 @@ inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool fa
                 // Seed only what the graph left in data, and keep what an
                 // earlier round seeded; decoded code is not re-seeded (a new
                 // entry would change the graph around it).
+            {
                 jt_roots_.insert(e.target);
+                (e.tent ? jt_tent_roots_ : jt_firm_roots_).insert(e.target);
+            }
             const int ui = unit_at(e.target);
             if (ui < 0 || !units_[static_cast<size_t>(ui)].code)
                 all_code = false;
