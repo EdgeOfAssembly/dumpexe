@@ -3,8 +3,9 @@
 # fixtures run from `make test-fixtures-jt` when present.
 #  J1 COM: byte opcode dispatcher (lodsb / xor ah,ah / shl / jmp [bx+T]) with
 #     no compare guard, a 160-entry table with two 0000 holes, and code
-#     starting right after the table (the table ends there, not at the
-#     lowest entry target).
+#     starting right after the table. Without hints the table ends at the
+#     first hole (nothing else references the later handlers); J1h adds a
+#     `table` hint and gets all 160 slots with both holes.
 #  J2 COM: call [disp16] with no index register is a variable, not a table.
 #  J3 COM: compare guard with a sub bias (cmp al,N; ja; sub al,K).
 #  J4 EXE: cs: near table in a second code segment.
@@ -21,7 +22,7 @@
 #  J10 COM: rule 7 (branch-target promotion). A call target in data whose
 #     next byte only a heuristic head decoded is promoted; a call target one
 #     byte before flow-proven code is not (the proven decode is kept).
-#  K1a-K1c, K2a, M1a, M1b, L1a, N1a-N1c: review repros (see the blocks at the end).
+#  K1a-K1c, K2a, M1a, M1b, L1a, N1a-N1c, P1a-P1c: review repros (see the blocks at the end).
 # Every listing must rebuild byte-identical. Missing assembler: exit 77.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -74,12 +75,26 @@ asm j1.asm j1.com
 lst j1.com j1_out.asm
 O="$TD/j1_out.asm"
 check j1_verified grep -q '^; VERIFIED identical' "$O"
-check j1_entries test "$(grep -c 'table word' "$O")" -eq 158
-check j1_handlers test "$(grep -cE '^    mov al, [0-9A-F]+h?' "$O")" -eq 157
-check j1_header grep -qE '^; jump tables: 1 generic table\(s\), 158 entries, 2 hole\(s\)' "$O"
-check j1_ends_at_code bash -c "grep -B4 'mov cx, 1' '$O' | grep -q 'table word'"
+# No hints: the slots after the 0000 holes point at handlers nothing else
+# references, so the generic rule ends the table at the first hole.
+check j1_entries test "$(grep -c 'table word' "$O")" -eq 40
+check j1_handlers test "$(grep -cE '^    mov al, [0-9A-F]+h?' "$O")" -eq 39
+check j1_header grep -qE '^; jump tables: 1 generic table\(s\), 40 entries, 0 hole\(s\)' "$O"
+check j1_cut_at_hole bash -c "! grep -B4 'mov cx, 1' '$O' | grep -q 'table word'"
 check j1_symbolic grep -qE 'jmp word ptr \[bx\+\(jt_[0-9A-F]{5} - L00100 \+ 100h\)\]' "$O"
 check j1_rebuild same j1_out.asm j1.com bin
+# J1h: the same program with a hint `table T A0 near`: all 160 slots, the
+# two holes kept, the table ends at the code after it, one table label.
+T1=$(sed -n 's/^jt_\([0-9A-F]\{5\}\):$/\1/p' "$O" | head -1)
+printf 'table %s A0 near\n' "$T1" > "$TD/j1.hints"
+lst j1.com j1h_out.asm --hints="$TD/j1.hints"
+O="$TD/j1h_out.asm"
+check j1h_verified grep -q '^; VERIFIED identical' "$O"
+check j1h_entries test "$(grep -c 'table word' "$O")" -eq 158
+check j1h_handlers test "$(grep -cE '^    mov al, [0-9A-F]+h?' "$O")" -eq 157
+check j1h_holes grep -qE '^    db 0h, 0h, 0h, 0h.; ' "$O"
+check j1h_ends_at_code bash -c "grep -B4 'mov cx, 1' '$O' | grep -q 'table word'"
+check j1h_rebuild same j1h_out.asm j1.com bin
 
 # ---- J2: variable ----
 cat > "$TD/j2.asm" <<'ASM'
@@ -849,6 +864,162 @@ check n1c_verified grep -q '^; VERIFIED identical' "$O"
 check n1c_two_entries grep -qE '^; jump tables: 1 generic table\(s\), 2 entries, 0 hole\(s\)' "$O"
 check n1c_no_false_code bash -c "! grep -qE '^    inc (cx|dx|bx)' '$O'"
 check n1c_rebuild same n1c_out.asm n1c.com bin
+
+# ---- P1 (verify-61ff043 repros n10, n10b, n13) ----
+#  P1a n10:  slot after a hole -> 'ABC' + jmp short exactly onto fn.
+#  P1b n10b: the same with a near jmp.
+#  P1c n13:  'AB' + jz exactly onto fn, then 'C', ret.
+#  A join is not evidence: nothing outside the table references the target,
+#  so the table ends at the hole.
+cat > "$TD/p1a.asm" <<'ASM'
+_TEXT segment para public use16 'CODE'
+assume cs:_TEXT, ds:_TEXT
+org 100h
+start:
+    mov dx, offset msg
+    mov bx, 1
+    cmp bx, 1
+    ja skip
+    shl bx, 1
+    jmp word ptr [bx+gtab]
+g0: mov al, 20h
+    jmp next
+skip:
+    test dl, dl
+    jz fn
+    mov si, offset prog
+next:
+    lodsb
+    xor ah, ah
+    mov bx, ax
+    shl bx, 1
+    jmp word ptr [bx+tbl]
+h0: mov ax, 4C00h
+    int 21h
+h1: mov al, 1
+    jmp next
+tbl dw h0, h1
+    dw 0
+    dw dat
+
+fn: mov al, 22h
+    jmp next
+gtab dw g0, fn
+prog db 1, 0
+msg db 'hi$'
+dat db 41h, 42h, 43h, 0EBh
+    db (offset fn - ($+1)) and 0FFh
+
+_TEXT ends
+end start
+ASM
+asm p1a.asm p1a.com
+lst p1a.com p1a_out.asm
+O="$TD/p1a_out.asm"
+check p1a_verified grep -q '^; VERIFIED identical' "$O"
+check p1a_two_entries grep -qE '^; jump tables: 1 generic table\(s\), 2 entries, 0 hole\(s\)' "$O"
+check p1a_no_false_code bash -c "! grep -qE '^    inc (cx|dx|bx)' '$O'"
+check p1a_rebuild same p1a_out.asm p1a.com bin
+cat > "$TD/p1b.asm" <<'ASM'
+_TEXT segment para public use16 'CODE'
+assume cs:_TEXT, ds:_TEXT
+org 100h
+start:
+    mov dx, offset msg
+    mov bx, 1
+    cmp bx, 1
+    ja skip
+    shl bx, 1
+    jmp word ptr [bx+gtab]
+g0: mov al, 20h
+    jmp next
+skip:
+    test dl, dl
+    jz fn
+    mov si, offset prog
+next:
+    lodsb
+    xor ah, ah
+    mov bx, ax
+    shl bx, 1
+    jmp word ptr [bx+tbl]
+h0: mov ax, 4C00h
+    int 21h
+h1: mov al, 1
+    jmp next
+tbl dw h0, h1
+    dw 0
+    dw dat
+
+fn: mov al, 22h
+    jmp next
+gtab dw g0, fn
+prog db 1, 0
+msg db 'hi$'
+dat db 41h, 42h, 43h
+    db 0E9h
+    dw offset fn - ($+2)
+
+_TEXT ends
+end start
+ASM
+asm p1b.asm p1b.com
+lst p1b.com p1b_out.asm
+O="$TD/p1b_out.asm"
+check p1b_verified grep -q '^; VERIFIED identical' "$O"
+check p1b_two_entries grep -qE '^; jump tables: 1 generic table\(s\), 2 entries, 0 hole\(s\)' "$O"
+check p1b_no_false_code bash -c "! grep -qE '^    inc (cx|dx|bx)' '$O'"
+check p1b_rebuild same p1b_out.asm p1b.com bin
+cat > "$TD/p1c.asm" <<'ASM'
+_TEXT segment para public use16 'CODE'
+assume cs:_TEXT, ds:_TEXT
+org 100h
+start:
+    mov dx, offset msg
+    mov bx, 1
+    cmp bx, 1
+    ja skip
+    shl bx, 1
+    jmp word ptr [bx+gtab]
+g0: mov al, 20h
+    jmp next
+skip:
+    test dl, dl
+    jz fn
+    mov si, offset prog
+next:
+    lodsb
+    xor ah, ah
+    mov bx, ax
+    shl bx, 1
+    jmp word ptr [bx+tbl]
+h0: mov ax, 4C00h
+    int 21h
+h1: mov al, 1
+    jmp next
+tbl dw h0, h1
+    dw 0
+    dw dat
+
+fn: mov al, 22h
+    jmp next
+gtab dw g0, fn
+prog db 1, 0
+msg db 'hi$'
+dat db 41h, 42h, 74h
+    db (offset fn - ($+1)) and 0FFh
+    db 43h, 0C3h
+
+_TEXT ends
+end start
+ASM
+asm p1c.asm p1c.com
+lst p1c.com p1c_out.asm
+O="$TD/p1c_out.asm"
+check p1c_verified grep -q '^; VERIFIED identical' "$O"
+check p1c_two_entries grep -qE '^; jump tables: 1 generic table\(s\), 2 entries, 0 hole\(s\)' "$O"
+check p1c_no_false_code bash -c "! grep -qE '^    inc (cx|dx|bx)' '$O'"
+check p1c_rebuild same p1c_out.asm p1c.com bin
 
 echo "---"
 echo "passed=$pass failed=$fail"

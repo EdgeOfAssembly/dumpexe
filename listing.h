@@ -4799,9 +4799,9 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
         if (jt_changed)
         {
             in.jt_prev = emp->jt_roots();
-            in.jt_prev_tent = emp->jt_tent_roots();
             ++jt_rounds;
         }
+        in.jt_prev_firm = emp->jt_firm();
         for (uint32_t t : in.jt_prev)
             if (std::find(seeds.begin(), seeds.end(), t) == seeds.end())
                 all.push_back(t);
