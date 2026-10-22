@@ -233,7 +233,8 @@ private:
     // Generic jump/call tables (see add_generic_table).
     void jt_prepare();
     bool jt_clean(uint32_t t, uint32_t fr, int* insns = nullptr, int* known_hits = nullptr,
-                  bool* anchored = nullptr, bool* strong = nullptr) const;
+                  bool* anchored = nullptr, const std::set<uint32_t>* join = nullptr,
+                  std::vector<uint32_t>* starts = nullptr) const;
     bool add_generic_table(const std::vector<size_t>& code, size_t j);
     void jt_table(uint32_t T, int64_t fr, int64_t count, bool far, bool hinted, size_t unit_idx, uint8_t disp_off,
                   bool guarded = false, bool byte_bounded = false);
@@ -244,6 +245,8 @@ private:
     std::set<uint32_t> jt_imm_;      ///< addresses named by pointer-register immediate loads
     std::set<uint32_t> jt_called_;   ///< targets of direct near calls (function heads)
     bool jt_imm_is_pointer(size_t i, uint8_t reg) const;
+    bool jt_probe(uint32_t t, uint32_t fr, const std::set<uint32_t>& join, std::set<uint32_t>& starts,
+                  bool& joins) const;
     std::set<uint32_t> jt_weak_;     ///< instructions whose block head is below Derived
     bool jt_is_code(uint32_t lin) const;
     std::set<uint32_t> jt_roots_;    ///< valid table entries / promoted targets
@@ -2235,6 +2238,133 @@ inline bool UasmEmitter::jt_imm_is_pointer(size_t i, uint8_t reg) const
     return used;
 }
 
+/**
+ * @brief Isolated flow probe of a tentative table target: decode from @p t
+ *        following fall-through and direct jmp/jcc/loop targets (calls are
+ *        not followed). Fails on anything jt_clean rejects, on a run into
+ *        the middle of known or probed code, or past 400 instructions.
+ *        @p joins: some path reaches decoded code or a @p join start.
+ *        @p starts receives the probe's instruction starts.
+ */
+inline bool UasmEmitter::jt_probe(uint32_t t, uint32_t fr, const std::set<uint32_t>& join, std::set<uint32_t>& starts,
+                                  bool& joins) const
+{
+    joins = false;
+    starts.clear();
+    const std::vector<uint8_t>& img = *in_.image;
+    const uint32_t n = static_cast<uint32_t>(img.size());
+    const auto known = [&](uint32_t a) { return jt_is_code(a) || join.count(a) != 0; };
+    csh h = 0;
+    if (cs_open(CS_ARCH_X86, CS_MODE_16, &h) != CS_ERR_OK)
+        return false;
+    cs_option(h, CS_OPT_DETAIL, CS_OPT_ON);
+    cs_insn* ci = cs_malloc(h);
+    std::map<uint32_t, uint32_t> got; // probed start -> size
+    std::vector<uint32_t> work{t};
+    bool ok = ci != nullptr;
+    int budget = 400;
+    while (ok && !work.empty())
+    {
+        uint32_t p = work.back();
+        work.pop_back();
+        int zeros = 0;
+        for (;;)
+        {
+            if (p < in_.emit_lo || p >= n)
+            {
+                ok = false;
+                break;
+            }
+            if (known(p))
+            {
+                joins = true;
+                break;
+            }
+            if (got.count(p))
+                break; // already probed
+            const int cv = unit_covering(p);
+            if (cv >= 0 && units_[static_cast<size_t>(cv)].code && !jt_weak_.count(units_[static_cast<size_t>(cv)].lin))
+            {
+                ok = false; // into the middle of decoded code
+                break;
+            }
+            if (auto it = got.upper_bound(p); it != got.begin() && std::prev(it)->first + std::prev(it)->second > p)
+            {
+                ok = false; // into the middle of a probed instruction
+                break;
+            }
+            if (--budget < 0)
+            {
+                ok = false;
+                break;
+            }
+            const uint8_t* ptr = img.data() + p;
+            size_t sz = std::min<size_t>(15, n - p);
+            uint64_t addr = static_cast<uint16_t>(p - fr);
+            if (!cs_disasm_iter(h, &ptr, &sz, &addr, ci) || ci->detail == nullptr)
+            {
+                ok = false;
+                break;
+            }
+            for (uint32_t q = p + 1; q < p + ci->size; ++q)
+                if (known(q) || got.count(q))
+                    ok = false;
+            if (!ok)
+                break;
+            const std::string_view m(ci->mnemonic);
+            if (img[p] == 0 && p + 1 < n && img[p + 1] == 0)
+            {
+                if (++zeros >= 2)
+                {
+                    ok = false;
+                    break;
+                }
+            }
+            else
+                zeros = 0;
+            if (m == "int3" || m == "into" || m == "hlt" || m == "bound" || m == "arpl" || m == "lock" ||
+                m == "int1" || m == "ud2" || m == "salc")
+            {
+                ok = false;
+                break;
+            }
+            got[p] = ci->size;
+            const cs_x86& x = ci->detail->x86;
+            const uint8_t op0 = x.opcode[0];
+            const bool rel = x.op_count >= 1 && x.operands[0].type == X86_OP_IMM;
+            const uint32_t tg = rel ? fr + (static_cast<uint32_t>(x.operands[0].imm) & 0xFFFFu) : 0;
+            if (m == "ret" || m == "retf" || m == "iret" || m == "ljmp" || (m == "jmp" && !(rel && (op0 == 0xE9 || op0 == 0xEB))))
+                break;
+            if (rel && (op0 == 0xE9 || op0 == 0xEB || op0 == 0xE8 || (op0 >= 0x70 && op0 <= 0x7F) ||
+                        (op0 >= 0xE0 && op0 <= 0xE3)))
+            {
+                if (tg < in_.emit_lo || tg >= n)
+                {
+                    ok = false;
+                    break;
+                }
+                if (op0 == 0xE8)
+                {
+                    if (known(tg))
+                        joins = true;
+                }
+                else
+                    work.push_back(tg);
+                if (op0 == 0xE9 || op0 == 0xEB)
+                    break;
+            }
+            p += ci->size;
+        }
+    }
+    if (ci != nullptr)
+        cs_free(ci, 1);
+    cs_close(&h);
+    if (ok)
+        for (const auto& [a, sz] : got)
+            starts.insert(a);
+    return ok;
+}
+
 /** @brief A decoded instruction starts at @p lin and its head is Derived or stronger. */
 inline bool UasmEmitter::jt_is_code(uint32_t lin) const
 {
@@ -2243,13 +2373,13 @@ inline bool UasmEmitter::jt_is_code(uint32_t lin) const
 }
 
 inline bool UasmEmitter::jt_clean(uint32_t t, uint32_t fr, int* insns, int* known_hits, bool* anchored,
-                                       bool* strong) const
+                                       const std::set<uint32_t>* join, std::vector<uint32_t>* starts) const
 {
-    // strong: anchored by something other than a direct-call function head
-    // (running into one, a jmp to one, or any call): a text byte followed by
-    // a jump into a called function is not evidence of a dispatch entry.
-    bool anch = false, anch_strong = false;
-    int hits_strong = 0;
+    // join: extra instruction starts that count as known code (the clean
+    // runs of a table's non-tentative entries); starts: the run's own
+    // instruction starts.
+    const auto known = [&](uint32_t a) { return jt_is_code(a) || (join != nullptr && join->count(a)); };
+    bool anch = false;
     int n_ins = 0, hits = 0;
     const std::vector<uint8_t>& img = *in_.image;
     const uint32_t n = static_cast<uint32_t>(img.size());
@@ -2269,7 +2399,11 @@ inline bool UasmEmitter::jt_clean(uint32_t t, uint32_t fr, int* insns, int* know
         if (ui >= 0 && jt_is_code(p))
         {
             ok = anch = true; // runs into known code
-            anch_strong = !jt_called_.count(p);
+            break;
+        }
+        if (join != nullptr && join->count(p))
+        {
+            ok = anch = true;
             break;
         }
         const int cv = unit_covering(p);
@@ -2283,7 +2417,7 @@ inline bool UasmEmitter::jt_clean(uint32_t t, uint32_t fr, int* insns, int* know
         bool overlap = false;
         for (uint32_t q = p + 1; q < p + ci->size; ++q)
         {
-            if (jt_is_code(q))
+            if (known(q))
                 overlap = true;
         }
         if (overlap)
@@ -2300,6 +2434,8 @@ inline bool UasmEmitter::jt_clean(uint32_t t, uint32_t fr, int* insns, int* know
             m == "int1" || m == "ud2" || m == "salc")
             break;
         ++n_ins;
+        if (starts != nullptr)
+            starts->push_back(p);
         if (m == "ret" || m == "retf" || m == "iret" || m == "jmp" || m == "ljmp")
         {
             ok = true;
@@ -2307,12 +2443,8 @@ inline bool UasmEmitter::jt_clean(uint32_t t, uint32_t fr, int* insns, int* know
             const uint8_t j0 = ci->detail ? ci->detail->x86.opcode[0] : 0;
             if ((j0 == 0xE9 || j0 == 0xEB) && ci->detail->x86.op_count >= 1 &&
                 ci->detail->x86.operands[0].type == X86_OP_IMM &&
-                jt_is_code(fr + (static_cast<uint32_t>(ci->detail->x86.operands[0].imm) & 0xFFFFu)))
-            {
+                known(fr + (static_cast<uint32_t>(ci->detail->x86.operands[0].imm) & 0xFFFFu)))
                 anch = true;
-                anch_strong =
-                    !jt_called_.count(fr + (static_cast<uint32_t>(ci->detail->x86.operands[0].imm) & 0xFFFFu));
-            }
             break;
         }
         const uint8_t op0 = ci->detail ? ci->detail->x86.opcode[0] : 0;
@@ -2322,12 +2454,8 @@ inline bool UasmEmitter::jt_clean(uint32_t t, uint32_t fr, int* insns, int* know
             const uint32_t tg = fr + (static_cast<uint32_t>(ci->detail->x86.operands[0].imm) & 0xFFFFu);
             if (tg < in_.emit_lo || tg >= n)
                 break;
-            if (jt_is_code(tg))
-            {
+            if (known(tg))
                 ++hits;
-                if (op0 != 0xE8 && !jt_called_.count(tg))
-                    ++hits_strong;
-            }
         }
         p += ci->size;
     }
@@ -2340,8 +2468,6 @@ inline bool UasmEmitter::jt_clean(uint32_t t, uint32_t fr, int* insns, int* know
         *known_hits = hits;
     if (anchored != nullptr)
         *anchored = ok && (anch || hits > 0);
-    if (strong != nullptr)
-        *strong = ok && (anch_strong || hits_strong > 0);
     return ok;
 }
 
@@ -2407,6 +2533,8 @@ inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool fa
     const bool hole_rule = !guarded && !hinted && !far;
     bool after_hole = false, any_hole = false, filled = true;
     size_t first_hole = 0;
+    std::set<uint32_t> firm; // instruction starts of non-tentative entries' runs
+    std::vector<std::pair<uint32_t, uint32_t>> pending; // tentative targets not yet joined
     for (uint32_t at = T; at + esz <= end; at += esz)
     {
         if (!in_.com && (in_.reloc_at.count(at) || (!far && in_.reloc_at.count(at + 1))))
@@ -2454,7 +2582,40 @@ inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool fa
             valid = false; // mid-instruction
         else
         {
-            valid = hinted || jt_clean(tt, tf);
+            // After a hole the slot is tentative: its target is probed in
+            // isolation and accepted only if the probe's flow joins code
+            // proven without it (runs into it, or a direct jmp, call or
+            // conditional branch reaches it). A run that only ends cleanly
+            // is not evidence. The probe stops at any overlap with an
+            // existing decode, so it never contradicts one.
+            bool joins = false;
+            std::vector<uint32_t> run;
+            const bool tentative = hole_rule && after_hole;
+            if (hinted)
+                valid = true;
+            else if (tentative)
+            {
+                std::set<uint32_t> ps;
+                valid = jt_probe(tt, tf, firm, ps, joins);
+                if (valid && joins)
+                    firm.insert(ps.begin(), ps.end());
+                else if (valid)
+                    pending.push_back({tt, tf}); // decided at the fixpoint below
+            }
+            else
+            {
+                valid = jt_clean(tt, tf, nullptr, nullptr, nullptr, nullptr, &run);
+                if (valid && hole_rule)
+                {
+                    // Firm entries contribute their whole flow probe.
+                    std::set<uint32_t> ps;
+                    bool j2 = false;
+                    if (jt_probe(tt, tf, firm, ps, j2))
+                        firm.insert(ps.begin(), ps.end());
+                    else
+                        firm.insert(run.begin(), run.end());
+                }
+            }
         }
         if (!valid)
             filled = false;
@@ -2467,6 +2628,29 @@ inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool fa
     }
     // Unguarded with a hole: keep the slots past it only when they fill the
     // table exactly up to a hard end; otherwise the table ends at the hole.
+    // Fixpoint: a pending tentative target is accepted once its probe joins
+    // code proven so far (decoded code, a non-tentative entry's run, or the
+    // run of a tentative entry accepted before it). Any left over cuts the
+    // table at the hole.
+    for (bool grew = true; grew && !pending.empty();)
+    {
+        grew = false;
+        for (size_t q = 0; q < pending.size();)
+        {
+            bool joins = false;
+            std::set<uint32_t> run;
+            if (jt_probe(pending[q].first, pending[q].second, firm, run, joins) && joins)
+            {
+                firm.insert(run.begin(), run.end());
+                pending.erase(pending.begin() + static_cast<std::ptrdiff_t>(q));
+                grew = true;
+            }
+            else
+                ++q;
+        }
+    }
+    if (!pending.empty())
+        filled = false;
     if (hole_rule && any_hole)
     {
         const bool reached = !ents.empty() && ents.back().at + esz >= end;

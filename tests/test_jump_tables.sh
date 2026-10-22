@@ -21,7 +21,7 @@
 #  J10 COM: rule 7 (branch-target promotion). A call target in data whose
 #     next byte only a heuristic head decoded is promoted; a call target one
 #     byte before flow-proven code is not (the proven decode is kept).
-#  K1a-K1c, K2a, M1a, M1b, L1a: review repros (see the blocks at the end).
+#  K1a-K1c, K2a, M1a, M1b, L1a, N1a: review repros (see the blocks at the end).
 # Every listing must rebuild byte-identical. Missing assembler: exit 77.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -685,6 +685,59 @@ check l1a_verified grep -q '^; VERIFIED identical' "$O"
 check l1a_four_entries grep -qE '^; jump tables: 1 generic table\(s\), 4 entries, 0 hole\(s\)' "$O"
 check l1a_handlers bash -c "grep -qE '^    mov al, 2h' '$O' && grep -qE '^    mov al, 3h' '$O'"
 check l1a_rebuild same l1a_out.asm l1a.com bin
+
+# ---- N1 (verify-eaf0728 repro n7) ----
+#  N1a n7: the slots end exactly at a function reached by a direct jmp (a
+#      hard end), but the slot after the hole points at text whose flow
+#      probe joins no proven code: the table ends at the hole.
+cat > "$TD/n1a.asm" <<'ASM'
+_TEXT segment para public use16 'CODE'
+assume cs:_TEXT, ds:_TEXT
+org 100h
+start:
+    mov dx, offset msg
+    mov bx, 1
+    cmp bx, 1
+    ja skip
+    shl bx, 1
+    jmp word ptr [bx+gtab]
+g0: mov al, 20h
+    jmp next
+skip:
+    test dl, dl
+    jz fn
+    mov si, offset prog
+next:
+    lodsb
+    xor ah, ah
+    mov bx, ax
+    shl bx, 1
+    jmp word ptr [bx+tbl]
+h0: mov ax, 4C00h
+    int 21h
+h1: mov al, 1
+    jmp next
+tbl dw h0, h1
+    dw 0
+    dw txt
+
+fn: mov al, 22h
+    jmp next
+gtab dw g0, fn
+prog db 1, 0
+msg db 'hi$'
+txt db 'ABC', 0C3h
+
+_TEXT ends
+end start
+ASM
+asm n1a.asm n1a.com
+lst n1a.com n1a_out.asm
+O="$TD/n1a_out.asm"
+check n1a_verified grep -q '^; VERIFIED identical' "$O"
+check n1a_two_entries grep -qE '^; jump tables: 1 generic table\(s\), 2 entries, 0 hole\(s\)' "$O"
+check n1a_no_false_code bash -c "! grep -qE '^    inc (cx|dx|bx)' '$O'"
+check n1a_rebuild same n1a_out.asm n1a.com bin
 
 echo "---"
 echo "passed=$pass failed=$fail"
