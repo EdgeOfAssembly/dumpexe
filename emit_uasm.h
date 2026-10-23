@@ -247,6 +247,7 @@ private:
         bool rescaled = false; ///< scaled more than once (stride above one slot): only slot 0 is proven
         int64_t first = 0;     ///< first reachable slot (add bias, inverted guard)
         bool legacy = false;   ///< count is the pre-n8 cap (voided guard fallback)
+        bool zero_only = false; ///< ja/jne on an `and`'s flags: only index 0 reaches the jump
     };
     int64_t jt_legacy_count(const std::vector<size_t>& code, size_t j) const;
     JtIndexRange jt_index_range(const std::vector<size_t>& code, size_t j, uint8_t r0, uint8_t r1, int unit_shift = 1) const;
@@ -2842,6 +2843,24 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
                 }
                 scale_frozen = true;
                 masked = true;
+                // z1: a ja/jne right after the `and` tests the and's flags
+                // (CF=0): its fall-through carries a zero index only.
+                {
+                    const uint8_t* nb = img.data() + nx.lin;
+                    if (nx.size == 2 && (nb[0] == 0x77 || nb[0] == 0x75) && !need_set)
+                    {
+                        const uint32_t jt = nx.lin + 2 + static_cast<uint32_t>(sx8(nb[1]));
+                        bool dom = jt <= nx.lin || jt > jlin;
+                        for (uint32_t l : seen)
+                            if (l >= nx.lin + nx.size && jt_xref_.count(l))
+                                dom = false;
+                        if (dom)
+                        {
+                            out.count = 1, out.first = 0, out.mask = -1, out.zero_only = true;
+                            return out;
+                        }
+                    }
+                }
                 seen.push_back(c.lin);
                 continue;
             }
@@ -3005,13 +3024,32 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
         if (lc > 0)
             out.count = lc, out.legacy = true;
     }
+    if (out.count > 0 && out.mask >= 0)
+    {
+        // A bound and a mask: the index is at most count-1 and has only mask
+        // bits, so the count is the highest such value + 1 (tight for masks
+        // with gaps: guard 9 and 0Ah gives 9, not 10). Biases after the mask
+        // (`and 3; inc bx`) are not added: an under-count, never false code.
+        const int64_t lim = out.count - 1;
+        int64_t hi = 0;
+        for (int b = 15; b >= 0; --b)
+        {
+            const int64_t bit = int64_t{1} << b;
+            if ((out.mask & bit) && (hi | bit) <= lim)
+                hi |= bit;
+        }
+        out.count = hi + 1;
+        if (out.first > hi)
+            out.first = 0;
+    }
     return out;
 }
 
 /**
- * @brief Pre-n8 compare cap (main c552a32), the smaller of the generic and
- *        P4 scans: the first `cmp r, imm` + ja/jae/jbe/jb within 12 (8)
- *        contiguous instructions, any register. Only a ceiling for a
+ * @brief Pre-n8 cap (main c552a32), the smallest of the generic and P4
+ *        compare scans (the first `cmp r, imm` + ja/jae/jbe/jb within 12 (8)
+ *        contiguous instructions, any register) and main's register-blind
+ *        `and` mask scan (mask+1, halved on the byte offset). Only a ceiling for a
  *        voided guard (see jt_index_range); -1 when none.
  */
 inline int64_t UasmEmitter::jt_legacy_count(const std::vector<size_t>& code, size_t j) const
@@ -3032,8 +3070,8 @@ inline int64_t UasmEmitter::jt_legacy_count(const std::vector<size_t>& code, siz
         return -1;
     };
     const uint32_t jlin = units_[code[j]].lin;
-    // Old generic scan.
-    int64_t g = -1;
+    // Old generic scan (compare and `and` mask, as main add_generic_table).
+    int64_t g = -1, mcap = -1;
     {
         bool doubled = false;
         int64_t bias = 0;
@@ -3053,6 +3091,20 @@ inline int64_t UasmEmitter::jt_legacy_count(const std::vector<size_t>& code, siz
             {
                 doubled = true;
                 continue;
+            }
+            if (mcap < 0)
+            {
+                int64_t mk = -1;
+                if (c.size == 2 && cb[0] == 0x24)
+                    mk = cb[1];
+                else if (c.size == 3 && cb[0] == 0x25)
+                    mk = cb[1] | (cb[2] << 8);
+                else if (c.size == 3 && cb[0] == 0x83 && (cb[1] & 0xF8) == 0xE0)
+                    mk = cb[2];
+                else if (c.size == 4 && cb[0] == 0x81 && (cb[1] & 0xF8) == 0xE0)
+                    mk = cb[2] | (cb[3] << 8);
+                if (mk >= 0)
+                    mcap = (doubled ? mk : (mk >> 1)) + 1;
             }
             if ((c.size == 3 && cb[0] == 0x83 && (cb[1] & 0xF8) == 0xE8) || (c.size == 2 && cb[0] == 0x2C))
                 bias += c.size == 2 ? cb[1] : cb[2];
@@ -3113,9 +3165,11 @@ inline int64_t UasmEmitter::jt_legacy_count(const std::vector<size_t>& code, siz
             break;
         }
     }
-    if (g > 0 && q > 0)
-        return std::min(g, q);
-    return g > 0 ? g : q;
+    int64_t best = -1;
+    for (int64_t v : {g, q, mcap})
+        if (v > 0 && (best < 0 || v < best))
+            best = v;
+    return best;
 }
 
 /**

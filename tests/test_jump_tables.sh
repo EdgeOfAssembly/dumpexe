@@ -1176,6 +1176,29 @@ check y15_verified grep -q '^; VERIFIED identical' "$TD/y15_out.asm"
 check y15_far_2_handlers test "$(grep -cE '^    mov al, [01]h?\b' "$TD/y15_out.asm")" -eq 2
 check y15_false_0 test "$(grep -cE 'mov al, 7[0-3]h' "$TD/y15_out.asm")" -eq 0
 
+# n8 round 5 (verify-d2d989a, repros2): name:handlers:kind. Handlers h0..h11
+# are `mov al, 0..0Bh`, decoys d0..d3 `mov al, 70h..73h` must stay data.
+# z1: ja on an `and`'s flags lets only index 0 through. z2c/z4c/z4d: an
+# upper guard with a mask (gaps too) counts the highest allowed index + 1.
+# z5*: a rewrite after the mask keeps main's mask cap (4). z5g (`and 3;
+# inc bx`, real 5) under-counts to 4: no false code, documented in TODO.
+for spec in z1_cmp_then_mask_ja:1:com z1b_mask_cmp_guard:3:com z1c_far_mask_then_guard:3:far \
+            z1d_cmp_mask_then_guard:3:com z2_far_inv_mask7:8:far z2b_far_inv_upper_mask:4:far \
+            z2c_near_inv_upper_mask:4:com z3_guard9_mask3:4:com z3b_far_guard9_mask3:4:far \
+            z4_mask_0A:11:com z4b_guard2_mask_0A:3:com z4c_guard9_mask_0A:9:com z4d_mask_0A_guard9:9:com \
+            z5_mask_then_mov:4:com z5b_guard_mask_or:3:com z5c_mask_add_reg:4:com z5d_mask_bh:4:com \
+            z5e_mask_pop:4:com z5f_mask_xchg:4:com z5g_mask_inc:4:com z5h_far_mask_mov:2:far; do
+  IFS=: read -r n want kind <<<"$spec"
+  cp "$ROOT/tests/n8_syn/$n.asm" "$TD/$n.asm"
+  if [[ $kind == far ]]; then asmz "$n.asm" "$n.exe"; in=$n.exe; else asm "$n.asm" "$n.com"; in=$n.com; fi
+  lst "$in" "${n}_out.asm"
+  O="$TD/${n}_out.asm"
+  check "${n}_verified" grep -q '^; VERIFIED identical' "$O"
+  check "${n}_handlers_${want}" test "$(grep -cE '^ *mov al, ([0-9]|0[AB])h\b' "$O")" -eq "$want"
+  check "${n}_false_0" test "$(grep -cE '^ *mov al, 7[0-3]h\b' "$O")" -eq 0
+  [[ $kind == com ]] && check "${n}_rebuild" same "${n}_out.asm" "$in" bin
+done
+
 echo "---"
 echo "passed=$pass failed=$fail"
 [[ $fail -eq 0 ]]
