@@ -12,7 +12,7 @@ if [[ -z "${PKG_CONFIG_PATH:-}" && -d /usr/local/lib/pkgconfig ]]; then
 fi
 
 # Honor the parent make's -jN / jobserver (`make -j2 test`); standalone, use at most 4 jobs.
-if [[ "${MAKEFLAGS:-}" =~ (^|[[:space:]])-j|--jobserver ]]; then
+if [[ "${MAKEFLAGS:-}" =~ (^|[[:space:]])-j[0-9]+|--jobserver ]]; then
   make -s V=0
 else
   JOBS="$(nproc 2>/dev/null || echo 1)"; (( JOBS > 4 )) && JOBS=4
