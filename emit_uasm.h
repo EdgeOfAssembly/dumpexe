@@ -2677,6 +2677,7 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
     uint32_t need = 0;
     std::vector<uint32_t> seen{jlin};
     bool guard = false, gbyte = false;
+    uint32_t guard_cmp = 0;    // linear address of the guard's compare
     int scales = 0;            // left scalings of the index since the last value reset (mask)
     bool scale_frozen = false; // a mask nearer the jump fixed the value range
     int64_t inv_first = -1;    // inverted guard: lowest index the path can carry
@@ -2818,7 +2819,10 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
             if (!word && dst >= 4 && alias[dst & 3])
                 break; // high byte written
         }
-        if (!guard)
+        // z4d: an `and` directly before the guard's compare (no bias between
+        // them or after) also limits the guarded index: record its mask.
+        const bool and_before_guard = guard && nx.lin == guard_cmp && bias_e == 0 && bias_b == 0 && bias_off == 0;
+        if (!guard || and_before_guard)
         {
             // and r, imm: mask.
             int64_t mk = -1;
@@ -2833,6 +2837,16 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
                 mk = sx8(cb[p + 2]) & 0xFFFF;
             else if (op == 0x81 && mreg && mr == 4 && sz == p + 4 && alias[m & 7])
                 mk = cb[p + 2] | (cb[p + 3] << 8);
+            if (mk >= 0 && guard)
+            {
+                if (out.mask < 0)
+                {
+                    out.mask = (mk << shifts) >> unit_shift;
+                    mask_byte = mb;
+                }
+                seen.push_back(c.lin);
+                continue;
+            }
             if (mk >= 0)
             {
                 if (out.mask < 0)
@@ -2864,6 +2878,8 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
                 seen.push_back(c.lin);
                 continue;
             }
+            if (guard)
+                goto jt_after_mask; // only the `and` is read before the guard's compare
             // sub/add r, imm and inc/dec r: bias.
             int64_t bi = 0;
             bool isb = false;
@@ -2982,6 +2998,7 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
                         if (nb < 0)
                             out.first = std::min<int64_t>((-nb) >> unit_shift, c0);
                         guard = true;
+                        guard_cmp = c.lin;
                         gbyte = cbyte;
                         // Keep walking: an earlier scaling (M1) or a cleared high byte.
                         continue;
@@ -2993,6 +3010,7 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
                 continue;
             }
         }
+        jt_after_mask:;
         const jtx::GprWrite w = jtx::gpr_write(cb, sz);
         if (w.kind == 2 || (w.kind == 1 && alias[w.reg]))
             break;
