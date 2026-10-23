@@ -237,6 +237,15 @@ private:
     bool jt_clean(uint32_t t, uint32_t fr, int* insns = nullptr, int* known_hits = nullptr,
                   bool* anchored = nullptr) const;
     bool add_generic_table(const std::vector<size_t>& code, size_t j);
+    /** @brief Index range facts for an indexed jmp/call (see jt_index_range). */
+    struct JtIndexRange
+    {
+        int64_t count = -1;   ///< entries a dominating compare guard allows, or -1
+        int64_t mask = -1;    ///< entries-1 an `and` mask allows, or -1
+        bool byte_idx = false; ///< the index register holds a zero-extended byte
+        bool doubled = false;  ///< scaled by 2 between the guard (or source) and the jump
+    };
+    JtIndexRange jt_index_range(const std::vector<size_t>& code, size_t j, uint8_t r0, uint8_t r1) const;
     void jt_table(uint32_t T, int64_t fr, int64_t count, bool far, bool hinted, size_t unit_idx, uint8_t disp_off,
                   bool guarded = false, bool byte_bounded = false);
     void jt_direct_targets(const std::vector<size_t>& code);
@@ -911,8 +920,10 @@ inline void UasmEmitter::find_main_hint()
  * @brief P4 value references (valueprop-lite).
  *
  * Two proven patterns, each all-or-nothing:
- *  - bounded jump table: `cmp r, N` / `ja|jae|jbe|jb` within the eight
- *    instructions before `jmp word ptr cs:[bx+T]` (or `[bx+T]` in a COM).
+ *  - bounded jump table: a range guard on the index (`cmp bx|bl|al.., N`
+ *    with ja/jae/jg/jge falling through or jbe/jb/jle/jl taken, dominating
+ *    the jump; see jt_index_range) before `jmp word ptr cs:[bx+T]` (or
+ *    `[bx+T]` in a COM).
  *    Every one of the N entries must name a decoded instruction head in the
  *    same frame and the table must lie in data; then T and each entry are
  *    offsets.
@@ -996,51 +1007,16 @@ inline void UasmEmitter::add_value_refs()
             const uint32_t k = csp ? 3 : 2;
             const int64_t fr = pure_com ? 0 : frame_of_[u.lin];
             const uint32_t disp = b[k] | (b[k + 1] << 8);
-            // Bound: cmp r, imm followed by an unsigned jcc, all contiguous.
+            // Bound: a dominating range guard on the index register (n8;
+            // see jt_index_range). Only the [bx+T] form is scanned here.
             int64_t count = -1;
-            bool doubled_after_cmp = false;
-            for (size_t back = 1; count < 0 && (!csp || (b[2] & 7) == 7) && back <= 8 && back <= j; ++back)
+            if (!csp || (b[2] & 7) == 7)
             {
-                const EmitUnit& c = units_[code[j - back]];
-                const EmitUnit& nx = units_[code[j - back + 1]];
-                if (c.lin + c.size != nx.lin)
-                    break;
-                const uint8_t* cb = img.data() + c.lin;
-                // shl bx,1 (D1 E3) or add bx,bx (03 DB / 01 DB) between the
-                // compare and the jump: the compare saw the undoubled index.
-                if (c.size == 2 && ((cb[0] == 0xD1 && cb[1] == 0xE3) ||
-                                    ((cb[0] == 0x03 || cb[0] == 0x01) && cb[1] == 0xDB)))
-                {
-                    doubled_after_cmp = true;
-                    continue;
-                }
-                int64_t imm = -1;
-                if (c.size == 3 && cb[0] == 0x83 && (cb[1] & 0xF8) == 0xF8)
-                    imm = cb[2];
-                else if (c.size == 4 && cb[0] == 0x81 && (cb[1] & 0xF8) == 0xF8)
-                    imm = cb[2] | (cb[3] << 8);
-                else if (c.size == 3 && cb[0] == 0x80 && (cb[1] & 0xF8) == 0xF8)
-                    imm = cb[2];
-                else if (c.size == 2 && cb[0] == 0x3C)
-                    imm = cb[1];
-                else if (c.size == 3 && cb[0] == 0x3D)
-                    imm = cb[1] | (cb[2] << 8);
-                if (imm < 0)
-                    continue;
-                const uint8_t jo = img[nx.lin];
-                if (jo == 0x77 || jo == 0x76) // ja / jbe: 0..imm
-                    count = imm + 1;
-                else if (jo == 0x73 || jo == 0x72) // jae / jb: 0..imm-1
-                    count = imm;
-                // Review R9: a compare on the already doubled index bounds
-                // the byte offset, so the entry count is half.
-                if (count > 0 && !doubled_after_cmp)
-                    count = (count + 1) / 2;
-                break;
+                jt_prepare();
+                count = jt_index_range(code, j, 3, 0xFF).count;
             }
             // Value-mask bound (FP emulator; see mask_bound). It is a proven
-            // upper bound, so with a compare bound too the smaller one wins
-            // (the compare scan does not check which register it compares).
+            // upper bound, so with a compare bound too the smaller one wins.
             if (csp)
             {
                 const int64_t mb = mask_bound(code, j, static_cast<uint8_t>(b[2] & 7));
@@ -2561,6 +2537,377 @@ inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool fa
     auto_names_.emplace(T, std::format("jt_{:05X}", T));
 }
 
+
+namespace jtx
+{
+/// GPR write of one instruction: kind 0 none, 1 @c reg (16-bit number;
+/// part 0 word, 1 low byte, 2 high byte), 2 unknown or several.
+struct GprWrite
+{
+    int kind = 2;
+    uint8_t reg = 0;
+    uint8_t part = 0;
+};
+
+inline GprWrite gpr_write(const uint8_t* b, uint32_t n)
+{
+    GprWrite w;
+    uint32_t k = 0;
+    while (k < n && (b[k] == 0x26 || b[k] == 0x2E || b[k] == 0x36 || b[k] == 0x3E))
+        ++k;
+    if (k >= n)
+        return w;
+    const uint8_t op = b[k];
+    const uint8_t m = k + 1 < n ? b[k + 1] : 0;
+    const bool mreg = k + 1 < n && (m >> 6) == 3;
+    const uint8_t mr = (m >> 3) & 7;
+    auto r16 = [&w](uint8_t r) { w.kind = 1, w.reg = r & 7, w.part = 0; return w; };
+    auto r8 = [&w](uint8_t r) { w.kind = 1, w.reg = r & 3, w.part = (r & 7) < 4 ? 1 : 2; return w; };
+    auto none = [&w]() { w.kind = 0; return w; };
+    auto rm_w = [&](bool word) { return !mreg ? none() : (word ? r16(m & 7) : r8(m & 7)); };
+    if (op < 0x40 && (op & 7) <= 5)
+    {
+        if ((op >> 3) == 7)
+            return none(); // cmp
+        switch (op & 7)
+        {
+        case 0: return rm_w(false);
+        case 1: return rm_w(true);
+        case 2: return r8(mr);
+        case 3: return r16(mr);
+        case 4: return r8(0);
+        default: return r16(0);
+        }
+    }
+    if (op == 0x0F && k + 2 < n && (b[k + 1] & 0xF0) == 0x80)
+        return none();
+    if (op == 0x0F && k + 2 < n && (b[k + 1] == 0xB6 || b[k + 1] == 0xB7))
+        return r16((b[k + 2] >> 3) & 7);
+    if (op >= 0x40 && op <= 0x4F)
+        return r16(op & 7);
+    if ((op >= 0x50 && op <= 0x57) || (op >= 0x70 && op <= 0x7F) || op == 0x84 || op == 0x85 || op == 0x8E ||
+        op == 0x90 || op == 0x9C || op == 0x9D || op == 0x9E || op == 0xA2 || op == 0xA3 || op == 0xA8 ||
+        op == 0xA9 || (op >= 0xF8 && op <= 0xFD))
+        return none();
+    if (op >= 0x58 && op <= 0x5F)
+        return r16(op & 7);
+    if (op >= 0x80 && op <= 0x83)
+        return mr == 7 ? none() : rm_w(op & 1);
+    switch (op)
+    {
+    case 0x88: return rm_w(false);
+    case 0x89: return rm_w(true);
+    case 0x8A: return r8(mr);
+    case 0x8B: return r16(mr);
+    case 0x8C: return rm_w(true);
+    case 0x8D: return r16(mr);
+    case 0x8F: return rm_w(true);
+    case 0x98: return r16(0);
+    case 0x99: return r16(2);
+    case 0x9F: return r8(4);
+    case 0xA0: return r8(0);
+    case 0xA1: return r16(0);
+    default: break;
+    }
+    if (op >= 0xB0 && op <= 0xB7)
+        return r8(op & 7);
+    if (op >= 0xB8 && op <= 0xBF)
+        return r16(op & 7);
+    if (op == 0xC0 || op == 0xC1 || (op >= 0xD0 && op <= 0xD3))
+        return rm_w(op & 1);
+    if (op == 0xF6 || op == 0xF7)
+        return mr <= 1 ? none() : (mr <= 3 ? rm_w(op & 1) : w);
+    if (op == 0xFE && mr <= 1)
+        return rm_w(false);
+    if (op == 0xFF && mr <= 1)
+        return rm_w(true);
+    if (op == 0xFF && mr == 6)
+        return none();
+    return w;
+}
+} // namespace jtx
+
+/**
+ * @brief Index range of the indexed jump/call at code[@p j] (n8).
+ *
+ * Walks the straight-line code before the jump and tracks the index
+ * register through `mov` copies (word and low byte) and `xchg`. A range guard counts
+ * only when it compares that register (word, or its low byte when the high
+ * byte is proven zero) with an immediate and the following jcc leaves the
+ * table only for in-range values:
+ *  - unsigned: ja/jae fall through, jbe/jb taken forward to the jump path;
+ *  - signed: jg/jge fall through, jle/jl taken (upper bound only; a
+ *    negative bound gives none);
+ *  - unsigned jbe/jb taken away from the jump keeps the old cap (imm+1 or
+ *    imm): nothing proves the slots past it.
+ * Bound = imm+1 (inclusive forms) or imm, minus any sub/add bias between the
+ * guard and the jump, halved when the compare is on the doubled offset.
+ * The guard must dominate the jump: no instruction between them (other than
+ * the guard's own taken target) is a direct branch target, the register is
+ * not rewritten in between, and no call/int intervenes. Without a guard the
+ * byte-source and `and` mask facts are still reported (old behavior).
+ */
+inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<size_t>& code, size_t j, uint8_t r0,
+                                                             uint8_t r1) const
+{
+    JtIndexRange out;
+    const std::vector<uint8_t>& img = *in_.image;
+    const uint32_t jlin = units_[code[j]].lin;
+    bool alias[8] = {};
+    alias[r0 & 7] = true;
+    if (r1 < 8)
+        alias[r1] = true;
+    int64_t bias_e = 0, bias_b = 0; // in element units / in byte-offset units
+    bool mask_byte = false;
+    bool need_set = false, need_ok = false; // fall-through broken at an unconditional transfer
+    uint32_t need = 0;
+    std::vector<uint32_t> seen{jlin};
+    bool guard = false, gbyte = false;
+    auto sx8 = [](uint8_t v) { return static_cast<int64_t>(static_cast<int8_t>(v)); };
+    for (size_t back = 1; back <= 12 && back <= j; ++back)
+    {
+        const EmitUnit& c = units_[code[j - back]];
+        const EmitUnit& nx = units_[code[j - back + 1]];
+        if (c.lin + c.size != nx.lin)
+            break;
+        const uint8_t* cb = img.data() + c.lin;
+        const uint32_t sz = c.size;
+        uint32_t p = 0;
+        while (p < sz && (cb[p] == 0x26 || cb[p] == 0x2E || cb[p] == 0x36 || cb[p] == 0x3E))
+            ++p;
+        if (p >= sz)
+            break;
+        const uint8_t op = cb[p];
+        const uint8_t m = p + 1 < sz ? cb[p + 1] : 0;
+        const bool mreg = p + 1 < sz && (m >> 6) == 3;
+        const uint8_t mr = (m >> 3) & 7;
+        // Control transfers.
+        const bool uncond = op == 0xEB || op == 0xE9 || op == 0xEA || op == 0xC3 || op == 0xCB || op == 0xC2 ||
+                            op == 0xCA || op == 0xCF || (op == 0xFF && p + 1 < sz && (mr == 4 || mr == 5));
+        if (uncond)
+        {
+            if (need_set || guard)
+                break;
+            need_set = true;
+            need = nx.lin;
+            continue;
+        }
+        if (op == 0xE8 || op == 0x9A || op == 0xCC || op == 0xCD || op == 0xCE ||
+            (op == 0xFF && p + 1 < sz && (mr == 2 || mr == 3)))
+            break;
+        const bool jcc8 = op >= 0x70 && op <= 0x7F && sz == p + 2;
+        const bool jcc16 = op == 0x0F && sz == p + 4 && (cb[p + 1] & 0xF0) == 0x80;
+        if (jcc8 || jcc16)
+        {
+            const uint32_t tgt = jcc8 ? c.lin + sz + static_cast<uint32_t>(sx8(cb[p + 1]))
+                                      : c.lin + sz + static_cast<uint32_t>(static_cast<int16_t>(cb[p + 2] | (cb[p + 3] << 8)));
+            if (need_set && !need_ok)
+            {
+                if ((tgt & 0xFFFF) != (need & 0xFFFF))
+                    break;
+                need_ok = true;
+            }
+            if (!guard)
+                seen.push_back(c.lin);
+            continue;
+        }
+        if (need_set && !need_ok)
+            break; // the block before an unconditional transfer is not on the path
+        const bool add_self = (op == 0x03 || op == 0x01) && mreg && mr == (m & 7);
+        // shl r,1 / add r,r on the index: scaled by 2.
+        if (sz == p + 2 && ((op == 0xD1 && (m & 0xF8) == 0xE0 && alias[m & 7]) || (add_self && alias[m & 7])))
+        {
+            if (guard)
+                break;
+            out.doubled = true;
+            seen.push_back(c.lin);
+            continue;
+        }
+        // High byte cleared: xor/sub r8h,r8h, mov r8h,0.
+        if (sz == p + 2 && (op == 0x32 || op == 0x30 || op == 0x2A || op == 0x28) && mreg && mr == (m & 7) && mr >= 4 &&
+            alias[mr & 3])
+        {
+            out.byte_idx = true;
+            if (!guard)
+                seen.push_back(c.lin);
+            continue;
+        }
+        if (sz == p + 2 && op >= 0xB4 && op <= 0xB7 && m == 0 && alias[op & 3])
+        {
+            out.byte_idx = true;
+            if (!guard)
+                seen.push_back(c.lin);
+            continue;
+        }
+        // Sources: lodsb, movzx r16,r/m8, cbw (byte-sized as before).
+        if ((op == 0xAC || op == 0x98) && sz == p + 1 && alias[0])
+        {
+            out.byte_idx = true;
+            break;
+        }
+        if (op == 0x0F && p + 2 < sz && cb[p + 1] == 0xB6 && alias[(cb[p + 2] >> 3) & 7])
+        {
+            out.byte_idx = true;
+            break;
+        }
+        // xchg r16, r16 (90+r with ax, or 87 /r): the registers swap roles.
+        if ((op >= 0x91 && op <= 0x97 && sz == p + 1) || (op == 0x87 && mreg && sz == p + 2))
+        {
+            const uint8_t ra = op == 0x87 ? mr : 0;
+            const uint8_t rb = op == 0x87 ? (m & 7) : (op & 7);
+            std::swap(alias[ra], alias[rb]);
+            if (!guard)
+                seen.push_back(c.lin);
+            continue;
+        }
+        // Register copies (word, or low byte to low byte).
+        if (mreg && sz == p + 2 && (op == 0x8B || op == 0x89 || op == 0x8A || op == 0x88))
+        {
+            const bool word = op & 1;
+            const uint8_t dst = (op & 2) ? mr : (m & 7);
+            const uint8_t src = (op & 2) ? (m & 7) : mr;
+            if (word ? alias[dst] : (dst < 4 && alias[dst]))
+            {
+                if (!word && src >= 4)
+                    break;
+                alias[dst] = false;
+                alias[src & 7] = true;
+                if (!guard)
+                    seen.push_back(c.lin);
+                continue;
+            }
+            if (!word && dst >= 4 && alias[dst & 3])
+                break; // high byte written
+        }
+        if (!guard)
+        {
+            // and r, imm: mask.
+            int64_t mk = -1;
+            bool mb = false;
+            if (op == 0x24 && sz == p + 2 && alias[0])
+                mk = cb[p + 1], mb = true;
+            else if (op == 0x25 && sz == p + 3 && alias[0])
+                mk = cb[p + 1] | (cb[p + 2] << 8);
+            else if (op == 0x80 && mreg && mr == 4 && sz == p + 3 && (m & 7) < 4 && alias[m & 7])
+                mk = cb[p + 2], mb = true;
+            else if (op == 0x83 && mreg && mr == 4 && sz == p + 3 && alias[m & 7])
+                mk = sx8(cb[p + 2]) & 0xFFFF;
+            else if (op == 0x81 && mreg && mr == 4 && sz == p + 4 && alias[m & 7])
+                mk = cb[p + 2] | (cb[p + 3] << 8);
+            if (mk >= 0)
+            {
+                if (out.mask < 0)
+                {
+                    // Before a later doubling: entries = mask+1; on the byte offset: mask/2+1.
+                    out.mask = out.doubled ? mk : (mk >> 1);
+                    mask_byte = mb;
+                }
+                seen.push_back(c.lin);
+                continue;
+            }
+            // sub/add r, imm: bias.
+            int64_t bi = 0;
+            bool isb = false;
+            if ((op == 0x2C || op == 0x04) && sz == p + 2 && alias[0])
+                bi = cb[p + 1], isb = true;
+            else if ((op == 0x2D || op == 0x05) && sz == p + 3 && alias[0])
+                bi = static_cast<int16_t>(cb[p + 1] | (cb[p + 2] << 8)), isb = true;
+            else if (op == 0x83 && mreg && (mr == 5 || mr == 0) && sz == p + 3 && alias[m & 7])
+                bi = sx8(cb[p + 2]), isb = true;
+            else if (op == 0x81 && mreg && (mr == 5 || mr == 0) && sz == p + 4 && alias[m & 7])
+                bi = static_cast<int16_t>(cb[p + 2] | (cb[p + 3] << 8)), isb = true;
+            else if (op == 0x80 && mreg && (mr == 5 || mr == 0) && sz == p + 3 && (m & 7) < 4 && alias[m & 7])
+                bi = cb[p + 2], isb = true;
+            if (isb)
+            {
+                const bool is_add = op == 0x04 || op == 0x05 || ((op & 0xFC) == 0x80 && mr == 0);
+                (out.doubled ? bias_e : bias_b) += is_add ? -bi : bi;
+                seen.push_back(c.lin);
+                continue;
+            }
+            // cmp r, imm followed by a range jcc.
+            int64_t imm = -1;
+            bool cbyte = false, ours = false;
+            if (op == 0x3C && sz == p + 2)
+                imm = cb[p + 1], cbyte = true, ours = alias[0];
+            else if (op == 0x3D && sz == p + 3)
+                imm = cb[p + 1] | (cb[p + 2] << 8), ours = alias[0];
+            else if (op == 0x80 && mreg && mr == 7 && sz == p + 3)
+                imm = cb[p + 2], cbyte = true, ours = (m & 7) < 4 && alias[m & 7];
+            else if (op == 0x83 && mreg && mr == 7 && sz == p + 3)
+                imm = sx8(cb[p + 2]) & 0xFFFF, ours = alias[m & 7];
+            else if (op == 0x81 && mreg && mr == 7 && sz == p + 4)
+                imm = cb[p + 2] | (cb[p + 3] << 8), ours = alias[m & 7];
+            if (imm >= 0 && ours)
+            {
+                const uint8_t* nb = img.data() + nx.lin;
+                uint8_t jo = 0;
+                uint32_t jt = 0;
+                if (nx.size == 2 && nb[0] >= 0x70 && nb[0] <= 0x7F)
+                    jo = nb[0], jt = nx.lin + 2 + static_cast<uint32_t>(sx8(nb[1]));
+                else if (nx.size == 4 && nb[0] == 0x0F && (nb[1] & 0xF0) == 0x80)
+                    jo = static_cast<uint8_t>(nb[1] - 0x10),
+                    jt = nx.lin + 4 + static_cast<uint32_t>(static_cast<int16_t>(nb[2] | (nb[3] << 8)));
+                const bool sgn = jo == 0x7F || jo == 0x7D || jo == 0x7E || jo == 0x7C;
+                const int64_t v = sgn ? (cbyte ? sx8(static_cast<uint8_t>(imm)) : static_cast<int16_t>(imm)) : imm;
+                const bool taken_ok = jt > nx.lin && jt <= jlin && (!need_set || jt == need);
+                int64_t bound = -1;
+                uint32_t taken = 0;
+                if ((jo == 0x77 || jo == 0x7F) && !need_set)
+                    bound = v + 1;
+                else if ((jo == 0x73 || jo == 0x7D) && !need_set)
+                    bound = v;
+                else if ((jo == 0x76 || jo == 0x7E || jo == 0x72 || jo == 0x7C) && taken_ok)
+                    bound = (jo == 0x76 || jo == 0x7E) ? v + 1 : v, taken = jt;
+                else if ((jo == 0x76 || jo == 0x72) && !need_set)
+                    // jbe/jb taken away from the jump: the fall-through has the
+                    // index above imm, so the slots it can reach are unknown.
+                    // Keep the pre-n8 cap (no dispatch evidence for more).
+                    bound = jo == 0x76 ? v + 1 : v;
+                if (jo == 0)
+                    break; // compare without a branch: not a guard, value unknown after
+                if (bound < 0 && (jo == 0x77 || jo == 0x73 || jo == 0x76 || jo == 0x72 || sgn))
+                    break; // a range jcc we cannot use: stop, keep no guard
+                if (bound >= 0)
+                {
+                    // Dominance: nothing after the jcc on the path is a direct branch target.
+                    const uint32_t from = taken ? taken : nx.lin + nx.size;
+                    bool dom = true;
+                    for (uint32_t l : seen)
+                        if (l >= from && l != taken && jt_xref_.count(l))
+                            dom = false;
+                    if (!dom)
+                        break;
+                    int64_t c0 = out.doubled ? bound - bias_e - bias_b / 2 : (bound - bias_b + 1) / 2;
+                    if (c0 > 0)
+                    {
+                        out.count = c0;
+                        guard = true;
+                        gbyte = cbyte;
+                        if (!gbyte || out.byte_idx)
+                            break;
+                        continue; // look further back for the cleared high byte
+                    }
+                    break;
+                }
+                // Another jcc (je/jne...): not a range guard; keep looking.
+                seen.push_back(c.lin);
+                continue;
+            }
+        }
+        const jtx::GprWrite w = jtx::gpr_write(cb, sz);
+        if (w.kind == 2 || (w.kind == 1 && alias[w.reg]))
+            break;
+        if (!guard)
+            seen.push_back(c.lin);
+    }
+    if (guard && gbyte && !out.byte_idx)
+        out.count = -1; // a byte compare bounds a word index only with the high byte zero
+    if (mask_byte && !out.byte_idx)
+        out.mask = -1;
+    return out;
+}
+
 /**
  * @brief Generic rule for `jmp|call [base+index+disp16]` (FF /2 /3 /4 /5,
  *        mod=10). `[disp16]` alone is a variable, not a table.
@@ -2615,109 +2962,20 @@ inline bool UasmEmitter::add_generic_table(const std::vector<size_t>& code, size
         jt_notes_.push_back(std::format("{:05X}: far table in a COM (segment is the load segment), not followed", u.lin));
         return true;
     }
-    // Index register(s) of the ModRM form.
+    // Index register(s) of the ModRM form. reg numbers: ax0 cx1 dx2 bx3 sp4 bp5 si6 di7
     static const uint8_t idx_regs[8][2] = {{3, 6}, {3, 7}, {5, 6}, {5, 7}, {6, 0xFF}, {7, 0xFF}, {5, 0xFF}, {3, 0xFF}};
-    // reg numbers: ax0 cx1 dx2 bx3 sp4 bp5 si6 di7
-    const uint8_t ir = idx_regs[rm][0];
-    int64_t count = -1;
-    bool byte_idx = false, doubled = false;
-    int64_t bias = 0;
-    int64_t mask = -1;
-    for (size_t back = 1; back <= 12 && back <= j; ++back)
+    const JtIndexRange ir = jt_index_range(code, j, idx_regs[rm][0], idx_regs[rm][1]);
+    int64_t count = ir.count;
+    const bool byte_idx = ir.byte_idx;
+    if (ir.mask >= 0)
     {
-        const EmitUnit& c = units_[code[j - back]];
-        const EmitUnit& nx = units_[code[j - back + 1]];
-        if (c.lin + c.size != nx.lin)
-            break;
-        const uint8_t* cb = img.data() + c.lin;
-        // shl r,1 / add r,r: the index was doubled after this point.
-        if (c.size == 2 && cb[0] == 0xD1 && (cb[1] & 0xF8) == 0xE0)
-        {
-            doubled = true;
-            continue;
-        }
-        if (c.size == 2 && (cb[0] == 0x03 || cb[0] == 0x01) && (cb[1] >> 6) == 3 && ((cb[1] >> 3) & 7) == (cb[1] & 7))
-        {
-            doubled = true;
-            continue;
-        }
-        // Byte-sized index: xor/sub r8h,r8h, mov r8h,0, lodsb, movzx, cbw.
-        if (c.size == 2 && (cb[0] == 0x32 || cb[0] == 0x30 || cb[0] == 0x2A || cb[0] == 0x28) && (cb[1] >> 6) == 3 &&
-            ((cb[1] >> 3) & 7) == (cb[1] & 7) && (cb[1] & 7) >= 4)
-            byte_idx = true;
-        if (c.size == 2 && cb[0] >= 0xB4 && cb[0] <= 0xB7 && cb[1] == 0)
-            byte_idx = true;
-        if (c.size == 1 && (cb[0] == 0xAC || cb[0] == 0x98))
-            byte_idx = true;
-        if (c.size == 3 && cb[0] == 0x0F && cb[1] == 0xB6)
-            byte_idx = true;
-        // and r, imm (mask bound).
-        if (mask < 0)
-        {
-            if (c.size == 2 && cb[0] == 0x24)
-                mask = cb[1];
-            else if (c.size == 3 && cb[0] == 0x25)
-                mask = cb[1] | (cb[2] << 8);
-            else if (c.size == 3 && cb[0] == 0x83 && (cb[1] & 0xF8) == 0xE0)
-                mask = cb[2];
-            else if (c.size == 4 && cb[0] == 0x81 && (cb[1] & 0xF8) == 0xE0)
-                mask = cb[2] | (cb[3] << 8);
-            // Seen before a later doubling: entries = mask+1. Seen after it
-            // (a mask on the byte offset): entries = mask/2+1.
-            if (mask >= 0 && !doubled)
-                mask = mask >> 1;
-        }
-        // sub r, imm / add r, imm between the guard and the jump.
-        if (count < 0)
-        {
-            if ((c.size == 3 && cb[0] == 0x83 && (cb[1] & 0xF8) == 0xE8) || (c.size == 2 && cb[0] == 0x2C))
-                bias += c.size == 2 ? cb[1] : cb[2];
-            else if (c.size == 3 && cb[0] == 0x2D)
-                bias += cb[1] | (cb[2] << 8);
-        }
-        int64_t imm = -1;
-        if (c.size == 3 && cb[0] == 0x83 && (cb[1] & 0xF8) == 0xF8)
-            imm = cb[2];
-        else if (c.size == 4 && cb[0] == 0x81 && (cb[1] & 0xF8) == 0xF8)
-            imm = cb[2] | (cb[3] << 8);
-        else if (c.size == 3 && cb[0] == 0x80 && (cb[1] & 0xF8) == 0xF8)
-            imm = cb[2];
-        else if (c.size == 2 && cb[0] == 0x3C)
-            imm = cb[1];
-        else if (c.size == 3 && cb[0] == 0x3D)
-            imm = cb[1] | (cb[2] << 8);
-        if (imm >= 0 && count < 0)
-        {
-            const uint8_t jo = img[nx.lin];
-            const uint32_t jt = nx.size == 2 ? nx.lin + 2 + static_cast<int8_t>(img[nx.lin + 1]) : 0;
-            int64_t c0 = -1;
-            if (jo == 0x77) // ja: fall-through reaches the table, 0..imm
-                c0 = imm + 1;
-            else if (jo == 0x73)
-                c0 = imm;
-            else if ((jo == 0x76 || jo == 0x72) && jt > nx.lin && jt <= u.lin) // taken path to the table
-                c0 = jo == 0x76 ? imm + 1 : imm;
-            if (c0 > 0)
-            {
-                c0 -= bias;
-                if (!doubled)
-                    c0 = (c0 + 1) / 2; // compare on the byte offset
-                if (c0 > 0)
-                    count = c0;
-            }
-            break;
-        }
-        (void)ir;
-    }
-    if (mask >= 0)
-    {
-        const int64_t mb = mask + 1;
+        const int64_t mb = ir.mask + 1;
         if (count < 0 || mb < count)
             count = mb;
     }
-    const bool guarded = count > 0 || mask >= 0;
+    const bool guarded = count > 0 || ir.mask >= 0;
     if (count < 0 && byte_idx)
-        count = doubled ? 256 : 128;
+        count = ir.doubled ? 256 : 128;
     if (count < 0 || count > 256)
         count = 256;
     const uint8_t disp_off = static_cast<uint8_t>(k + 2);

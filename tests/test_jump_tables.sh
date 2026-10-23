@@ -23,6 +23,11 @@
 #     next byte only a heuristic head decoded is promoted; a call target one
 #     byte before flow-proven code is not (the proven decode is kept).
 #  K1a-K1c, K2a, M1a, M1b, L1a, N1a-N1c, P1a-P1c: review repros (see the blocks at the end).
+#  G1-G11 (n8): index range guards. cmp/ja, cmp/jae, byte index (cmp al),
+#     scaled (compare on the doubled offset), jbe taken, signed jg, a guard
+#     smaller than the table; and no usable guard: another register, a branch
+#     between guard and jump, index rewritten, byte compare on a word index,
+#     a second dispatcher after a guarded one.
 # Every listing must rebuild byte-identical. Missing assembler: exit 77.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -1020,6 +1025,64 @@ check p1c_verified grep -q '^; VERIFIED identical' "$O"
 check p1c_two_entries grep -qE '^; jump tables: 1 generic table\(s\), 2 entries, 0 hole\(s\)' "$O"
 check p1c_no_false_code bash -c "! grep -qE '^    inc (cx|dx|bx)' '$O'"
 check p1c_rebuild same p1c_out.asm p1c.com bin
+
+# ---- G1-G9: index range guards (n8) ----
+# Six plausible entries; a dominating guard on the index register allows
+# fewer. The table stops at the guard's bound; with no usable guard the old
+# rule runs to the next boundary (6 entries).
+gtest() { # name expected_entries dispatch-lines...
+  local name=$1 want=$2; shift 2
+  {
+    echo "_TEXT segment para public use16 'CODE'"
+    echo "assume cs:_TEXT, ds:_TEXT"
+    echo "org 100h"
+    echo "start:"
+    echo "    mov si, offset prog"
+    echo "    mov bx, word ptr [si]"
+    printf '%s\n' "$@"
+    echo "    mov ax, 4C00h"
+    echo "    int 21h"
+    echo "def: ret"
+    for i in 0 1 2 3 4 5; do echo "h$i: mov al, $i"; echo "    ret"; done
+    echo "tbl dw h0, h1, h2, h3, h4, h5"
+    if [[ $name == g11 ]]; then echo "gtb dw h0, h1"; fi
+    echo "prog db 1, 0"
+    echo "_TEXT ends"
+    echo "end start"
+  } > "$TD/$name.asm"
+  asm "$name.asm" "$name.com"
+  lst "$name.com" "${name}_out.asm"
+  local O="$TD/${name}_out.asm"
+  check "${name}_verified" grep -q '^; VERIFIED identical' "$O"
+  check "${name}_${want}_entries" test "$(grep -c 'table word' "$O")" -eq "$want"
+  check "${name}_rebuild" same "${name}_out.asm" "$name.com" bin
+}
+# G1 cmp/ja (unsigned, inclusive): 0..2.
+gtest g1 3 "    cmp bx, 2" "    ja def" "    shl bx, 1" "    jmp word ptr [bx+tbl]"
+# G2 cmp/jae: 0..2.
+gtest g2 3 "    cmp bx, 3" "    jae def" "    shl bx, 1" "    jmp word ptr [bx+tbl]"
+# G3 byte index: compare on al, high byte cleared after the compare, copied to bx.
+gtest g3 3 "    lodsb" "    cmp al, 2" "    ja def" "    xor ah, ah" "    mov bx, ax" "    shl bx, 1" "    jmp word ptr [bx+tbl]"
+# G3b byte index, high byte cleared before the compare, jbe taken form.
+gtest g3b 3 "    lodsb" "    xor ah, ah" "    cmp al, 2" "    jbe ok3" "    jmp def" "ok3: mov bx, ax" "    shl bx, 1" "    jmp word ptr [bx+tbl]"
+# G4 scaled index: compare on the doubled offset (0, 2, 4).
+gtest g4 3 "    shl bx, 1" "    cmp bx, 4" "    ja def" "    jmp word ptr [bx+tbl]"
+# G5 guard bound smaller than the apparent table, jbe taken around a jmp.
+gtest g5 2 "    cmp bx, 1" "    jbe ok5" "    jmp def" "ok5: shl bx, 1" "    jmp word ptr [bx+tbl]"
+# G6 missing guard: the compare tests another register.
+gtest g6 6 "    cmp cx, 1" "    ja def" "    shl bx, 1" "    jmp word ptr [bx+tbl]"
+# G7 guard does not dominate: a branch enters between the guard and the jump.
+gtest g7 6 "    jmp skip7" "back7: cmp bx, 1" "    ja def" "mid7: shl bx, 1" "    jmp word ptr [bx+tbl]" "skip7: test si, si" "    jz back7" "    jmp mid7"
+# G8 signed compare (jg): upper bound 0..2.
+gtest g8 3 "    cmp bx, 2" "    jg def" "    shl bx, 1" "    jmp word ptr [bx+tbl]"
+# G9 index rewritten after the guard: the guard no longer applies.
+gtest g9 6 "    cmp bx, 1" "    ja def" "    mov bx, word ptr [si+2]" "    shl bx, 1" "    jmp word ptr [bx+tbl]"
+# G10 byte compare on a word index whose high byte is not cleared: no guard.
+gtest g10 6 "    cmp bl, 1" "    ja def" "    shl bx, 1" "    jmp word ptr [bx+tbl]"
+# G11 the old scan crossed into another path: a guarded table's compare
+# must not bound a second, unguarded dispatcher further down.
+# Expected: gtb 2 entries + tbl 6 (the old scan gave tbl 2).
+gtest g11 8 "    test si, si" "    jz nx11" "    cmp bx, 1" "    ja def" "    shl bx, 1" "    jmp word ptr [bx+gtb]" "nx11: mov bx, word ptr [si]" "    shl bx, 1" "    jmp word ptr [bx+tbl]"
 
 echo "---"
 echo "passed=$pass failed=$fail"
