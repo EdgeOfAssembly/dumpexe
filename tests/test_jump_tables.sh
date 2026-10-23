@@ -1199,6 +1199,35 @@ for spec in z1_cmp_then_mask_ja:1:com z1b_mask_cmp_guard:3:com z1c_far_mask_then
   [[ $kind == com ]] && check "${n}_rebuild" same "${n}_out.asm" "$in" bin
 done
 
+# N8 round 6: VERIFY3 repros3 (a1-a10f) plus b1/b2 (a non-flag writer
+# that touches the index between cmp and jcc voids the guard). Spec:
+# name:handlers:decoys:kind. Decoys > 0 only where the index is unbounded
+# and main c552a32/92e89c6 decodes the same slots (a5, a5e, a10*, b1, b2), or
+# where slot 8 is reachable through the mask gap (a6b: (x<=9)&0Ch, as main).
+# Handler counts below VERIFY3's R are documented under-counts (TODO.md).
+for spec in a1_two_masks_disjoint:1:0:com a2_mask0A_then_0F:11:0:com a3_guard7_mask0A:3:0:com \
+            a3b_guard6_mask05:6:0:com a3c_mask0A_guard7:3:0:com a3d_far_guard7_mask0A:3:0:far \
+            a4_mask7_sub2_guard3:4:0:com a4b_sub2_mask7_guard9:8:0:com a4c_mask0A_add1_guard9:10:0:com \
+            a4d_mask0A_dec_guard9:10:0:com a4e_add3_mask0A_guard9:9:0:com a4f_mask3_add8:4:0:com \
+            a5_mask_bl_only:12:4:com a5b_mask_bl_xorbh:4:0:com a5c_guard3_mask_bl0F:4:0:com \
+            a5d_cmp_bl3_ja:4:0:com a5e_mask_bh:12:4:com a6_two_masks_0C_06:5:0:com a6b_guard9_two_masks:5:4:com \
+            a7_mask_mov_di:4:0:com a7b_mov_di_then_mask_bx:4:0:com a7c_guard_bx_jmp_di:4:0:com \
+            a7d_mask_mov_di_cx:4:0:com a8_guard3_xor1:4:0:com a8b_guard3_or4:4:0:com a8c_mask3_xor8:4:0:com \
+            a8d_mask3_or_cx:4:0:com a9_jae4:4:0:com a9b_jb_over:4:0:com a9c_jb_lower_only:0:0:com \
+            a9d_mask7_jae4:4:0:com a9e_jae4_mask7:4:0:com a10_cmp_add_ja:12:4:com a10b_cmp_inc_ja:12:4:com \
+            a10c_cmp_mov_ja:4:0:com a10d_cmp_test_ja:12:4:com a10e_cmp_stc_ja:12:4:com \
+            a10f_mask_cmp_add_ja:8:0:com b1_cmp_xchg_ja:4:4:com b2_cmp_movbl_ja:4:4:com; do
+  IFS=: read -r n want dec kind <<<"$spec"
+  cp "$ROOT/tests/n8_syn/$n.asm" "$TD/$n.asm"
+  if [[ $kind == far ]]; then asmz "$n.asm" "$n.exe"; in=$n.exe; else asm "$n.asm" "$n.com"; in=$n.com; fi
+  lst "$in" "${n}_out.asm"
+  O="$TD/${n}_out.asm"
+  check "${n}_verified" grep -q '^; VERIFIED identical' "$O"
+  check "${n}_handlers_${want}" test "$(grep -cE '^ *mov al, ([0-9]|0[AB])h\b' "$O")" -eq "$want"
+  check "${n}_decoys_${dec}" test "$(grep -cE '^ *mov al, 7[0-3]h\b' "$O")" -eq "$dec"
+  [[ $kind == com ]] && check "${n}_rebuild" same "${n}_out.asm" "$in" bin
+done
+
 echo "---"
 echo "passed=$pass failed=$fail"
 [[ $fail -eq 0 ]]

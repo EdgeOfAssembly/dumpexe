@@ -2678,6 +2678,8 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
     std::vector<uint32_t> seen{jlin};
     bool guard = false, gbyte = false;
     uint32_t guard_cmp = 0;    // linear address of the guard's compare
+    bool masks_only = false;   // a compare whose flags were overwritten: later (earlier-in-code) guards are not trusted, masks still are
+    int64_t mask_bias_e = 0, mask_bias_b = 0, mask_bias_off = 0; // biases seen when the nearest mask was recorded
     int scales = 0;            // left scalings of the index since the last value reset (mask)
     bool scale_frozen = false; // a mask nearer the jump fixed the value range
     int64_t inv_first = -1;    // inverted guard: lowest index the path can carry
@@ -2854,6 +2856,13 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
                     // Highest byte offset (mask << shifts after it) over the entry size (M-b).
                     out.mask = (mk << shifts) >> unit_shift;
                     mask_byte = mb;
+                    mask_bias_e = bias_e, mask_bias_b = bias_b, mask_bias_off = bias_off;
+                }
+                else if (mb == mask_byte && bias_e == mask_bias_e && bias_b == mask_bias_b && bias_off == mask_bias_off)
+                {
+                    // Round 6: an `and` only clears bits, so two masks with no
+                    // bias between them intersect (a1: 0Ah & 05h).
+                    out.mask &= (mk << shifts) >> unit_shift;
                 }
                 scale_frozen = true;
                 masked = true;
@@ -2926,20 +2935,72 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
                 imm = cb[p + 2] | (cb[p + 3] << 8), ours = alias[m & 7];
             if (imm >= 0 && ours)
             {
-                const uint8_t* nb = img.data() + nx.lin;
+                // Round 6: instructions that write no flags (mov, lea, push/pop,
+                // xchg, nop) may sit between the compare and its jcc. The walk
+                // already checked they do not write the index (alias) registers;
+                // none of them may be a branch target.
+                size_t jk = j - back + 1;
+                bool gap_ok = true, idx_touch = false;
+                while (jk < j)
+                {
+                    const EmitUnit& u = units_[code[jk]];
+                    const uint8_t* ub = img.data() + u.lin;
+                    uint32_t q = 0;
+                    while (q < u.size && (ub[q] == 0x26 || ub[q] == 0x2E || ub[q] == 0x36 || ub[q] == 0x3E))
+                        ++q;
+                    if (q >= u.size)
+                        break;
+                    const uint8_t o = ub[q];
+                    const bool nonflag = (o >= 0x88 && o <= 0x8E) || (o >= 0xB0 && o <= 0xBF) || o == 0xC6 || o == 0xC7 ||
+                                         (o >= 0x50 && o <= 0x5F) || (o >= 0x90 && o <= 0x97) || o == 0x86 || o == 0x87 ||
+                                         o == 0x06 || o == 0x07 || o == 0x0E || o == 0x16 || o == 0x17 || o == 0x1E || o == 0x1F ||
+                                         o == 0x9C;
+                    if (!nonflag)
+                        break;
+                    if (jt_xref_.count(u.lin))
+                        gap_ok = false;
+                    // A non-flag writer that touches the index (any part, or
+                    // either xchg operand) voids the guard and every earlier mask.
+                    bool touch = false;
+                    if (o == 0x87 || o == 0x86)
+                    {
+                        const uint8_t xm = q + 1 < u.size ? ub[q + 1] : 0;
+                        const auto r16 = [&](uint8_t r) { return o == 0x86 ? static_cast<uint8_t>(r & 3) : r; };
+                        touch = alias[r16((xm >> 3) & 7)] || ((xm >> 6) == 3 && alias[r16(xm & 7)]) || (xm >> 6) != 3;
+                    }
+                    else if (o >= 0x91 && o <= 0x97)
+                        touch = alias[0] || alias[o & 7];
+                    else
+                    {
+                        const jtx::GprWrite gw = jtx::gpr_write(ub, u.size);
+                        touch = gw.kind == 2 || (gw.kind == 1 && alias[gw.reg]);
+                    }
+                    if (touch)
+                    {
+                        idx_touch = true;
+                        break;
+                    }
+                    ++jk;
+                }
+                if (idx_touch)
+                    break; // stop the walk: no guard, no mask from here on
+                const EmitUnit& jx = units_[code[jk]];
+                const uint8_t* nb = img.data() + jx.lin;
                 uint8_t jo = 0;
                 uint32_t jt = 0;
-                if (nx.size == 2 && nb[0] >= 0x70 && nb[0] <= 0x7F)
-                    jo = nb[0], jt = nx.lin + 2 + static_cast<uint32_t>(sx8(nb[1]));
-                else if (nx.size == 4 && nb[0] == 0x0F && (nb[1] & 0xF0) == 0x80)
+                if (!gap_ok || masks_only)
+                    ; // not a guard
+                else if (jx.size == 2 && nb[0] >= 0x70 && nb[0] <= 0x7F)
+                    jo = nb[0], jt = jx.lin + 2 + static_cast<uint32_t>(sx8(nb[1]));
+                else if (jx.size == 4 && nb[0] == 0x0F && (nb[1] & 0xF0) == 0x80)
                     jo = static_cast<uint8_t>(nb[1] - 0x10),
-                    jt = nx.lin + 4 + static_cast<uint32_t>(static_cast<int16_t>(nb[2] | (nb[3] << 8)));
+                    jt = jx.lin + 4 + static_cast<uint32_t>(static_cast<int16_t>(nb[2] | (nb[3] << 8)));
                 const bool sgn = jo == 0x7F || jo == 0x7D || jo == 0x7E || jo == 0x7C;
                 const int64_t v = sgn ? (cbyte ? sx8(static_cast<uint8_t>(imm)) : static_cast<int16_t>(imm)) : imm;
                 // L2: a taken guard needs an unconditional transfer before its
                 // target, else the fall-through reaches the jump too.
-                const bool taken_ok = jt > nx.lin && jt <= jlin && need_set && jt == need;
-                const bool away = jt <= nx.lin || jt > jlin;
+                const bool taken_ok = jt > jx.lin && jt <= jlin && need_set && jt == need;
+                const bool away = jt <= jx.lin || jt > jlin;
                 int64_t bound = -1;
                 uint32_t taken = 0;
                 if (sgn && cbyte)
@@ -2958,7 +3019,7 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
                     const int64_t lo = jo == 0x76 ? v + 1 : v;
                     bool dom = true;
                     for (uint32_t l : seen)
-                        if (l >= nx.lin + nx.size && jt_xref_.count(l))
+                        if (l >= jx.lin + jx.size && jt_xref_.count(l))
                             dom = false;
                     // M-a: a mask nearer the jump (x & m) can clear the bits
                     // that made the index large: the lower bound is lost.
@@ -2967,13 +3028,20 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
                     break;
                 }
                 if (jo == 0)
-                    break; // compare without a branch: not a guard, value unknown after
+                {
+                    // A compare whose flags are overwritten (or with no jcc):
+                    // not a guard. A compare changes no register, so keep
+                    // walking for masks only (a10f: `and 7; cmp 3; add cx,1; ja`).
+                    masks_only = true;
+                    seen.push_back(c.lin);
+                    continue;
+                }
                 if (bound < 0 && (jo == 0x77 || jo == 0x73 || jo == 0x76 || jo == 0x72 || sgn))
                     break; // a range jcc we cannot use: stop, keep no guard
                 if (bound >= 0)
                 {
                     // Dominance: nothing after the jcc on the path is a direct branch target.
-                    const uint32_t from = taken ? taken : nx.lin + nx.size;
+                    const uint32_t from = taken ? taken : jx.lin + jx.size;
                     bool dom = true;
                     for (uint32_t l : seen)
                         if (l >= from && l != taken && jt_xref_.count(l))
@@ -3029,7 +3097,17 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
     }
     if (out.count < 0 && inv_first > 0)
     {
-        out.first = inv_first; // M3: unguarded from the first reachable slot
+        // M3: unguarded from the first reachable slot. M2 still holds: never
+        // more than the pre-n8 cap; at or below the first slot, no table (a9c).
+        out.first = inv_first;
+        const int64_t lc = jt_legacy_count(code, j);
+        if (lc > 0)
+        {
+            if (lc > inv_first)
+                out.count = lc, out.legacy = true;
+            else
+                out.count = 0, out.first = 0; // every slot under main's cap is unreachable: no table
+        }
         return out;
     }
     if (out.count < 0 && !(masked && out.mask >= 0))
@@ -3042,6 +3120,8 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
         if (lc > 0)
             out.count = lc, out.legacy = true;
     }
+    if (out.count < 0 && out.mask == 0)
+        out.count = 1, out.first = 0; // masks with no common bit: only index 0 (a1); one slot, as z1
     if (out.count > 0 && out.mask >= 0)
     {
         // A bound and a mask: the index is at most count-1 and has only mask
@@ -3248,6 +3328,8 @@ inline bool UasmEmitter::add_generic_table(const std::vector<size_t>& code, size
     static const uint8_t idx_regs[8][2] = {{3, 6}, {3, 7}, {5, 6}, {5, 7}, {6, 0xFF}, {7, 0xFF}, {5, 0xFF}, {3, 0xFF}};
     const JtIndexRange ir = jt_index_range(code, j, idx_regs[rm][0], idx_regs[rm][1], far ? 2 : 1);
     int64_t count = ir.count;
+    if (count == 0)
+        return true; // no reachable slot (an inverted guard at or above the cap): leave it as data
     const bool byte_idx = ir.byte_idx;
     if (ir.mask >= 0)
     {
