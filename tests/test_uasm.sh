@@ -200,7 +200,7 @@ check aximm_cmp cmp_note aximm "$tmp/aximm.bin" "$tmp/aximm.com"
 check help_uasm grep -q -- '--uasm' "$tmp/help.txt"
 check help_no_disable bash -c "! grep -q -- '--no-uasm' '$tmp/help.txt'"
 "$BIN" -v >"$tmp/ver.txt"
-check version_244 grep -q '2.44' "$tmp/ver.txt"
+check version_245 grep -q '2.45' "$tmp/ver.txt"
 
 echo "uasm tests: $pass passed, $fail failed"
 if [[ "$fail" -ne 0 ]]; then

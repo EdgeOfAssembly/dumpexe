@@ -2644,12 +2644,17 @@ inline GprWrite gpr_write(const uint8_t* b, uint32_t n)
  * byte is proven zero) with an immediate and the following jcc leaves the
  * table only for in-range values:
  *  - unsigned: ja/jae fall through, jbe/jb taken forward to the jump path;
- *  - signed: jg/jge fall through, jle/jl taken (upper bound only; a
- *    negative bound gives none);
+ *  - signed: jg/jge fall through, jle/jl taken, word compares only
+ *    (upper bound only; a negative bound gives none). A signed compare on
+ *    the low byte gives no bound: bytes 80..FF are negative and pass;
  *  - unsigned jbe/jb taken away from the jump keeps the old cap (imm+1 or
  *    imm): nothing proves the slots past it.
  * Bound = imm+1 (inclusive forms) or imm, minus any sub/add bias between the
- * guard and the jump, halved when the compare is on the doubled offset.
+ * guard and the jump, scaled by the left shifts between the compare and the
+ * jump and divided by the entry size (2 near, 4 far). An `and` mask between
+ * the guard and the jump is the last value written: the guard (bound and
+ * first slot) is dropped and the mask alone decides. A word inc/dec/add/sub
+ * nearer the jump than `xor r8h,r8h` cancels the zero high byte.
  * The guard must dominate the jump: no instruction between them (other than
  * the guard's own taken target) is a direct branch target, the register is
  * not rewritten in between, and no call/int intervenes. Without a guard the
@@ -2674,6 +2679,11 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
     int scales = 0;            // left scalings of the index since the last value reset (mask)
     bool scale_frozen = false; // a mask nearer the jump fixed the value range
     int64_t inv_first = -1;    // inverted guard: lowest index the path can carry
+    int shifts = 0;            // left scalings seen so far between this point and the jump
+    int64_t bias_off = 0;      // total bias in byte-offset units (each bias scaled by the shifts after it)
+    bool masked = false;       // a mask nearer the jump rewrote the index: earlier guards no longer hold (M-a)
+    bool word_arith = false;   // inc/dec/add/sub on the word index nearer the jump: may carry into the high byte (L-c)
+    const int64_t unit = int64_t{1} << unit_shift; // entry size in bytes (2 near, 4 far)
     auto sx8 = [](uint8_t v) { return static_cast<int64_t>(static_cast<int8_t>(v)); };
     for (size_t back = 1; back <= 12 && back <= j; ++back)
     {
@@ -2735,6 +2745,7 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
                 out.rescaled = true;
             if (!guard)
             {
+                ++shifts;
                 out.doubled = true;
                 seen.push_back(c.lin);
             }
@@ -2750,14 +2761,14 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
         if (sz == p + 2 && (op == 0x32 || op == 0x30 || op == 0x2A || op == 0x28) && mreg && mr == (m & 7) && mr >= 4 &&
             alias[mr & 3])
         {
-            out.byte_idx = true;
+            out.byte_idx = out.byte_idx || !word_arith;
             if (!guard)
                 seen.push_back(c.lin);
             continue;
         }
         if (sz == p + 2 && op >= 0xB4 && op <= 0xB7 && m == 0 && alias[op & 3])
         {
-            out.byte_idx = true;
+            out.byte_idx = out.byte_idx || !word_arith;
             if (!guard)
                 seen.push_back(c.lin);
             continue;
@@ -2825,11 +2836,12 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
             {
                 if (out.mask < 0)
                 {
-                    // Before a later doubling: entries = mask+1; on the byte offset: mask/2+1.
-                    out.mask = out.doubled ? mk : (mk >> 1);
+                    // Highest byte offset (mask << shifts after it) over the entry size (M-b).
+                    out.mask = (mk << shifts) >> unit_shift;
                     mask_byte = mb;
                 }
                 scale_frozen = true;
+                masked = true;
                 seen.push_back(c.lin);
                 continue;
             }
@@ -2839,6 +2851,8 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
             if (op >= 0x40 && op <= 0x4F && sz == p + 1 && alias[op & 7])
             {
                 (out.doubled ? bias_e : bias_b) += op < 0x48 ? -1 : 1;
+                bias_off += (op < 0x48 ? -1 : 1) * (int64_t{1} << shifts);
+                word_arith = true;
                 seen.push_back(c.lin);
                 continue;
             }
@@ -2856,6 +2870,9 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
             {
                 const bool is_add = op == 0x04 || op == 0x05 || ((op & 0xFC) == 0x80 && mr == 0);
                 (out.doubled ? bias_e : bias_b) += is_add ? -bi : bi;
+                bias_off += (is_add ? -bi : bi) * (int64_t{1} << shifts);
+                if (op != 0x04 && op != 0x2C && op != 0x80)
+                    word_arith = true; // a word add/sub can carry into the high byte
                 seen.push_back(c.lin);
                 continue;
             }
@@ -2872,6 +2889,13 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
                 imm = sx8(cb[p + 2]) & 0xFFFF, ours = alias[m & 7];
             else if (op == 0x81 && mreg && mr == 7 && sz == p + 4)
                 imm = cb[p + 2] | (cb[p + 3] << 8), ours = alias[m & 7];
+            if (imm >= 0 && ours && masked)
+            {
+                // M-a: the mask nearer the jump is the last value written; a
+                // guard before it says nothing about the index (count or first).
+                seen.push_back(c.lin);
+                continue;
+            }
             if (imm >= 0 && ours)
             {
                 const uint8_t* nb = img.data() + nx.lin;
@@ -2890,7 +2914,9 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
                 const bool away = jt <= nx.lin || jt > jlin;
                 int64_t bound = -1;
                 uint32_t taken = 0;
-                if ((jo == 0x77 || jo == 0x7F) && !need_set)
+                if (sgn && cbyte)
+                    ; // L-a: a signed byte compare never bounds a zero-extended byte index (80..FF pass)
+                else if ((jo == 0x77 || jo == 0x7F) && !need_set)
                     bound = v + 1;
                 else if ((jo == 0x73 || jo == 0x7D) && !need_set)
                     bound = v;
@@ -2907,7 +2933,7 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
                         if (l >= nx.lin + nx.size && jt_xref_.count(l))
                             dom = false;
                     if (dom)
-                        inv_first = out.doubled ? lo : (lo + 1) / 2;
+                        inv_first = ((lo << shifts) + unit - 1) >> unit_shift;
                     break;
                 }
                 if (jo == 0)
@@ -2924,14 +2950,23 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
                             dom = false;
                     if (!dom)
                         break;
-                    int64_t c0 = out.doubled ? bound - bias_e - bias_b / 2 : (bound - bias_b + 1) / 2;
+                    // M-b: the compare sees the offset scaled by `shifts`; the
+                    // table step is `unit` bytes. Near tables keep the round-1 arithmetic.
+                    int64_t c0;
+                    if (unit_shift == 1)
+                        c0 = out.doubled ? bound - bias_e - bias_b / 2 : (bound - bias_b + 1) / 2;
+                    else
+                    {
+                        const int64_t top = (bound << shifts) - bias_off; // byte offsets below top
+                        c0 = top > 0 ? (top + unit - 1) >> unit_shift : 0;
+                    }
                     if (c0 > 0)
                     {
                         out.count = c0;
                         // L1: an add (negative bias) after the guard skips the low slots.
-                        const int64_t nb = out.doubled ? bias_e * 2 + bias_b : bias_b; // in bytes
+                        const int64_t nb = unit_shift == 1 ? (out.doubled ? bias_e * 2 + bias_b : bias_b) : bias_off; // in bytes
                         if (nb < 0)
-                            out.first = std::min<int64_t>((-nb) / 2, c0);
+                            out.first = std::min<int64_t>((-nb) >> unit_shift, c0);
                         guard = true;
                         gbyte = cbyte;
                         // Keep walking: an earlier scaling (M1) or a cleared high byte.
@@ -2965,8 +3000,9 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
         out.first = inv_first; // M3: unguarded from the first reachable slot
         return out;
     }
-    if (out.count < 0)
+    if (out.count < 0 && !(masked && out.mask >= 0))
     {
+        // M-a: a mask that superseded the guard is the bound; no legacy cap.
         // M2: a voided or missing guard never yields more than the pre-n8
         // cap (register-blind compare scan), so no slot main left as data
         // becomes an entry.

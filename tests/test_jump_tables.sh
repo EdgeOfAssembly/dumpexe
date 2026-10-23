@@ -29,6 +29,8 @@
 #     smaller than the table; and no usable guard: another register, a branch
 #     between guard and jump, index rewritten, byte compare on a word index,
 #     a second dispatcher after a guarded one.
+#  G12-G15 (n8 round 3): far table bound /4, mask after a guard, signed byte
+#     compare, word inc after xor bh,bh.
 # Every listing must rebuild byte-identical. Missing assembler: exit 77.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -1084,6 +1086,58 @@ gtest g10 2 "    cmp bl, 1" "    ja def" "    shl bx, 1" "    jmp word ptr [bx+t
 # must not bound a second, unguarded dispatcher further down.
 # Expected: gtb 2 + tbl 2: the voided guard keeps the pre-n8 cap (M2, round 2).
 gtest g11 4 "    test si, si" "    jz nx11" "    cmp bx, 1" "    ja def" "    shl bx, 1" "    jmp word ptr [bx+gtb]" "nx11: mov bx, word ptr [si]" "    shl bx, 1" "    jmp word ptr [bx+tbl]"
+
+# ---- n8 round 3 (review-e2ac48e) ----
+# G12 (M-b) far table, 4-byte entries: the compare on the offset after both
+# shl (0..0Ch) allows 4 entries, not 6 (the old code halved the bound).
+cat > "$TD/g12.asm" <<'ASM'
+CODE1 segment para public use16 'CODE'
+assume cs:CODE1
+start:
+    mov bx, word ptr cs:[idx]
+    shl bx, 1
+    shl bx, 1
+    cmp bx, 0Ch
+    ja out1
+    jmp dword ptr cs:[bx+ftbl]
+out1: mov ah, 4Ch
+    int 21h
+idx dw 1
+ftbl dd f0, f1, f2, f3, f4, f5
+CODE1 ends
+CODE2 segment para public use16 'CODE'
+assume cs:CODE2
+f0: mov al, 0
+    retf
+f1: mov al, 1
+    retf
+f2: mov al, 2
+    retf
+f3: mov al, 3
+    retf
+f4: mov al, 4
+    retf
+f5: mov al, 5
+    retf
+CODE2 ends
+STK segment para stack 'STACK'
+    db 256 dup (0)
+STK ends
+end start
+ASM
+asmz g12.asm g12.exe
+lst g12.exe g12_out.asm
+check g12_verified grep -q '^; VERIFIED identical' "$TD/g12_out.asm"
+check g12_far_4_handlers test "$(grep -cE '^    mov al, [0-5]h?\b' "$TD/g12_out.asm")" -eq 4
+# (no raw -mz rebuild check: as in J5, the MZ header differs; VERIFIED covers it)
+# G13 (M-a) a mask after an inverted guard is the last write: first 0, 4 entries.
+gtest g13 4 "    cmp bx, 5" "    jbe def" "    and bx, 3" "    shl bx, 1" "    jmp word ptr [bx+tbl]"
+# G14 (L-a) a signed compare on a zero-extended byte gives no bound (bl=80..FF
+# passes jg): not capped at 3; every handler word is kept.
+gtest g14 6 "    mov bl, byte ptr [si]" "    xor bh, bh" "    cmp bl, 2" "    jg def" "    shl bx, 1" "    jmp word ptr [bx+tbl]"
+# G15 (L-c) a word inc after xor bh,bh can carry into bh: the byte guard is
+# voided (pre-n8 cap 6, first 0) instead of bound 7 with first slot 1.
+gtest g15 6 "    mov bl, byte ptr [si]" "    xor bh, bh" "    cmp bl, 5" "    ja def" "    inc bx" "    shl bx, 1" "    jmp word ptr [bx+tbl]"
 
 # N8 round 2: verify repros (tests/n8_syn). Data slots d0..d3 are
 # `mov al, 70h..73h; ret`; none may be decoded as code (d1_jbe_to_next is
