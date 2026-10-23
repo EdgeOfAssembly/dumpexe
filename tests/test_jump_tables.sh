@@ -23,6 +23,7 @@
 #     next byte only a heuristic head decoded is promoted; a call target one
 #     byte before flow-proven code is not (the proven decode is kept).
 #  K1a-K1c, K2a, M1a, M1b, L1a, N1a-N1c, P1a-P1c: review repros (see the blocks at the end).
+#  N8 round 2: tests/n8_syn verify repros, data slots never decoded as code.
 #  G1-G11 (n8): index range guards. cmp/ja, cmp/jae, byte index (cmp al),
 #     scaled (compare on the doubled offset), jbe taken, signed jg, a guard
 #     smaller than the table; and no usable guard: another register, a branch
@@ -1070,19 +1071,35 @@ gtest g4 3 "    shl bx, 1" "    cmp bx, 4" "    ja def" "    jmp word ptr [bx+tb
 # G5 guard bound smaller than the apparent table, jbe taken around a jmp.
 gtest g5 2 "    cmp bx, 1" "    jbe ok5" "    jmp def" "ok5: shl bx, 1" "    jmp word ptr [bx+tbl]"
 # G6 missing guard: the compare tests another register.
-gtest g6 6 "    cmp cx, 1" "    ja def" "    shl bx, 1" "    jmp word ptr [bx+tbl]"
+gtest g6 2 "    cmp cx, 1" "    ja def" "    shl bx, 1" "    jmp word ptr [bx+tbl]"
 # G7 guard does not dominate: a branch enters between the guard and the jump.
-gtest g7 6 "    jmp skip7" "back7: cmp bx, 1" "    ja def" "mid7: shl bx, 1" "    jmp word ptr [bx+tbl]" "skip7: test si, si" "    jz back7" "    jmp mid7"
+gtest g7 2 "    jmp skip7" "back7: cmp bx, 1" "    ja def" "mid7: shl bx, 1" "    jmp word ptr [bx+tbl]" "skip7: test si, si" "    jz back7" "    jmp mid7"
 # G8 signed compare (jg): upper bound 0..2.
 gtest g8 3 "    cmp bx, 2" "    jg def" "    shl bx, 1" "    jmp word ptr [bx+tbl]"
 # G9 index rewritten after the guard: the guard no longer applies.
-gtest g9 6 "    cmp bx, 1" "    ja def" "    mov bx, word ptr [si+2]" "    shl bx, 1" "    jmp word ptr [bx+tbl]"
+gtest g9 2 "    cmp bx, 1" "    ja def" "    mov bx, word ptr [si+2]" "    shl bx, 1" "    jmp word ptr [bx+tbl]"
 # G10 byte compare on a word index whose high byte is not cleared: no guard.
-gtest g10 6 "    cmp bl, 1" "    ja def" "    shl bx, 1" "    jmp word ptr [bx+tbl]"
+gtest g10 2 "    cmp bl, 1" "    ja def" "    shl bx, 1" "    jmp word ptr [bx+tbl]"
 # G11 the old scan crossed into another path: a guarded table's compare
 # must not bound a second, unguarded dispatcher further down.
-# Expected: gtb 2 entries + tbl 6 (the old scan gave tbl 2).
-gtest g11 8 "    test si, si" "    jz nx11" "    cmp bx, 1" "    ja def" "    shl bx, 1" "    jmp word ptr [bx+gtb]" "nx11: mov bx, word ptr [si]" "    shl bx, 1" "    jmp word ptr [bx+tbl]"
+# Expected: gtb 2 + tbl 2: the voided guard keeps the pre-n8 cap (M2, round 2).
+gtest g11 4 "    test si, si" "    jz nx11" "    cmp bx, 1" "    ja def" "    shl bx, 1" "    jmp word ptr [bx+gtb]" "nx11: mov bx, word ptr [si]" "    shl bx, 1" "    jmp word ptr [bx+tbl]"
+
+# N8 round 2: verify repros (tests/n8_syn). Data slots d0..d3 are
+# `mov al, 70h..73h; ret`; none may be decoded as code (d1_jbe_to_next is
+# open: 4 false, same as main c552a32, see TODO.md).
+for spec in a1_double_shl:0 a5_add_self_shl:0 a4_shl_cmp_shl:0 e1_si_double:0 \
+            h1_inc_after_TD:0 h2_cmp_other_reg_TD:0 d2_land_at_jump:0 d3_land_mid:0 \
+            a2_add_bias:0 e2_si_addbias:0 a3_inverted_jb:0 e3_di_invjb:0 c10_lodsb_hi:0 \
+            d1_jbe_to_next:4; do
+  n=${spec%%:*}; want=${spec##*:}
+  cp "$ROOT/tests/n8_syn/$n.asm" "$TD/$n.asm"
+  asm "$n.asm" "$n.com"
+  lst "$n.com" "${n}_out.asm"
+  check "${n}_verified" grep -q '^; VERIFIED identical' "$TD/${n}_out.asm"
+  check "${n}_false_${want}" test "$(grep -cE 'mov al, 7[0-3]h' "$TD/${n}_out.asm")" -eq "$want"
+  check "${n}_rebuild" same "${n}_out.asm" "$n.com" bin
+done
 
 echo "---"
 echo "passed=$pass failed=$fail"

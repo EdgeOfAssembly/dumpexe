@@ -244,10 +244,14 @@ private:
         int64_t mask = -1;    ///< entries-1 an `and` mask allows, or -1
         bool byte_idx = false; ///< the index register holds a zero-extended byte
         bool doubled = false;  ///< scaled by 2 between the guard (or source) and the jump
+        bool rescaled = false; ///< scaled more than once (stride above one slot): only slot 0 is proven
+        int64_t first = 0;     ///< first reachable slot (add bias, inverted guard)
+        bool legacy = false;   ///< count is the pre-n8 cap (voided guard fallback)
     };
-    JtIndexRange jt_index_range(const std::vector<size_t>& code, size_t j, uint8_t r0, uint8_t r1) const;
+    int64_t jt_legacy_count(const std::vector<size_t>& code, size_t j) const;
+    JtIndexRange jt_index_range(const std::vector<size_t>& code, size_t j, uint8_t r0, uint8_t r1, int unit_shift = 1) const;
     void jt_table(uint32_t T, int64_t fr, int64_t count, bool far, bool hinted, size_t unit_idx, uint8_t disp_off,
-                  bool guarded = false, bool byte_bounded = false);
+                  bool guarded = false, bool byte_bounded = false, int64_t first = 0);
     void jt_direct_targets(const std::vector<size_t>& code);
     bool jt_ready_ = false;
     std::set<uint32_t> jt_bounds_;   ///< code starts, labels, data-load addresses
@@ -1009,11 +1013,13 @@ inline void UasmEmitter::add_value_refs()
             const uint32_t disp = b[k] | (b[k + 1] << 8);
             // Bound: a dominating range guard on the index register (n8;
             // see jt_index_range). Only the [bx+T] form is scanned here.
-            int64_t count = -1;
+            int64_t count = -1, first = 0;
             if (!csp || (b[2] & 7) == 7)
             {
                 jt_prepare();
-                count = jt_index_range(code, j, 3, 0xFF).count;
+                const JtIndexRange ir = jt_index_range(code, j, 3, 0xFF);
+                count = ir.count;
+                first = ir.first;
             }
             // Value-mask bound (FP emulator; see mask_bound). It is a proven
             // upper bound, so with a compare bound too the smaller one wins.
@@ -1029,7 +1035,9 @@ inline void UasmEmitter::add_value_refs()
                 bool ok = in_data(T, static_cast<uint32_t>(count * 2));
                 std::vector<uint32_t> tg;
                 std::vector<uint32_t> undecoded;
-                for (int64_t e = 0; ok && e < count; ++e)
+                if (first >= count)
+                    ok = false;
+                for (int64_t e = first; ok && e < count; ++e)
                 {
                     const uint32_t at = T + static_cast<uint32_t>(e * 2);
                     if (in_.reloc_at.count(at) || in_.reloc_at.count(at + 1) ||
@@ -1087,7 +1095,7 @@ inline void UasmEmitter::add_value_refs()
                     r.frame = static_cast<uint32_t>(fr);
                     u.refs.push_back(r);
                     for (size_t e = 0; e < tg.size(); ++e)
-                        off_words_[T + static_cast<uint32_t>(e * 2)] = {tg[e], static_cast<uint32_t>(fr)};
+                        off_words_[T + static_cast<uint32_t>((e + first) * 2)] = {tg[e], static_cast<uint32_t>(fr)};
                     auto_names_.emplace(T, std::format("jt_{:05X}", T));
                     ++n_tables_;
                 }
@@ -2328,7 +2336,7 @@ inline bool UasmEmitter::jt_clean(uint32_t t, uint32_t fr, int* insns, int* know
  *        invalid entries in a row end the table.
  */
 inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool far, bool hinted, size_t unit_idx,
-                                  uint8_t disp_off, bool guarded, bool byte_bounded)
+                                  uint8_t disp_off, bool guarded, bool byte_bounded, int64_t first)
 {
     const std::vector<uint8_t>& img = *in_.image;
     const uint32_t n = static_cast<uint32_t>(img.size());
@@ -2383,7 +2391,7 @@ inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool fa
     const bool hole_rule = !guarded && !hinted && !far;
     bool after_hole = false, any_hole = false, filled = true;
     size_t first_hole = 0;
-    for (uint32_t at = T; at + esz <= end; at += esz)
+    for (uint32_t at = T + static_cast<uint32_t>(first) * esz; at + esz <= end; at += esz)
     {
         if (!in_.com && (in_.reloc_at.count(at) || (!far && in_.reloc_at.count(at + 1))))
         {
@@ -2648,7 +2656,7 @@ inline GprWrite gpr_write(const uint8_t* b, uint32_t n)
  * byte-source and `and` mask facts are still reported (old behavior).
  */
 inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<size_t>& code, size_t j, uint8_t r0,
-                                                             uint8_t r1) const
+                                                             uint8_t r1, int unit_shift) const
 {
     JtIndexRange out;
     const std::vector<uint8_t>& img = *in_.image;
@@ -2663,6 +2671,9 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
     uint32_t need = 0;
     std::vector<uint32_t> seen{jlin};
     bool guard = false, gbyte = false;
+    int scales = 0;            // left scalings of the index since the last value reset (mask)
+    bool scale_frozen = false; // a mask nearer the jump fixed the value range
+    int64_t inv_first = -1;    // inverted guard: lowest index the path can carry
     auto sx8 = [](uint8_t v) { return static_cast<int64_t>(static_cast<int8_t>(v)); };
     for (size_t back = 1; back <= 12 && back <= j; ++back)
     {
@@ -2715,13 +2726,25 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
             break; // the block before an unconditional transfer is not on the path
         const bool add_self = (op == 0x03 || op == 0x01) && mreg && mr == (m & 7);
         // shl r,1 / add r,r on the index: scaled by 2.
+        // Any further left scaling (a second shl/add self, before or after
+        // the compare) gives a stride above one slot (M1): only slot 0 is
+        // proven. shl r,imm8 counts imm8 times; shl r,cl is unknown.
         if (sz == p + 2 && ((op == 0xD1 && (m & 0xF8) == 0xE0 && alias[m & 7]) || (add_self && alias[m & 7])))
         {
-            if (guard)
-                break;
-            out.doubled = true;
-            seen.push_back(c.lin);
+            if (!scale_frozen && ++scales > unit_shift)
+                out.rescaled = true;
+            if (!guard)
+            {
+                out.doubled = true;
+                seen.push_back(c.lin);
+            }
             continue;
+        }
+        if (mreg && alias[m & 7] && (m & 0x38) == 0x20 && ((op == 0xC1 && sz == p + 3) || (op == 0xD3 && sz == p + 2)))
+        {
+            if (!scale_frozen)
+                out.rescaled = true;
+            break;
         }
         // High byte cleared: xor/sub r8h,r8h, mov r8h,0.
         if (sz == p + 2 && (op == 0x32 || op == 0x30 || op == 0x2A || op == 0x28) && mreg && mr == (m & 7) && mr >= 4 &&
@@ -2739,8 +2762,12 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
                 seen.push_back(c.lin);
             continue;
         }
-        // Sources: lodsb, movzx r16,r/m8, cbw (byte-sized as before).
-        if ((op == 0xAC || op == 0x98) && sz == p + 1 && alias[0])
+        // Sources: lodsb leaves AH as it was (L4): the value source, but a
+        // byte only when the high byte is cleared nearer the jump. cbw is
+        // kept byte-sized as before.
+        if (op == 0xAC && sz == p + 1 && alias[0])
+            break;
+        if (op == 0x98 && sz == p + 1 && alias[0])
         {
             out.byte_idx = true;
             break;
@@ -2802,12 +2829,19 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
                     out.mask = out.doubled ? mk : (mk >> 1);
                     mask_byte = mb;
                 }
+                scale_frozen = true;
                 seen.push_back(c.lin);
                 continue;
             }
-            // sub/add r, imm: bias.
+            // sub/add r, imm and inc/dec r: bias.
             int64_t bi = 0;
             bool isb = false;
+            if (op >= 0x40 && op <= 0x4F && sz == p + 1 && alias[op & 7])
+            {
+                (out.doubled ? bias_e : bias_b) += op < 0x48 ? -1 : 1;
+                seen.push_back(c.lin);
+                continue;
+            }
             if ((op == 0x2C || op == 0x04) && sz == p + 2 && alias[0])
                 bi = cb[p + 1], isb = true;
             else if ((op == 0x2D || op == 0x05) && sz == p + 3 && alias[0])
@@ -2850,7 +2884,10 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
                     jt = nx.lin + 4 + static_cast<uint32_t>(static_cast<int16_t>(nb[2] | (nb[3] << 8)));
                 const bool sgn = jo == 0x7F || jo == 0x7D || jo == 0x7E || jo == 0x7C;
                 const int64_t v = sgn ? (cbyte ? sx8(static_cast<uint8_t>(imm)) : static_cast<int16_t>(imm)) : imm;
-                const bool taken_ok = jt > nx.lin && jt <= jlin && (!need_set || jt == need);
+                // L2: a taken guard needs an unconditional transfer before its
+                // target, else the fall-through reaches the jump too.
+                const bool taken_ok = jt > nx.lin && jt <= jlin && need_set && jt == need;
+                const bool away = jt <= nx.lin || jt > jlin;
                 int64_t bound = -1;
                 uint32_t taken = 0;
                 if ((jo == 0x77 || jo == 0x7F) && !need_set)
@@ -2859,11 +2896,20 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
                     bound = v;
                 else if ((jo == 0x76 || jo == 0x7E || jo == 0x72 || jo == 0x7C) && taken_ok)
                     bound = (jo == 0x76 || jo == 0x7E) ? v + 1 : v, taken = jt;
-                else if ((jo == 0x76 || jo == 0x72) && !need_set)
-                    // jbe/jb taken away from the jump: the fall-through has the
-                    // index above imm, so the slots it can reach are unknown.
-                    // Keep the pre-n8 cap (no dispatch evidence for more).
-                    bound = jo == 0x76 ? v + 1 : v;
+                else if ((jo == 0x76 || jo == 0x72) && !need_set && away && bias_e == 0 && bias_b == 0)
+                {
+                    // M3: jbe/jb taken away from the jump: the path carries an
+                    // index above (jbe) or at least (jb) imm. Slots below are
+                    // unreachable; no upper bound.
+                    const int64_t lo = jo == 0x76 ? v + 1 : v;
+                    bool dom = true;
+                    for (uint32_t l : seen)
+                        if (l >= nx.lin + nx.size && jt_xref_.count(l))
+                            dom = false;
+                    if (dom)
+                        inv_first = out.doubled ? lo : (lo + 1) / 2;
+                    break;
+                }
                 if (jo == 0)
                     break; // compare without a branch: not a guard, value unknown after
                 if (bound < 0 && (jo == 0x77 || jo == 0x73 || jo == 0x76 || jo == 0x72 || sgn))
@@ -2882,11 +2928,14 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
                     if (c0 > 0)
                     {
                         out.count = c0;
+                        // L1: an add (negative bias) after the guard skips the low slots.
+                        const int64_t nb = out.doubled ? bias_e * 2 + bias_b : bias_b; // in bytes
+                        if (nb < 0)
+                            out.first = std::min<int64_t>((-nb) / 2, c0);
                         guard = true;
                         gbyte = cbyte;
-                        if (!gbyte || out.byte_idx)
-                            break;
-                        continue; // look further back for the cleared high byte
+                        // Keep walking: an earlier scaling (M1) or a cleared high byte.
+                        continue;
                     }
                     break;
                 }
@@ -2902,10 +2951,140 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
             seen.push_back(c.lin);
     }
     if (guard && gbyte && !out.byte_idx)
-        out.count = -1; // a byte compare bounds a word index only with the high byte zero
+        out.count = -1, out.first = 0; // a byte compare bounds a word index only with the high byte zero
     if (mask_byte && !out.byte_idx)
         out.mask = -1;
+    if (out.rescaled)
+    {
+        // Stride above one slot: only slot 0 (index 0) is proven reachable.
+        out.count = 1, out.first = 0, out.mask = -1;
+        return out;
+    }
+    if (out.count < 0 && inv_first > 0)
+    {
+        out.first = inv_first; // M3: unguarded from the first reachable slot
+        return out;
+    }
+    if (out.count < 0)
+    {
+        // M2: a voided or missing guard never yields more than the pre-n8
+        // cap (register-blind compare scan), so no slot main left as data
+        // becomes an entry.
+        const int64_t lc = jt_legacy_count(code, j);
+        if (lc > 0)
+            out.count = lc, out.legacy = true;
+    }
     return out;
+}
+
+/**
+ * @brief Pre-n8 compare cap (main c552a32), the smaller of the generic and
+ *        P4 scans: the first `cmp r, imm` + ja/jae/jbe/jb within 12 (8)
+ *        contiguous instructions, any register. Only a ceiling for a
+ *        voided guard (see jt_index_range); -1 when none.
+ */
+inline int64_t UasmEmitter::jt_legacy_count(const std::vector<size_t>& code, size_t j) const
+{
+    const std::vector<uint8_t>& img = *in_.image;
+    auto imm_of = [](const EmitUnit& c, const uint8_t* cb) -> int64_t
+    {
+        if (c.size == 3 && cb[0] == 0x83 && (cb[1] & 0xF8) == 0xF8)
+            return cb[2];
+        if (c.size == 4 && cb[0] == 0x81 && (cb[1] & 0xF8) == 0xF8)
+            return cb[2] | (cb[3] << 8);
+        if (c.size == 3 && cb[0] == 0x80 && (cb[1] & 0xF8) == 0xF8)
+            return cb[2];
+        if (c.size == 2 && cb[0] == 0x3C)
+            return cb[1];
+        if (c.size == 3 && cb[0] == 0x3D)
+            return cb[1] | (cb[2] << 8);
+        return -1;
+    };
+    const uint32_t jlin = units_[code[j]].lin;
+    // Old generic scan.
+    int64_t g = -1;
+    {
+        bool doubled = false;
+        int64_t bias = 0;
+        for (size_t back = 1; back <= 12 && back <= j; ++back)
+        {
+            const EmitUnit& c = units_[code[j - back]];
+            const EmitUnit& nx = units_[code[j - back + 1]];
+            if (c.lin + c.size != nx.lin)
+                break;
+            const uint8_t* cb = img.data() + c.lin;
+            if (c.size == 2 && cb[0] == 0xD1 && (cb[1] & 0xF8) == 0xE0)
+            {
+                doubled = true;
+                continue;
+            }
+            if (c.size == 2 && (cb[0] == 0x03 || cb[0] == 0x01) && (cb[1] >> 6) == 3 && ((cb[1] >> 3) & 7) == (cb[1] & 7))
+            {
+                doubled = true;
+                continue;
+            }
+            if ((c.size == 3 && cb[0] == 0x83 && (cb[1] & 0xF8) == 0xE8) || (c.size == 2 && cb[0] == 0x2C))
+                bias += c.size == 2 ? cb[1] : cb[2];
+            else if (c.size == 3 && cb[0] == 0x2D)
+                bias += cb[1] | (cb[2] << 8);
+            const int64_t imm = imm_of(c, cb);
+            if (imm < 0)
+                continue;
+            const uint8_t jo = img[nx.lin];
+            const uint32_t jt = nx.size == 2 ? nx.lin + 2 + static_cast<uint32_t>(static_cast<int8_t>(img[nx.lin + 1])) : 0;
+            int64_t c0 = -1;
+            if (jo == 0x77)
+                c0 = imm + 1;
+            else if (jo == 0x73)
+                c0 = imm;
+            else if ((jo == 0x76 || jo == 0x72) && jt > nx.lin && jt <= jlin)
+                c0 = jo == 0x76 ? imm + 1 : imm;
+            if (c0 > 0)
+            {
+                c0 -= bias;
+                if (!doubled)
+                    c0 = (c0 + 1) / 2;
+                if (c0 > 0)
+                    g = c0;
+            }
+            break;
+        }
+    }
+    // Old P4 scan ([bx+T] only).
+    int64_t q = -1;
+    {
+        const uint8_t* b = img.data() + units_[code[j]].lin;
+        const uint32_t usz = units_[code[j]].size;
+        const bool bx = (usz == 4 && b[0] == 0xFF && b[1] == 0xA7) || (usz == 5 && b[0] == 0x2E && b[1] == 0xFF && (b[2] & 7) == 7);
+        bool dbl = false;
+        for (size_t back = 1; bx && q < 0 && back <= 8 && back <= j; ++back)
+        {
+            const EmitUnit& c = units_[code[j - back]];
+            const EmitUnit& nx = units_[code[j - back + 1]];
+            if (c.lin + c.size != nx.lin)
+                break;
+            const uint8_t* cb = img.data() + c.lin;
+            if (c.size == 2 && ((cb[0] == 0xD1 && cb[1] == 0xE3) || ((cb[0] == 0x03 || cb[0] == 0x01) && cb[1] == 0xDB)))
+            {
+                dbl = true;
+                continue;
+            }
+            const int64_t imm = imm_of(c, cb);
+            if (imm < 0)
+                continue;
+            const uint8_t jo = img[nx.lin];
+            if (jo == 0x77 || jo == 0x76)
+                q = imm + 1;
+            else if (jo == 0x73 || jo == 0x72)
+                q = imm;
+            if (q > 0 && !dbl)
+                q = (q + 1) / 2;
+            break;
+        }
+    }
+    if (g > 0 && q > 0)
+        return std::min(g, q);
+    return g > 0 ? g : q;
 }
 
 /**
@@ -2964,7 +3143,7 @@ inline bool UasmEmitter::add_generic_table(const std::vector<size_t>& code, size
     }
     // Index register(s) of the ModRM form. reg numbers: ax0 cx1 dx2 bx3 sp4 bp5 si6 di7
     static const uint8_t idx_regs[8][2] = {{3, 6}, {3, 7}, {5, 6}, {5, 7}, {6, 0xFF}, {7, 0xFF}, {5, 0xFF}, {3, 0xFF}};
-    const JtIndexRange ir = jt_index_range(code, j, idx_regs[rm][0], idx_regs[rm][1]);
+    const JtIndexRange ir = jt_index_range(code, j, idx_regs[rm][0], idx_regs[rm][1], far ? 2 : 1);
     int64_t count = ir.count;
     const bool byte_idx = ir.byte_idx;
     if (ir.mask >= 0)
@@ -2979,7 +3158,7 @@ inline bool UasmEmitter::add_generic_table(const std::vector<size_t>& code, size
     if (count < 0 || count > 256)
         count = 256;
     const uint8_t disp_off = static_cast<uint8_t>(k + 2);
-    jt_table(static_cast<uint32_t>(tbase + disp), fr, count, far, false, ui, disp_off, guarded, byte_idx);
+    jt_table(static_cast<uint32_t>(tbase + disp), fr, count, far, false, ui, disp_off, guarded, byte_idx, ir.first);
     return true;
 }
 
