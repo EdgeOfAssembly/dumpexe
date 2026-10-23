@@ -1155,6 +1155,27 @@ for spec in a1_double_shl:0 a5_add_self_shl:0 a4_shl_cmp_shl:0 e1_si_double:0 \
   check "${n}_rebuild" same "${n}_out.asm" "$n.com" bin
 done
 
+# verify-5333adb HIGH: an upper guard before a wider `and` mask still bounds
+# the table (count = min(guard, mask+1)). spec name:real-entries; data slots
+# d0..d3 (mov al, 70h..73h) must stay data.
+for spec in y11_guard_mask_wider:3 y12_guard1_mask3:2 y13_guard_jae_mask:2 y14_byte_guard_mask:3; do
+  n=${spec%%:*}; want=${spec##*:}
+  cp "$ROOT/tests/n8_syn/$n.asm" "$TD/$n.asm"
+  asm "$n.asm" "$n.com"
+  lst "$n.com" "${n}_out.asm"
+  check "${n}_verified" grep -q '^; VERIFIED identical' "$TD/${n}_out.asm"
+  check "${n}_${want}_entries" test "$(grep -c 'table word' "$TD/${n}_out.asm")" -eq "$want"
+  check "${n}_false_0" test "$(grep -cE 'mov al, 7[0-3]h' "$TD/${n}_out.asm")" -eq 0
+  check "${n}_rebuild" same "${n}_out.asm" "$n.com" bin
+done
+# y15: the same on a far table (4-byte entries): 2 handlers, no false slot.
+cp "$ROOT/tests/n8_syn/y15_far_guard_mask.asm" "$TD/y15.asm"
+asmz y15.asm y15.exe
+lst y15.exe y15_out.asm
+check y15_verified grep -q '^; VERIFIED identical' "$TD/y15_out.asm"
+check y15_far_2_handlers test "$(grep -cE '^    mov al, [01]h?\b' "$TD/y15_out.asm")" -eq 2
+check y15_false_0 test "$(grep -cE 'mov al, 7[0-3]h' "$TD/y15_out.asm")" -eq 0
+
 echo "---"
 echo "passed=$pass failed=$fail"
 [[ $fail -eq 0 ]]

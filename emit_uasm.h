@@ -251,7 +251,7 @@ private:
     int64_t jt_legacy_count(const std::vector<size_t>& code, size_t j) const;
     JtIndexRange jt_index_range(const std::vector<size_t>& code, size_t j, uint8_t r0, uint8_t r1, int unit_shift = 1) const;
     void jt_table(uint32_t T, int64_t fr, int64_t count, bool far, bool hinted, size_t unit_idx, uint8_t disp_off,
-                  bool guarded = false, bool byte_bounded = false, int64_t first = 0);
+                  bool guarded = false, int64_t first = 0);
     void jt_direct_targets(const std::vector<size_t>& code);
     bool jt_ready_ = false;
     std::set<uint32_t> jt_bounds_;   ///< code starts, labels, data-load addresses
@@ -2336,7 +2336,7 @@ inline bool UasmEmitter::jt_clean(uint32_t t, uint32_t fr, int* insns, int* know
  *        invalid entries in a row end the table.
  */
 inline void UasmEmitter::jt_table(uint32_t T, int64_t fr, int64_t count, bool far, bool hinted, size_t unit_idx,
-                                  uint8_t disp_off, bool guarded, bool byte_bounded, int64_t first)
+                                  uint8_t disp_off, bool guarded, int64_t first)
 {
     const std::vector<uint8_t>& img = *in_.image;
     const uint32_t n = static_cast<uint32_t>(img.size());
@@ -2652,8 +2652,8 @@ inline GprWrite gpr_write(const uint8_t* b, uint32_t n)
  * Bound = imm+1 (inclusive forms) or imm, minus any sub/add bias between the
  * guard and the jump, scaled by the left shifts between the compare and the
  * jump and divided by the entry size (2 near, 4 far). An `and` mask between
- * the guard and the jump is the last value written: the guard (bound and
- * first slot) is dropped and the mask alone decides. A word inc/dec/add/sub
+ * the guard and the jump only clears bits: an upper guard still holds and
+ * the caller takes min(guard, mask+1); an inverted guard's first slot is lost. A word inc/dec/add/sub
  * nearer the jump than `xor r8h,r8h` cancels the zero high byte.
  * The guard must dominate the jump: no instruction between them (other than
  * the guard's own taken target) is a direct branch target, the register is
@@ -2889,13 +2889,6 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
                 imm = sx8(cb[p + 2]) & 0xFFFF, ours = alias[m & 7];
             else if (op == 0x81 && mreg && mr == 7 && sz == p + 4)
                 imm = cb[p + 2] | (cb[p + 3] << 8), ours = alias[m & 7];
-            if (imm >= 0 && ours && masked)
-            {
-                // M-a: the mask nearer the jump is the last value written; a
-                // guard before it says nothing about the index (count or first).
-                seen.push_back(c.lin);
-                continue;
-            }
             if (imm >= 0 && ours)
             {
                 const uint8_t* nb = img.data() + nx.lin;
@@ -2932,7 +2925,9 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
                     for (uint32_t l : seen)
                         if (l >= nx.lin + nx.size && jt_xref_.count(l))
                             dom = false;
-                    if (dom)
+                    // M-a: a mask nearer the jump (x & m) can clear the bits
+                    // that made the index large: the lower bound is lost.
+                    if (dom && !masked)
                         inv_first = ((lo << shifts) + unit - 1) >> unit_shift;
                     break;
                 }
@@ -3002,7 +2997,7 @@ inline UasmEmitter::JtIndexRange UasmEmitter::jt_index_range(const std::vector<s
     }
     if (out.count < 0 && !(masked && out.mask >= 0))
     {
-        // M-a: a mask that superseded the guard is the bound; no legacy cap.
+        // M-a: with a mask and no upper guard the mask is the bound; no legacy cap.
         // M2: a voided or missing guard never yields more than the pre-n8
         // cap (register-blind compare scan), so no slot main left as data
         // becomes an entry.
@@ -3194,7 +3189,7 @@ inline bool UasmEmitter::add_generic_table(const std::vector<size_t>& code, size
     if (count < 0 || count > 256)
         count = 256;
     const uint8_t disp_off = static_cast<uint8_t>(k + 2);
-    jt_table(static_cast<uint32_t>(tbase + disp), fr, count, far, false, ui, disp_off, guarded, byte_idx, ir.first);
+    jt_table(static_cast<uint32_t>(tbase + disp), fr, count, far, false, ui, disp_off, guarded, ir.first);
     return true;
 }
 
