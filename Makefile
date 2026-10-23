@@ -6,7 +6,7 @@
 # Install it before building: sudo apt-get install libcapstone-dev
 #
 # Default: silent parallel-friendly flags when invoked as
-#   make -s V=0 -j$(nproc)
+#   make -s V=0 -j4   (box rule: at most -j4)
 
 # Prefer g++-15+ for <format> when present (host gcc may stay 12 for CUDA).
 # Honor a command-line or environment CXX=. g++-15 is only substituted when
@@ -190,11 +190,13 @@ run_suite = rc=0; bash $(1) || rc=$$?; \
 	if [ $$rc -eq 77 ]; then echo "SKIP $(1)"; \
 	elif [ $$rc -ne 0 ]; then exit $$rc; fi
 
+# Suites that run make themselves are marked + so they share the parent jobserver (-jN).
 .PHONY: test tests verify test-uasm
 test: dumpexe bin2exe bin2ne tools/bin2exe/test_header test_p1_model test_p1_flow
 	@$(call run_suite,tests/test_cli_contracts.sh)
-	@$(call run_suite,tests/test_report_bugs.sh)
-	@$(call run_suite,tests/test_listing_bugs.sh)
+	@# "+" shares the jobserver with these sub-makes; it also makes them run under make -n/-t/-q (intended).
+	+@$(call run_suite,tests/test_report_bugs.sh)
+	+@$(call run_suite,tests/test_listing_bugs.sh)
 	@$(call run_suite,tests/test_uasm.sh)
 	@$(call run_suite,tests/test_v213.sh)
 	@$(call run_suite,tests/test_p0_sim.sh)
