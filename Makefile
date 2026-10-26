@@ -1,0 +1,284 @@
+# Makefile for dumpexe - MS-DOS MZ / Win16 NE Analyzer & Disassembler
+# Note: needs libstdc++ with <format> (g++-13+). CUDA host stays gcc-12 via gcc-config.
+# Author: EdgeOfAssembly <haxbox2000@gmail.com>
+#
+# Capstone disassembly support is MANDATORY.
+# Capstone 6 (pkg-config module capstone >= 6.0) is required; distribution
+# libcapstone-dev packages are often 4.x or 5.x, so build Capstone 6 from source.
+#
+# Default: silent parallel-friendly flags when invoked as
+#   make -s V=0 -j4   (box rule: at most -j4)
+
+# Prefer g++-15+ for <format> when present (host gcc may stay 12 for CUDA).
+# Honor a command-line or environment CXX=. g++-15 is only substituted when
+# make's built-in CXX is still the default (origin "default").
+ifeq ($(origin CXX),default)
+ifneq ($(shell command -v g++-15 2>/dev/null),)
+CXX := g++-15
+endif
+endif
+CXX ?= g++
+CC ?= gcc
+CXXFLAGS = -static -static-libstdc++ -no-pie -Wl,--build-id=none -std=c++23 -Wall -Wextra -O2
+# Separate non-static sanitizer binary. Do not fold these into CXXFLAGS.
+ASAN_CXXFLAGS = -std=c++23 -Wall -Wextra -O1 -g -fsanitize=address,undefined
+# NE shift is C23 so the same translation unit is what CBMC verifies.
+CFLAGS_NE = -std=c23 -Wall -Wextra
+
+# Capstone is a hard requirement for compiling — checked only when building,
+# not for `make clean` or `make install` which don't need the library headers.
+ifeq ($(filter clean install,$(MAKECMDGOALS)),)
+ifeq ($(shell pkg-config --atleast-version=6.0 capstone && echo 1 || echo 0),0)
+$(error Capstone 6 not found by pkg-config (need capstone >= 6.0; set PKG_CONFIG_PATH if it is installed under a prefix))
+endif
+endif
+
+CAPSTONE_CFLAGS := $(shell pkg-config --cflags capstone 2>/dev/null)
+CAPSTONE_LIBS   := $(shell pkg-config --libs capstone 2>/dev/null)
+
+.PHONY: all clean install asan
+
+# Review R10: tests find the capstone the binaries were linked against.
+export LD_LIBRARY_PATH := $(shell pkg-config --variable=libdir capstone 2>/dev/null):$(LD_LIBRARY_PATH)
+
+all: dumpexe bin2exe bin2ne
+
+HEADERS = version.h dumpexe.h exe.h registers.h formatting.h options.h int_db.h int_annotate.h disasm.h listing.h cfg.h analysis.h sim.h sim_path.h sys.h sys_analysis.h com.h com_analysis.h ne.h ne_shift.h ne_analysis.h dos_extender.h dx_strings.h pascal_mt.h turbo_pascal.h toolchain.h linker.h symbols.h repack.h json_escape.h json_report.h unpack.h unpack_integrate.h image_model.h bytemap.h facts.h decode.h flow.h sha256.h ne_names.h ne_reloc.h ne_uasm.h emit_uasm.h verify.h pair_table.h
+
+# Deark modules (MIT, Jason Summers). Host glue is unpack_host.c.
+# -I so <#include <deark-private.h>> in the modules resolves.
+# Function sections let the relocatable bundle drop Deark code the unpack
+# call graph never reaches. The final dumpexe link does not use --gc-sections.
+DEARK_CFLAGS := -std=gnu99 -Wall -Wextra -Wno-unused-parameter -Wno-unused-function \
+	-Wno-sign-compare -Wno-unused-but-set-variable -Wno-unused-variable \
+	-Wno-format-truncation -O2 -ffunction-sections -fdata-sections \
+	-Ithird_party/deark/src
+DEARK_ASAN_CFLAGS := -std=gnu99 -Wall -Wextra -Wno-unused-parameter -Wno-unused-function \
+	-Wno-sign-compare -Wno-unused-but-set-variable -Wno-unused-variable \
+	-Wno-format-truncation -O1 -g -fsanitize=address,undefined \
+	-ffunction-sections -fdata-sections -Ithird_party/deark/src
+
+DEARK_SRCS := \
+	third_party/deark/src/deark-util.c \
+	third_party/deark/src/deark-data.c \
+	third_party/deark/src/deark-dbuf.c \
+	third_party/deark/src/deark-ucstring.c \
+	third_party/deark/src/fmtutil.c \
+	third_party/deark/src/fmtutil-cmpr.c \
+	third_party/deark/src/fmtutil-exe.c \
+	third_party/deark/src/fmtutil-huffman.c \
+	third_party/deark/src/fmtutil-lzh.c \
+	third_party/deark/src/fmtutil-lzw.c \
+	third_party/deark/src/fmtutil-lzah.c \
+	third_party/deark/modules/exepack.c \
+	third_party/deark/modules/lzexe.c \
+	third_party/deark/modules/pklite.c \
+	third_party/deark/modules/diet.c \
+	third_party/deark/modules/lha.c
+
+DEARK_OBJS := $(DEARK_SRCS:.c=.o)
+DEARK_ASAN_OBJS := $(DEARK_SRCS:.c=-asan.o)
+
+ne_shift.o: ne_shift.c ne_shift.h
+	$(CC) $(CFLAGS_NE) -O2 -c ne_shift.c -o ne_shift.o
+
+ne_shift-asan.o: ne_shift.c ne_shift.h
+	$(CC) $(CFLAGS_NE) -O1 -g -fsanitize=address,undefined -c ne_shift.c -o ne_shift-asan.o
+
+sim_path.o: sim_path.c sim_path.h
+	$(CC) $(CFLAGS_NE) -O2 -c sim_path.c -o sim_path.o
+
+sim_path-asan.o: sim_path.c sim_path.h
+	$(CC) $(CFLAGS_NE) -O1 -g -fsanitize=address,undefined -c sim_path.c -o sim_path-asan.o
+
+third_party/deark/src/%.o: third_party/deark/src/%.c
+	$(CC) $(DEARK_CFLAGS) -c $< -o $@
+
+third_party/deark/modules/%.o: third_party/deark/modules/%.c
+	$(CC) $(DEARK_CFLAGS) -c $< -o $@
+
+third_party/deark/src/%-asan.o: third_party/deark/src/%.c
+	$(CC) $(DEARK_ASAN_CFLAGS) -c $< -o $@
+
+third_party/deark/modules/%-asan.o: third_party/deark/modules/%.c
+	$(CC) $(DEARK_ASAN_CFLAGS) -c $< -o $@
+
+unpack_host.o: unpack_host.c unpack.h third_party/deark/src/dx_capture.h
+	$(CC) $(DEARK_CFLAGS) -c unpack_host.c -o unpack_host.o
+
+unpack_host-asan.o: unpack_host.c unpack.h third_party/deark/src/dx_capture.h
+	$(CC) $(DEARK_ASAN_CFLAGS) -c unpack_host.c -o unpack_host-asan.o
+
+# Relocatable bundle. --gc-sections applies only inside this link, rooted at
+# dx_unpack, so unused Deark format helpers are not part of dumpexe.
+deark_bundle.o: unpack_host.o $(DEARK_OBJS)
+	$(CC) -nostdlib -no-pie -Wl,-r -Wl,--gc-sections -Wl,-u,dx_unpack -Wl,-u,dx_unpack_free \
+		-o deark_bundle.o unpack_host.o $(DEARK_OBJS)
+
+deark_bundle-asan.o: unpack_host-asan.o $(DEARK_ASAN_OBJS)
+	$(CC) -nostdlib -no-pie -Wl,-r -Wl,--gc-sections -Wl,-u,dx_unpack -Wl,-u,dx_unpack_free \
+		-o deark_bundle-asan.o unpack_host-asan.o $(DEARK_ASAN_OBJS)
+
+dumpexe: dumpexe.cpp ne_shift.o sim_path.o deark_bundle.o $(HEADERS)
+	$(CXX) $(CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe dumpexe.cpp ne_shift.o sim_path.o deark_bundle.o $(CAPSTONE_LIBS)
+	@echo "Built dumpexe with Capstone disassembly support"
+
+# ASan/UBSan cannot link -static. Capstone comes from pkg-config, shared.
+dumpexe-asan: dumpexe.cpp ne_shift-asan.o sim_path-asan.o deark_bundle-asan.o $(HEADERS)
+	$(CXX) $(ASAN_CXXFLAGS) $(CAPSTONE_CFLAGS) -o dumpexe-asan dumpexe.cpp ne_shift-asan.o sim_path-asan.o deark_bundle-asan.o $(CAPSTONE_LIBS) \
+		-Wl,-rpath,$(shell pkg-config --variable=libdir capstone 2>/dev/null)
+	@echo "Built dumpexe-asan (address,undefined)"
+
+asan: dumpexe-asan
+
+# Auto-generate interrupt annotation database from Ralph Brown's Interrupt List
+int_db.h: gen_int_db.py $(wildcard interrupts/INTERRUP.*)
+	python3 gen_int_db.py
+
+# bin2ne rebuilds an NE from dumpexe's per-segment listings (P7).
+bin2ne: tools/bin2ne/main.cpp
+	$(CXX) -std=c++20 -O2 -Wall -Wextra -o bin2ne tools/bin2ne/main.cpp
+
+# bin2exe is the sibling that turns a uasm -bin image back into an EXE.
+# It does not link Capstone and dumpexe does not exec it.
+_PKG_CONFIG_PATH_IN := $(PKG_CONFIG_PATH)
+PKG_CONFIG_PATH := $(HOME)/.local/share/pkgconfig:$(HOME)/.local/lib64/pkgconfig:$(HOME)/.local/lib/pkgconfig$(if $(_PKG_CONFIG_PATH_IN),:$(_PKG_CONFIG_PATH_IN),)
+export PKG_CONFIG_PATH
+CATCH_CFLAGS := $(shell pkg-config --cflags catch2-with-main 2>/dev/null)
+CATCH_LIBS   := $(shell pkg-config --libs catch2-with-main 2>/dev/null)
+BIN2EXE_INC := -Itools/bin2exe/include
+BIN2EXE_TEST_CXXFLAGS := -std=c++23 -Wall -Wextra -O1 -g -fsanitize=address,undefined $(BIN2EXE_INC)
+
+bin2exe: tools/bin2exe/src/main.cpp tools/bin2exe/src/header.cpp tools/bin2exe/src/mz_pages.c \
+		tools/bin2exe/include/bin2exe/header.hpp tools/bin2exe/include/bin2exe/mz_pages.h \
+		tools/bin2exe/include/bin2exe/version.hpp
+	$(CXX) $(CXXFLAGS) $(BIN2EXE_INC) -o bin2exe \
+		tools/bin2exe/src/main.cpp tools/bin2exe/src/header.cpp tools/bin2exe/src/mz_pages.c
+
+tools/bin2exe/test_header: tools/bin2exe/tests/test_header.cpp tools/bin2exe/src/header.cpp \
+		tools/bin2exe/src/mz_pages.c tools/bin2exe/include/bin2exe/header.hpp \
+		tools/bin2exe/include/bin2exe/mz_pages.h
+	$(CXX) $(BIN2EXE_TEST_CXXFLAGS) $(CATCH_CFLAGS) -o $@ \
+		tools/bin2exe/tests/test_header.cpp tools/bin2exe/src/header.cpp tools/bin2exe/src/mz_pages.c \
+		$(CATCH_LIBS) -Wl,-rpath,$(HOME)/.local/lib64
+
+# P1 model and flow records. Non-static Catch2 binaries. Flow links Capstone.
+P1_TEST_CXXFLAGS := -std=c++23 -Wall -Wextra -Werror
+test_p1_model: tests/test_p1_model.cpp image_model.h bytemap.h facts.h
+	$(CXX) $(P1_TEST_CXXFLAGS) -I. $(CATCH_CFLAGS) -o $@ \
+		tests/test_p1_model.cpp $(CATCH_LIBS) -Wl,-rpath,$(HOME)/.local/lib64
+
+test_p1_flow: tests/test_p1_flow.cpp cfg.h sha256.h decode.h flow.h image_model.h bytemap.h facts.h options.h exe.h
+	$(CXX) $(P1_TEST_CXXFLAGS) -I. $(CAPSTONE_CFLAGS) $(CATCH_CFLAGS) -o $@ \
+		tests/test_p1_flow.cpp $(CAPSTONE_LIBS) $(CATCH_LIBS) -Wl,-rpath,$(HOME)/.local/lib64
+
+test_pair_bounds: tests/test_pair_bounds.cpp emit_uasm.h cfg.h pair_table.h int_annotate.h int_db.h
+	$(CXX) $(P1_TEST_CXXFLAGS) -I. $(CAPSTONE_CFLAGS) $(CATCH_CFLAGS) -o $@ \
+		tests/test_pair_bounds.cpp $(CAPSTONE_LIBS) $(CATCH_LIBS) -Wl,-rpath,$(HOME)/.local/lib64
+
+PREFIX ?= /usr/local
+install: dumpexe bin2exe
+	install -d $(DESTDIR)$(PREFIX)/bin
+	install -d $(DESTDIR)$(PREFIX)/share/man/man1
+	install -m 755 dumpexe $(DESTDIR)$(PREFIX)/bin/
+	install -m 755 bin2exe $(DESTDIR)$(PREFIX)/bin/
+	install -m 644 dumpexe.1 $(DESTDIR)$(PREFIX)/share/man/man1/
+	install -m 644 tools/bin2exe/bin2exe.1 $(DESTDIR)$(PREFIX)/share/man/man1/
+
+clean:
+	rm -f dumpexe dumpexe-asan bin2exe bin2ne tools/bin2exe/test_header test_p1_model test_p1_flow test_pair_bounds *.o int_db.h \
+		unpack_host.o unpack_host-asan.o \
+		deark_bundle.o deark_bundle-asan.o $(DEARK_OBJS) $(DEARK_ASAN_OBJS)
+
+# Exit 77 from a suite is a skip (optional tool missing), not a failure.
+run_suite = rc=0; bash $(1) || rc=$$?; \
+	if [ $$rc -eq 77 ]; then echo "SKIP $(1)"; \
+	elif [ $$rc -ne 0 ]; then exit $$rc; fi
+
+# Suites that run make themselves are marked + so they share the parent jobserver (-jN).
+.PHONY: test tests verify test-uasm
+test: dumpexe bin2exe bin2ne tools/bin2exe/test_header test_p1_model test_p1_flow test_pair_bounds
+	@$(call run_suite,tests/test_cli_contracts.sh)
+	@# "+" shares the jobserver with these sub-makes; it also makes them run under make -n/-t/-q (intended).
+	+@$(call run_suite,tests/test_report_bugs.sh)
+	+@$(call run_suite,tests/test_listing_bugs.sh)
+	@$(call run_suite,tests/test_uasm.sh)
+	@$(call run_suite,tests/test_v213.sh)
+	@$(call run_suite,tests/test_p0_sim.sh)
+	@$(call run_suite,tests/test_p0_ne.sh)
+	@$(call run_suite,tests/test_p0_uasm.sh)
+	@$(call run_suite,tests/test_p0_cfg.sh)
+	@./test_p1_model
+	@./test_p1_flow
+	@./test_pair_bounds
+	@$(call run_suite,tests/test_p0_reloc.sh)
+	@$(call run_suite,tests/test_p0_stats.sh)
+	@$(call run_suite,tests/test_p0_shift.sh)
+	@$(call run_suite,tests/test_p0_cfg_once.sh)
+	@$(call run_suite,tests/test_p0_linear.sh)
+	@$(call run_suite,tests/test_p2_verified.sh)
+	@$(call run_suite,tests/test_p3_header.sh)
+	@$(call run_suite,tests/test_f2_f5.sh)
+	@$(call run_suite,tests/test_p4_values.sh)
+	@$(call run_suite,tests/test_coverage.sh)
+	@$(call run_suite,tests/test_fnptr_seg.sh)
+	@$(call run_suite,tests/test_fp_emu.sh)
+	@$(call run_suite,tests/test_tp_noreturn.sh)
+	@$(call run_suite,tests/test_callback_args.sh)
+	@$(call run_suite,tests/test_callback_adv.sh)
+	@$(call run_suite,tests/test_p5_fixpoint.sh)
+	@$(call run_suite,tests/test_u1_u3.sh)
+	@$(call run_suite,tests/test_linker.sh)
+	@$(call run_suite,tests/test_toolchain_fp.sh)
+	@$(call run_suite,tests/test_segment_layout.sh)
+	@$(call run_suite,tests/test_p5_tools.sh)
+	@$(call run_suite,tests/test_p6_sim.sh)
+	@$(call run_suite,tests/test_p7_ne.sh)
+	@$(call run_suite,tests/test_readability.sh)
+	@$(call run_suite,tests/test_jump_tables.sh)
+	@./tools/bin2exe/test_header
+	@$(call run_suite,tools/bin2exe/tests/test_cli.sh)
+
+# Hard failure when uasm_resolve cannot find an assembler.
+test-uasm: dumpexe
+	@bash -c 'source tests/lib_uasm.sh && uasm_resolve >/dev/null'
+	@bash tests/test_uasm.sh
+	@bash tests/test_p0_uasm.sh
+	@bash tests/test_p0_linear.sh
+	@bash tests/test_p0_shift.sh
+	@bash tests/test_p0_stats.sh
+	@bash tests/test_p0_reloc.sh
+	@bash tests/test_p2_verified.sh
+	@bash tests/test_p3_header.sh
+	@bash tests/test_f2_f5.sh
+	@bash tests/test_p4_values.sh
+	@bash tests/test_coverage.sh
+	@bash tests/test_fnptr_seg.sh
+	@bash tests/test_fp_emu.sh
+	@bash tests/test_tp_noreturn.sh
+	@bash tests/test_callback_args.sh
+	@bash tests/test_callback_adv.sh
+	@bash tests/test_p5_fixpoint.sh
+	@bash tests/test_p5_tools.sh
+	@bash tests/test_p6_sim.sh
+	@bash tests/test_p7_ne.sh
+	@bash tests/test_readability.sh
+	@bash tests/test_jump_tables.sh
+
+# Private fixtures (skip if absent): generic jump tables, coverage vs baseline.
+.PHONY: test-fixtures-jt
+test-fixtures-jt: dumpexe
+	@$(call run_suite,tests/test_fixtures_jt.sh)
+
+tests: test
+
+verify: test
+	$(HOME)/.local/bin/cbmc ne_shift.c formal/harness_ne_shift.c \
+	  --bounds-check --pointer-check --unwind 2 --unwinding-assertions
+	$(HOME)/.local/bin/cbmc sim_path.c formal/harness_sim_path.c \
+	  --bounds-check --pointer-check --unwind 8 --unwinding-assertions
+	$(HOME)/.local/bin/cbmc tools/bin2exe/src/mz_pages.c tools/bin2exe/formal/harness_pages.c \
+	  -Itools/bin2exe/include \
+	  --bounds-check --pointer-check --unwind 2 --unwinding-assertions
+	$(HOME)/.local/bin/cbmc formal/bytemap_claim.c formal/harness_bytemap_claim.c \
+	  --bounds-check --pointer-check --unwind 8 --unwinding-assertions

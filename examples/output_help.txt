@@ -1,0 +1,167 @@
+dumpexe - MS-DOS / Win16 binary analyzer: MZ EXE, NE, .COM, .SYS
+
+Usage: ./dumpexe [options] <file>
+
+Options:
+  -h, --help          Show this help message and exit
+  -v, --version       Show version information and exit
+  -r, --relocation    Show relocation table (with padding) [EXE only]
+  -x, --hexdump       Show full hex+ASCII dump from entry point to EOF
+  -d, --disassemble   Multi-pass annotated listing (func_* labels, INT notes,
+                      call/jmp→labels); also writes <stem>.asm by default.
+                      Microsoft EXEPACK, LZEXE 0.91, LZEXE 0.90, PKLITE, DIET, and
+                      LHarc also write <stem>_UNPACKED.EXE (or .COM) and
+                      <stem>_UNPACKED.asm of the unpacked program.
+                      DIET and LHarc are structural (Deark identify rules), not
+                      the bytes DIET at 0x1C or an LHA sentence. LHarc also needs
+                      a header checksum (or a level-2 CRC) in the SFX trailer.
+  -o, --output PATH   Packed listing file (default: <stem>.asm); use - for stdout only.
+                      -o - writes no .asm, no _UNPACKED.EXE, and no _UNPACKED.asm.
+                      A named -o file is not also printed on stdout.
+                      --json keeps JSON on stdout and still writes a named -o file.
+                      --json -o - does not claim a UASM listing was written.
+  --no-asm-file       Do not write .asm file (listing still on stdout unless --json)
+  --no-repack         Do not write <stem>.repack.exe after TP/JWASM export (default: on)
+  --repack-output=P   Override repack EXE path (implies repack on)
+  Note: existing default <stem>.asm or <stem>.repack.exe is kept unless -o or --repack-output names it.
+        An existing <stem>_UNPACKED.EXE, .COM, or .asm is kept.
+        A kept _UNPACKED.EXE/.COM is not paired with a new _UNPACKED.asm.
+  --cfg               Build/print static CFG + INT/string xref annotations
+  --cfg-interesting   Only print interesting-block summary/detail (no full dump)
+  --cfg-no-insns      CFG edges/tags only (no per-block disassembly)
+  --cfg-no-calls      Do not follow near call targets as new leaders
+  --cfg-max=N         Max basic blocks in the CFG full dump (default 500).
+                      The -d listing cap is max(N, 2000)
+  --cfg-insns=N       Insns shown per block (default 12; 0=all)
+  --cfg-interesting-max=N  Max interesting blocks to expand (default 80)
+  --cfg-load-depth=N  Reverse walk depth for load/I/O graph (default 6)
+  --cfg-load-max=N    Max path/FCB seeds in load graph (default 40)
+  -a, --all           Show all sections (reloc + hex + disasm + strings).
+                      Unpacks the same packers as -d. This is the default
+                      when no mode switch is given (-r -x -d --strings
+                      --json --uasm --cfg* --simulate --xrefs).
+  --header-only       Header report only (turns off the -a default).
+  --strings           Extract Pascal length-prefixed + CALL-inline + ASCIIZ strings
+  --no-pascal-mt      Disable Pascal MT+ 3.1.1 detect/annotate (default: on)
+  --no-toolchain      Disable JWASM 1.8 / COM-in-EXE / CuteMouse / packer detect
+                      (default: on). Also skips unpack
+  --no-dos-extender   Disable DOS extender / DPMI stub detect (default: on)
+  --bits=16|32        Force Capstone x86 width (default: auto; 32 if extender)
+  --map=FILE          Load symbol map for listing (IP name); disables need for auto
+  --no-map            Do not auto-load <stem>.sym / <stem>.map (default: auto on)
+  --model=M           Memory model for JWASM export: tiny|small|medium|compact|large|huge
+                      (default: small if unknown; .COM / COM-in-EXE always tiny)
+  --uasm              Write UASM source (uasm -bin for COM, uasm -mz for EXE) to
+                      <stem>.asm. Enable-only; does not require -d. The UASM file has
+                      no address column and no hex-byte column. -d/-a with a file keeps
+                      the address listing on stdout. -o PATH names the UASM file. -o -
+                      is UASM on stdout only and no file, including with -d or -a.
+                      Does not write _UNPACKED.EXE or _UNPACKED.asm unless -d or -a
+                      is also set. MZ, COM and NE (one listing per code segment
+                      plus <stem>.nemap for bin2ne). Skips auto-repack (no
+                      REPACK-V1). Images longer than 65536 bytes are split into
+                      segments of at most 65536 bytes with no padding.
+                      uasm -mz writes a 32-byte MZ header (0 relocations, CS:IP
+                      and SS:SP 0:0) and warns A4205/A4204. e_cparhdr*16 is the
+                      MZ header size, not the load image. Prefer uasm -bin and
+                      bin2exe --header to restore the original header.
+                      A same-segment far call is followed when its segment is the
+                      file CS (the MZ header), including when --base is not 0.
+                      Past 64 KiB is decoded when reached through the entry, near
+                      wrap, or a decoded relocation-pinned far call. A pinned
+                      target outside the image is not followed. An entry outside
+                      the image is not labeled func_FFFF.
+  --uasm-verify       With --uasm, assemble candidate lines and keep a line
+                      only when the bytes match. A clean batch is one assemble.
+                      A branch whose operand is a number stays db and is not
+                      offered. A rejected line is dropped and retried; the header
+                      then does not say verified. When recovery stops with lines
+                      left, the header says rejected K, unverified M. Enable-only.
+                      Default off, so --uasm does not run an assembler. Requires
+                      --uasm. Does not imply --uasm-stats. The listing header says
+                      "; verified: uasm … at PATH" only when every offered line
+                      assembled, or "; NOT VERIFIED".
+  --uasm-verified     With --uasm, print every decoded instruction, assemble the
+                      whole listing, and demote a line that does not reproduce
+                      its bytes (mnemonic, pin macro, symbolic db, raw db) until
+                      the listing is identical. Branch targets, relocated
+                      segment words and far offsets stay expressions. Runs the
+                      start and mid shift tests. Requires --uasm. Enable-only.
+  --hints=FILE        With --uasm-verified: lines 'code HEX', 'data HEX LEN',
+                      'label HEX NAME' (# comments). Code hints become entries,
+                      data hints are never printed as code, names replace L%05X.
+                      'table HEX N [near|far]' forces a jump table of N (hex) entries
+                      (0000 words are holes); its entries become entries.
+  --hints-out=FILE    Write the hints this run used (seeded entries, names).
+  --bytemap=FILE      Write one line per run: LO-HI code|data rung.
+  --explain=HEX       Print why the byte at linear HEX is code or data (stderr).
+  --strict            Print code only where the model has a Derived or stronger
+                      fact; Likely-only heads become data.
+  --evidence=sim      With --uasm-verified, run the simulator silently (cap
+                      --max-insns, default 1000000; guest files in memory
+                      only) and decode executed code the static graph missed.
+                      Opt-in. Enable-only.
+  --sim-paths=N       With --evidence=sim, explore up to N paths (default 1):
+                      the other side of each conditional branch, and handlers
+                      installed with INT 21h/25h. Forked paths are Likely
+                      evidence (not seeded under --strict). 1..4096.
+  --sim-fork-depth=D  Forks along one path (default 40, 0..1000).
+  --sim-total-insns=T Instructions summed over all paths (default 50000000).
+  --sim-no-dispatch-int  Do not run handlers the program installed when it
+                      executes INT n (debugging).
+  --uasm-header       With --uasm-verified, put the MZ header (relocation table
+                      as expressions) and the file tail in the listing, so
+                      uasm -bin rebuilds the whole EXE. Enable-only.
+  --xrefs             Flat edge list: entry first, then breadth-first from the
+                      entries (source, target, kind, evidence). Enable-only.
+  --uasm-bin PATH     Assembler used by --uasm-verify. Otherwise $DUMPEXE_UASM,
+                      otherwise uasm on PATH. PATH search ignores empty and
+                      relative directories. No built-in assembler path.
+  --uasm-stats        With --uasm, print one coverage line on stderr when a
+                      UASM listing is emitted (image, decoded, text, db,
+                      labels, whether verification ran). Enable-only. Does not
+                      imply --uasm or --uasm-verify. Requires --uasm. Not a
+                      JSON field.
+  --json              Machine-readable JSON report on stdout (default: off).
+                      Does not unpack
+  --cfg-dot=FILE      Write Graphviz DOT of CFG to FILE (default: off)
+  -n, --no-int-annotations  Suppress INT annotation comments in disassembly
+  --simulate          In-memory DOS sandbox. Guest data files start empty.
+                      Guest I/O does not open host files. A write to handle 1
+                      or 2 (stdout/stderr) returns CF=1 and AX=6.
+                      At most 64 guest files. Truncate releases capacity, so
+                      recreate does not keep the old allocation.
+  --base=XXXX         Set load image segment (hex, default: 1000h)
+  --psp               Force .COM to be treated as having an embedded PSP
+  --no-psp            Force .COM to be treated as having no embedded PSP
+
+Simulation / breakpoints (imply --simulate):
+  --max-insns=N       Stop after N instructions (default: 64;
+                      10000 with --trace; 1e6 with --bp). A leading minus is an error.
+  --loop-limit=N      Tight jmp/jcc: take short back-edge at most N times,
+                      then fall through (default: 10000; 0=off; 1≈once)
+  --loop-span=XX      Max IP distance for a 'tight' loop (hex, default 100h)
+  --trace             Print every executed instruction
+  --sim-quiet         Only print breakpoint hits and a final summary
+  --bp=SPEC           Add breakpoint (repeatable). SPEC forms:
+                        ip:XXXX              IP only
+                        CS:IP  /  csip:CS:IP  full address
+                        int:21               any INT 21h
+                        int:21,ah=0F         INT 21h with AH=0Fh (FCB open)
+                        int:21:0F            same (short form)
+                      Flags (comma-separated): stop|continue, log|nolog, once
+  --dump=seg:off:len  Hex-dump memory on each breakpoint hit
+                        seg = hex or cs|ds|es|ss  (len hex, default 40h)
+
+Supported file formats (detected from file content):
+  MZ EXE   — first two bytes are 'MZ' (0x5A4D) or 'ZM' (0x4D5A); pure DOS image
+             Load image cap is 1114112 bytes (1 MiB + 64 KiB); --max-image=N raises it.
+             An empty load image is an error.
+  NE EXE   — MZ stub with e_lfanew → 'NE' (Windows 3.x / Win16)
+  .SYS     — DOS device driver (last-in-chain FFFFFFFFh, or a chained header)
+  .COM     — all other files (fallback); PSP presence auto-detected
+
+Examples:
+  ./dumpexe --simulate --bp=int:21,ah=0F --dump=ds:0:25 game.EXE
+  ./dumpexe --simulate --bp=ip:652B --trace --max-insns=200 game.EXE
+

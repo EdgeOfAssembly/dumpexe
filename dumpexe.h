@@ -1,0 +1,55 @@
+// dumpexe.h - MS-DOS binary analysis toolkit
+// Author: EdgeOfAssembly <haxbox2000@gmail.com>
+// License: GPLv2 | Commercial (contact author)
+//
+// Orchestration header: includes all modular sub-headers so that dumpexe.cpp
+// only needs to include this single file.
+//
+// Sub-headers:
+//   exe.h          — MZ EXE format structures (MZHeader, RelocEntry)
+//   registers.h    — 16-bit x86 CPU register state definitions and macros
+//   formatting.h   — TDUMP-style hex/dec formatting and hexdump output
+//   options.h      — CLI options struct (Options) and show_usage()
+//   int_db.h       — Auto-generated constexpr INT annotation database (RBIL)
+//   int_annotate.h — annotate_int() and format_int_annotation() helpers
+//   disasm.h       — Capstone-backed disassemble() (Capstone required)
+//   cfg.h          — Static control-flow graph recovery (--cfg)
+//   analysis.h     — File loading, validation, header printing, simulation glue
+//   sim.h          — 1 MiB arena, step loop, breakpoints, INT 21h stubs
+//   sys.h          — DOS device driver (.SYS) format structures and constants
+//   sys_analysis.h — DOS device driver analysis functions
+//   com.h          — MS-DOS .COM file format constants
+//   com_analysis.h — MS-DOS .COM file analysis functions
+//   ne.h           — Windows 3.x NE (New Executable) structures
+//   ne_analysis.h  — NE detect / header / segment / resource / disasm
+//   dx_strings.h   — Pascal length-prefixed / CALL-inline + ASCIIZ (--strings)
+//   pascal_mt.h    — Pascal MT+86 3.1.1 detect/annotate (default on; --no-pascal-mt)
+//   json_report.h  — Machine-readable --json report
+
+#ifndef DUMPEXE_H
+#define DUMPEXE_H
+
+#include "exe.h"
+#include "registers.h"
+#include "formatting.h"
+#include "options.h"
+#include "int_annotate.h"
+#include "disasm.h"
+#include "cfg.h"
+#include "analysis.h"
+#include "sys.h"
+#include "sys_analysis.h"
+#include "com.h"
+#include "com_analysis.h"
+#include "ne.h"
+#include "ne_analysis.h"
+#include "ne_uasm.h"
+#include "dos_extender.h"
+#include "dx_strings.h"
+#include "pascal_mt.h"
+#include "turbo_pascal.h"
+#include "toolchain.h"
+#include "symbols.h"
+#include "json_report.h"
+
+#endif // DUMPEXE_H

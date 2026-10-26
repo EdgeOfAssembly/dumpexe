@@ -1,0 +1,221 @@
+# Adding compiler / assembler support to dumpexe
+
+This is the **official workflow** for teaching dumpexe a new DOS toolchain
+(compiler or assembler) so it can detect binaries and emit useful (ideally
+assemblable) output.
+
+## The method (easy when ground truth exists)
+
+```text
+1. Find DOS software/game with BOTH:
+     • shipping binaries (MZ / COM / OVL / …)
+     • source tree (or rebuildable sources)
+   Prefer packages that hint the tool (makefile, README, history).
+
+2. Static RE with dumpexe (and friends):
+     dumpexe file.exe
+     dumpexe --strings / -d / --json / --cfg-dot=…
+
+3. Identify candidate toolchain + version window
+     (timestamps, docs, “built with TASM/JWASM/Pascal MT+ …”).
+
+4. Obtain that exact tool version if possible
+     • keep versioned under bin/<tool>/name-X.Y
+     • backup under /mnt/re-tools/…
+
+5. Reproduce the build
+     assemble/compile → link → pack (exe2bin, com2exe, …)
+     cmp load images (and full EXE when headers match).
+
+6. If binaries match (or match within documented deltas):
+     officially add support in dumpexe:
+       • fingerprint / detect (default ON; only --no-… to disable)
+       • listing / export tuned for that tool
+       • tests + fixture under games/ in the private fixtures repo (docs/FIXTURES.md)
+       • notes in RE-NOTES + this doc
+
+7. Dual-write durable facts:
+     pmem + ~/.grok/memory + git commit/push
+```
+
+## Why this works
+
+| Without sources | With sources + same tool |
+|-----------------|---------------------------|
+| Product/strings, layout, CFG | Author names, exact encodings |
+| Heuristic “looks like JWASM” | **Rebuild-proven** “is JWASM 1.80” |
+| Human listing (`func_*`) | Assemblable export / golden tests |
+
+Blind RE can still score high on *identity* and *architecture*; **version pins**
+and **round-trip asm** need ground truth (or a perfect map).
+
+## Memory model rules (JWASM export)
+
+| Image | Model | Notes |
+|-------|--------|--------|
+| Pure **.COM** | **tiny** always | ≤64KB single segment; **no exceptions** |
+| **COM-in-EXE** (com2exe, CS:IP FFF0:0100) | **tiny** always | Same as COM; `--model=` ignored |
+| Unknown non-COM | **small** default | Override: `--model=tiny\|small\|medium\|…` |
+
+## CLI policy (always)
+
+- Sane defaults; default-ON features only get `--no-*`.
+- No-args → usage; always `-h`/`--help`, `-v`/`--version`.
+- Inputs and options any order (where applicable).
+- See skill `cli-design` / rule `14-cli-sane-defaults`.
+
+## Case study: CuteMouse 2.1b4 → JWASM 1.80
+
+| Step | Result |
+|------|--------|
+| Package | `/tmp/cutemouse21b4` (bin + source + docs) |
+| Hint | history/makefile: Japheth JWASM, `jwasmd -mt`, com2exe |
+| Timestamps | sources/binary **2008-07-11**; JWASM **1.8** released **2008-06-21** |
+| Tool kept | `bin/jwasm/jwasm-1.8.exe`, `jwasmd-1.8.exe` (+ 1.7) |
+| Rebuild | wine jwasm-1.8 + wlink + exe2bin + com2exe wrap → **byte-identical** EXE |
+| dumpexe | Toolchain auto: **JWASM 1.80** @ ~98%; COM-in-EXE; product CuteMouse |
+| Export | `-d` on JWASM-detected images → JWASM-oriented `.asm` (model tiny for COM) |
+| Fixture | `fx02` (private fixtures repo, see `docs/FIXTURES.md`) |
+
+### Reproduce CuteMouse (summary)
+
+```bash
+# From CuteMouse source tree (asmlib includes, ctmouse.msg present):
+wine bin/jwasm/jwasm-1.8.exe -mt -Iasmlib -Iasmlib\\bios -Iasmlib\\convert \
+  -Iasmlib\\dos -Iasmlib\\hard -Fo ctmouse.obj ctmouse.asm
+wlink name ctmouse-raw.exe format dos file ctmouse.obj
+exe2bin ctmouse-raw.exe ctmouse.bin
+# wrap as com2exe -s512 (32-byte MZ, CS:IP=FFF0:0100) → compare to the shipped ctmouse.exe (fixture fx02)
+```
+
+## Case study: Pascal MT+ 3.1.1 (fixture fx01)
+
+| Step | Result |
+|------|--------|
+| Fixture | `fx01` (private fixtures repo) |
+| Tool | Pascal MT+86 3.1.1 (RTL sources) |
+| dumpexe | Default Pascal MT+ report (entry, segtable, jump table, fingerprints) |
+| Disable | `--no-pascal-mt` only |
+
+## Checklist for a new toolchain PR
+
+- [ ] Fixture binary (+ optional sources path documented)
+- [ ] Versioned tool binary in `bin/<tool>/` if we own a copy
+- [ ] Fingerprint in product code (e.g. `pascal_mt.h`, `toolchain.h`)
+- [ ] Default ON; only `--no-…` to disable
+- [ ] Listing/export behavior documented (human vs assemblable)
+- [ ] `make test` contracts (detect + JSON if applicable)
+- [ ] RE-NOTES or `docs/` update
+- [ ] Commit FEATURE/FIXUP + push
+
+## What “support” means (levels)
+
+| Level | Meaning |
+|-------|---------|
+| **L1 Detect** | Name tool/version with evidence; confidence |
+| **L2 Annotate** | Jump tables, RTL sites, INT notes, symbols from `.sym` |
+| **L3 Export** | Assemblable source for that tool (byte-exact `db` + labels OK) |
+| **L4 Round-trip** | Export → tool → binary matches golden (or documented delta) |
+
+CuteMouse/JWASM 1.80: **L1–L4** — export + **auto-repack** → `.repack.exe` **IDENTICAL** to input.  
+Turbo Pascal 5.5 (fixture fx03): **L1–L4** — TP export + **auto-repack** → `.repack.exe` **IDENTICAL** to input.
+
+### Auto-repack (default ON)
+
+After TP or JWASM `-d` export, dumpexe also writes **`<stem>.repack.exe`** by
+parsing the export’s `db` lines and re-attaching the original MZ prefix/suffix
+(embedded as `REPACK-V1` comments in the `.asm` for offline use).
+
+```bash
+dumpexe -d PROG.EXE
+# → PROG.asm  +  PROG.repack.exe  [IDENTICAL]
+dumpexe -d --no-repack PROG.EXE   # asm only
+```
+
+## Packers (structural)
+
+`-d` and `-a` report a packer and try to unpack it. `--json` and
+`--no-toolchain` skip unpack. There is no `--unpack` switch. The first
+name wins, in this order: PKLITE, LZEXE, DIET, EXEPACK, LHarc.
+
+| Packer | What matches | What does not |
+|--------|----------------|---------------|
+| **PKLITE** | `e_ip` 256, CS −16, `e_crlc` ≤ 2, entry at the header end, one normal prologue. Version word is the little-endian value at file `0x1C` (`PKLITE M.mm`, or `PKLITE` when that word's low 12 bits are 0). | An ASCII `PKLITE` banner |
+| **LZEXE 0.91 / 0.90** | `LZ91` or `LZ09` at file `0x1C`, `e_crlc` 0, `e_lfarlc` `0x1C`, `e_ovno` 0, and `06 0E 1F 8B` at the entry or one byte after a `50` (push ax). `LZ91` is 0.91. `LZ09` is 0.90. | `LZ90`. A later LHarc header is suppressed once LZEXE matched (sample s03 stays LZEXE 0.91) |
+| **Microsoft EXEPACK** | `e_crlc` 0, `e_ip` 16 or 18, `e_sp` `0x80`, bytes `52 42` at entry−2, and epilog `CD 21 B8 FF 4C CD 21` in `[entry+200, entry+300)` | The sentence "Packed file is corrupt". No stub CRC bypass |
+| **DIET** | Deark `identify_diet_fmt`. EXE: MZ or ZM, `codestart = 16 * le16(file+8)`, and the 8-byte prefix of `8E DB 8E C0 33 F6 33 FF B9` at `codestart-32+{77,72,52,55}`. The following `0x95` (`maybe_lglz`) does not reject the hit. COM/data: `be` + `dlz` at 35 and the old stub at 17; `bf` + that old stub; `f9` + `dlz` at 65 and `9D 89` at 10; `B4 4C CD 21` + `9D 89`; `9D 89` + `dlz` | The four bytes `DIET` or `diet` at file `0x1C` |
+| **LHarc** | A window that would pass Deark `de_identify_lha`, plus a level-0/1 header checksum or a level-2 header CRC, a packed size that fits in the file, and a start in the SFX trailer (last 32 bytes of the declared MZ image, or after it) | `LHarc` or `LHA ` text. `is_possible_cmpr_meth` alone (`-the-`). SWG, AFX, TPK, and PAKLEO methods. A bare `-lh5-`. A checksummed header in the middle of the image |
+
+Deark's MIT modules unpack in-process. dumpexe does not shell out to `deark`,
+`unlzexe`, or `unexepack`.
+
+## Related paths
+
+Fixtures are referred to by generic ids (`fx01` ...); the files live in the
+private repo `EdgeOfAssembly/dumpexe-fixtures` (see `docs/FIXTURES.md`).
+
+| Path | Role |
+|------|------|
+| `bin/jwasm/` | Versioned JWASM 1.7/1.8 |
+| `pascal_mt.h` | Pascal MT+ 3.1.1 |
+| `toolchain.h` | COM-in-EXE, JWASM 1.8, CuteMouse, structural packers |
+| `listing.h` | Multi-pass listing + JWASM export |
+
+## TP 5.5 product tree
+
+Not compiler source — **distribution**: `TPC.EXE`/`TURBO.EXE`, `TURBO.TPL` RTL,
+demos (`.PAS`/`.ASM`/`.OBJ`), BGI, docs. Useful for:
+
+- Rebuild programs with **exact** TPC 5.5  
+- RTL string/global fingerprints (`Runtime error `, `EXITPROC`, heap/overlay)  
+- OOP method naming in asm: `Type@Method`, `@Self` at `[BP+6]`, FAR methods  
+
+## Case study: Turbo Pascal 5.5 (fixture fx03)
+
+| Step | Result |
+|------|--------|
+| Build | TPC 5.5 + TASM units, built in DOS from sources |
+| dumpexe | **Turbo Pascal 5.5** auto @ ~97% |
+| Fixture | `fx03` (private fixtures repo) |
+| Export | `-d` → **Turbo Pascal–oriented** TASM byte export (`.MODEL LARGE`, PROC/ENDP, `db` + comments) |
+| Note | Fixed false JWASM from 0xFC-only heuristic on TP EXEs |
+
+## Linker, memory model and Turbo Pascal evidence (MZ)
+
+Ground truth: the BC++ 3.1 / TASM 3.1, 4.1 / MASM 5.10 / TP 5.5, 7.0 build
+matrix (297 builds, private); every rule below scores 100% there with no
+mislabels.
+
+| Report | Rule | Notes |
+|---|---|---|
+| `Linker: Borland TLINK N.x` | 1Ch..1Fh = `01 00 FB vv`, relocation table ≥ 3Eh | major series only (`vv >> 4`): TLINK 5.1 writes 50h, 7.1.30.1 writes 71h |
+| `Linker: Microsoft LINK (likely)` | relocation table at 1Eh, word 0001h at 1Ch, no FBh | seen on LINK 3.64 (MASM 5.10) |
+| `Linker: Turbo Pascal linker (likely)` | relocation table at 1Ch **and** TP runtime evidence | 1Ch alone is common; no label without TP |
+| `… (packed by P: header may be the packer's; low confidence)` | an EXE packer was detected | EXEPACK keeps or rewrites the header |
+| `Debug info: Borland (bytes FB 52 …)` | `FB 52` right after the load image | TLINK `/v` (bcc `-v`, tasm `/zi` + tlink `/v`); hint |
+| `Memory model: X (Borland C++ 3.1-compatible startup)` | entry `BA imm16` (tiny: `8C CA`), then `2E 89 16 off B4 30` | off: tiny 0396h, small 02BEh, medium 02C4h, compact 028Bh, large 0291h, huge 0284h; otherwise nothing |
+| TP evidence: stack-check far call | main block `55 89 E5`, `31 C0` or `B8 imm16`, `9A` | TP 7.0 ($S+ default); TP 5.5 never; version still from the copyright year |
+
+No assembler (TASM vs MASM, or TASM version) is inferred from linked output:
+TASM 3.1 and 4.1 produce byte-identical EXEs and COMs.
+
+JSON (`--json`, MZ): `turbo_pascal` {detected, confidence, compiler, version,
+toolchain, product, main_stack_check, evidence}, `linker` {detected, linker,
+evidence, packed, packer, debug_trailer_offset (-1 = none)}, and
+`toolchain.memory_model` when a model was found. NE: `linker_version` is the
+NE header linker version string (e.g. "5.10").
+
+## Segment layout (`--uasm-verified`, Borland C++ 3.1-compatible startup)
+
+When the c0 model rule matches (small, medium, compact, large, huge) and the
+`mov dx, DGROUP` word at the entry is relocated, its value is DGROUP's
+paragraph (matrix: 206/206 EXEs equal the MAP `_DATA` start; no CODE segment
+at or past it). DGROUP to the end of the load image is then data: no
+instruction head is printed there and simulation evidence is not seeded
+there. In huge model, TLINK places every FAR_DATA segment after all code
+(40/40 MAPs); from the lowest segment named by a decoded
+`mov ax, seg X` / `mov ds, ax` (relocated) up to DGROUP is far data. The
+C-string scan then only looks at DGROUP and that far data. Nothing is applied
+when the static graph already decoded an instruction in the range (header:
+`segment layout: not applied`). Code below DGROUP is still found by flow
+analysis only; tiny (COM) is not handled.

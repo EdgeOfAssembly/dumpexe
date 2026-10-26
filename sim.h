@@ -1,0 +1,2343 @@
+// sim.h - DOS real-mode execution engine for --simulate
+// Author: EdgeOfAssembly <haxbox2000@gmail.com>
+// License: GPLv2 | Commercial (contact author)
+//
+// 1 MiB conventional-style address space, PSP + load image, Capstone-decoded
+// step loop, flexible breakpoints, and a minimal INT 21h stub (FCB + DOS).
+// Best-effort — not a full DOS/BIOS emulator.
+
+#ifndef SIM_H
+#define SIM_H
+
+#include <array>
+#include <deque>
+#include <cstring>
+#include <format>
+#include <iostream>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <set>
+#include <span>
+#include <sstream>
+#include <vector>
+#include <cstdint>
+#include <algorithm>
+#include <capstone/capstone.h>
+
+#include "sim_path.h"
+
+#include "exe.h"
+#include "registers.h"
+#include "options.h"
+#include "formatting.h"
+#include "int_annotate.h"
+
+//=============================================================================
+// Linear memory (20-bit real mode: seg*16+off, wrap at 1 MiB)
+//=============================================================================
+
+struct SimMemory {
+    static constexpr size_t kSize = 0x100000; // 1 MiB
+    std::vector<uint8_t> ram;
+
+    SimMemory() : ram(kSize, 0) {}
+
+    static uint32_t linear(uint16_t seg, uint16_t off) {
+        return (static_cast<uint32_t>(seg) * 16u + off) & 0xFFFFFu;
+    }
+
+    uint8_t read8(uint16_t seg, uint16_t off) const {
+        return ram[linear(seg, off)];
+    }
+    uint16_t read16(uint16_t seg, uint16_t off) const {
+        uint32_t a = linear(seg, off);
+        return static_cast<uint16_t>(ram[a] | (ram[(a + 1) & 0xFFFFF] << 8));
+    }
+    void write8(uint16_t seg, uint16_t off, uint8_t v) {
+        ram[linear(seg, off)] = v;
+    }
+    void write16(uint16_t seg, uint16_t off, uint16_t v) {
+        uint32_t a = linear(seg, off);
+        ram[a] = static_cast<uint8_t>(v & 0xFF);
+        ram[(a + 1) & 0xFFFFF] = static_cast<uint8_t>((v >> 8) & 0xFF);
+    }
+
+    /// Install a minimal PSP and load the MZ image; apply relocation fixups.
+    void load_mz(uint16_t image_seg, uint16_t psp_seg,
+                 const std::vector<uint8_t>& fileData,
+                 size_t header_bytes, size_t image_bytes,
+                 const std::vector<RelocEntry>& relocs) {
+        // --- PSP ---
+        write8(psp_seg, 0x00, 0xCD);
+        write8(psp_seg, 0x01, 0x20);          // INT 20h
+        write16(psp_seg, 0x02, 0xA000);       // first free paragraph (mem top)
+        write16(psp_seg, 0x0A, 0xFFFF);       // old INT 22
+        write16(psp_seg, 0x0C, 0xFFFF);
+        write16(psp_seg, 0x0E, 0xFFFF);       // old INT 23
+        write16(psp_seg, 0x10, 0xFFFF);
+        write16(psp_seg, 0x12, 0xFFFF);       // old INT 24
+        write16(psp_seg, 0x14, 0xFFFF);
+        write16(psp_seg, 0x16, psp_seg);      // parent PSP
+        // Command tail empty
+        write8(psp_seg, 0x80, 0);
+        write8(psp_seg, 0x81, 0x0D);
+
+        // --- Load image ---
+        size_t copy = std::min(image_bytes, fileData.size() > header_bytes
+                                                ? fileData.size() - header_bytes
+                                                : 0);
+        for (size_t i = 0; i < copy; ++i) {
+            // Images can exceed 64K; walk linear addresses past one segment
+            uint32_t a = (static_cast<uint32_t>(image_seg) * 16u
+                          + static_cast<uint32_t>(i)) & 0xFFFFF;
+            ram[a] = fileData[header_bytes + i];
+        }
+
+        // --- Relocations ---
+        for (const auto& r : relocs) {
+            uint32_t img_off = static_cast<uint32_t>(r.segment) * 16u + r.offset;
+            uint32_t a = (static_cast<uint32_t>(image_seg) * 16u + img_off) & 0xFFFFF;
+            uint16_t orig = static_cast<uint16_t>(ram[a] | (ram[(a + 1) & 0xFFFFF] << 8));
+            uint16_t fixed = static_cast<uint16_t>(orig + image_seg);
+            ram[a] = static_cast<uint8_t>(fixed & 0xFF);
+            ram[(a + 1) & 0xFFFFF] = static_cast<uint8_t>((fixed >> 8) & 0xFF);
+        }
+    }
+};
+
+//=============================================================================
+// Guest files (in-memory map only — never the host filesystem)
+//=============================================================================
+
+/// One simulated read or write transfers at most this many bytes.
+inline constexpr size_t kSimIoCap = 65536;
+
+/// All guest files in one run, summed. A write that would pass this fails.
+inline constexpr size_t kSimGuestTotalCap = 16u * 1024u * 1024u;
+/// Distinct guest-file names in one run. Create past this fails.
+/// Truncate releases vector capacity so a recreate loop cannot keep it.
+inline constexpr size_t kSimGuestFileCap = 64;
+
+struct SimFile {
+    std::string path;       ///< Map key: accepted path, ASCII letters uppercased.
+    uint32_t cursor = 0;    ///< Next byte offset for sequential FCB I/O.
+    uint32_t rec_size = 128;
+};
+
+/// P6 S-5: the CPU registers as one value, so a path can be saved and resumed.
+/// The live CPU is still the registers.h globals; a fork snapshots them here.
+struct CpuRegs {
+    uint16_t ax = 0, bx = 0, cx = 0, dx = 0, si = 0, di = 0, bp = 0, sp = 0;
+    uint16_t cs = 0, ds = 0, es = 0, ss = 0, ip = 0, flags = 0x0202;
+};
+
+static inline CpuRegs sim_save_regs() {
+    return CpuRegs{AX, BX, CX, DX, SI, DI, BP, SP, CS, DS, ES, SS, IP, FLAGS};
+}
+
+static inline void sim_load_regs(const CpuRegs& r) {
+    AX = r.ax; BX = r.bx; CX = r.cx; DX = r.dx; SI = r.si; DI = r.di; BP = r.bp; SP = r.sp;
+    CS = r.cs; DS = r.ds; ES = r.es; SS = r.ss; IP = r.ip; FLAGS = r.flags;
+}
+
+struct SimExplore;
+
+struct SimState {
+    SimMemory mem;
+    uint16_t image_seg = 0;
+    uint16_t psp_seg = 0;
+    /// Guest file bytes keyed by the uppercased accepted path. Not host files.
+    std::unordered_map<std::string, std::vector<uint8_t>> guest_files;
+    std::unordered_map<uint32_t, SimFile> fcb_files; // key = linear FCB addr
+    std::unordered_map<uint16_t, SimFile> handle_files; // DOS handles
+    uint16_t next_handle = 5;
+    uint16_t dta_seg = 0;
+    uint16_t dta_off = 0x80;
+    bool halted = false;
+    bool unsupported_stop = false;
+    std::string halt_reason;
+    uint64_t insn_count = 0;
+    uint64_t int21_count = 0;
+    uint64_t kbd_polls = 0;       ///< INT 16/21 keyboard polls (for auto-key inject)
+    uint64_t keys_injected = 0;
+    uint64_t loops_skipped = 0;   ///< back-edges forced to fall-through
+    csh cs_handle = 0;
+    cs_insn* insn = nullptr;
+
+    // Segment override for current instruction (0xFFFF = default)
+    uint16_t seg_override = 0xFFFF;
+
+    /// Back-edge take counts: key = (CS << 32) | (from_ip << 16) | to_ip
+    std::unordered_map<uint64_t, uint64_t> backedge_hits;
+
+    /// P6 evidence hook: when set, every executed instruction's (CS, IP).
+    std::vector<std::pair<uint16_t, uint16_t>>* witness = nullptr;
+    /// P6: executions on a path that is no longer faithful (Likely evidence).
+    /// Null: they go to @ref witness like faithful ones.
+    std::vector<std::pair<uint16_t, uint16_t>>* witness_likely = nullptr;
+
+    /// S-6: false once a loop skip, injected key, forced branch or scheduled
+    /// dispatch happened upstream on this path.
+    bool faithful = true;
+    /// S-7: per-run allocator (was a function-static, shared across runs).
+    uint16_t next_alloc = 0x9000;
+    /// S-4: vectors the program installed (INT 21h/25h).
+    std::array<bool, 256> vec_set{};
+    /// P6 exploration context (null: single path, today's behaviour).
+    SimExplore* explore = nullptr;
+    int fork_depth = 0;
+};
+
+/// A path waiting to run: state and registers at the fork point.
+struct SimFork {
+    SimState st;
+    CpuRegs regs;
+};
+
+/// P6 exploration: deterministic FIFO of forks, bounded by caps.
+struct SimExplore {
+    std::deque<SimFork> queue;
+    std::set<uint64_t> seen;     ///< fork keys (CS, IP, chosen target)
+    size_t max_paths = 1;        ///< --sim-paths (including the first path)
+    int max_depth = 40;          ///< --sim-fork-depth
+    bool dispatch_int = true;    ///< schedule installed vectors as paths
+    size_t forks_made = 0;
+    size_t dispatches = 0;
+    /// True when one more pending path still fits under max_paths.
+    bool room(size_t started) const { return started + queue.size() < max_paths; }
+    size_t started = 1;
+};
+
+/// Queue a fork of @p st that resumes at @p cs:@p ip (registers otherwise as now).
+static inline bool sim_fork(SimState& st, uint16_t cs, uint16_t ip, uint64_t key) {
+    SimExplore* ex = st.explore;
+    if (ex == nullptr || st.fork_depth >= ex->max_depth || !ex->room(ex->started))
+        return false;
+    if (!ex->seen.insert(key).second)
+        return false;
+    SimFork f{st, sim_save_regs()};
+    f.regs.cs = cs;
+    f.regs.ip = ip;
+    f.st.faithful = false;
+    f.st.fork_depth = st.fork_depth + 1;
+    f.st.halted = false;
+    ex->queue.push_back(std::move(f));
+    ++ex->forks_made;
+    return true;
+}
+
+/// Decide whether a taken branch to @p target_ip should be suppressed (loop skip).
+/// Backward edges (target_ip <= insn_ip) are counted; after loopLimit takes,
+/// we force fall-through so the body ran a few times then the sim continues.
+static inline bool sim_should_skip_backedge(SimState& st, const Options& opts,
+                                            uint16_t insn_ip, uint16_t target_ip,
+                                            uint16_t fallthrough_ip) {
+    if (opts.loopLimit == 0)
+        return false;
+    // Forward jumps are never loops.
+    if (target_ip > insn_ip)
+        return false;
+    // Only *tight* back-edges (small IP span). Long backward jumps are normal
+    // control flow (epilogues, retries) and must not be force-broken.
+    const uint16_t span = static_cast<uint16_t>(insn_ip - target_ip);
+    if (span > opts.loopSpan)
+        return false;
+    (void)fallthrough_ip;
+
+    const uint64_t key = (static_cast<uint64_t>(CS) << 32)
+                       | (static_cast<uint64_t>(insn_ip) << 16)
+                       | target_ip;
+    uint64_t& hits = st.backedge_hits[key];
+    hits++;
+    if (hits <= opts.loopLimit)
+        return false;
+
+    st.loops_skipped++;
+    st.faithful = false;
+    // Log only the first time we break this edge (avoid spam on hot spins).
+    if (hits == opts.loopLimit + 1) {
+        std::cout << std::format(
+            "  [loop-skip] {:04X}:{:04X} -> {:04X} (span {:X}h) after {} takes "
+            "(limit {}); fall-through {:04X}\n",
+            CS, insn_ip, target_ip, span, hits, opts.loopLimit, fallthrough_ip);
+    }
+    return true;
+}
+
+//=============================================================================
+// Helpers: registers via Capstone IDs
+//=============================================================================
+
+static inline bool sim_reg_get(x86_reg r, uint16_t& out) {
+    switch (r) {
+    case X86_REG_AX: out = AX; return true;
+    case X86_REG_BX: out = BX; return true;
+    case X86_REG_CX: out = CX; return true;
+    case X86_REG_DX: out = DX; return true;
+    case X86_REG_SI: out = SI; return true;
+    case X86_REG_DI: out = DI; return true;
+    case X86_REG_BP: out = BP; return true;
+    case X86_REG_SP: out = SP; return true;
+    case X86_REG_CS: out = CS; return true;
+    case X86_REG_DS: out = DS; return true;
+    case X86_REG_ES: out = ES; return true;
+    case X86_REG_SS: out = SS; return true;
+    case X86_REG_IP: out = IP; return true;
+    case X86_REG_AL: out = AL; return true;
+    case X86_REG_AH: out = AH; return true;
+    case X86_REG_BL: out = BL; return true;
+    case X86_REG_BH: out = BH; return true;
+    case X86_REG_CL: out = CL; return true;
+    case X86_REG_CH: out = CH; return true;
+    case X86_REG_DL: out = DL; return true;
+    case X86_REG_DH: out = DH; return true;
+    default: return false;
+    }
+}
+
+static inline bool sim_reg_set(x86_reg r, uint16_t v) {
+    switch (r) {
+    case X86_REG_AX: AX = v; return true;
+    case X86_REG_BX: BX = v; return true;
+    case X86_REG_CX: CX = v; return true;
+    case X86_REG_DX: DX = v; return true;
+    case X86_REG_SI: SI = v; return true;
+    case X86_REG_DI: DI = v; return true;
+    case X86_REG_BP: BP = v; return true;
+    case X86_REG_SP: SP = v; return true;
+    case X86_REG_CS: CS = v; return true;
+    case X86_REG_DS: DS = v; return true;
+    case X86_REG_ES: ES = v; return true;
+    case X86_REG_SS: SS = v; return true;
+    case X86_REG_IP: IP = v; return true;
+    case X86_REG_AL: AL = static_cast<uint8_t>(v); return true;
+    case X86_REG_AH: AH = static_cast<uint8_t>(v); return true;
+    case X86_REG_BL: BL = static_cast<uint8_t>(v); return true;
+    case X86_REG_BH: BH = static_cast<uint8_t>(v); return true;
+    case X86_REG_CL: CL = static_cast<uint8_t>(v); return true;
+    case X86_REG_CH: CH = static_cast<uint8_t>(v); return true;
+    case X86_REG_DL: DL = static_cast<uint8_t>(v); return true;
+    case X86_REG_DH: DH = static_cast<uint8_t>(v); return true;
+    default: return false;
+    }
+}
+
+static inline bool sim_is_byte_reg(x86_reg r) {
+    return r == X86_REG_AL || r == X86_REG_AH || r == X86_REG_BL || r == X86_REG_BH ||
+           r == X86_REG_CL || r == X86_REG_CH || r == X86_REG_DL || r == X86_REG_DH;
+}
+
+static inline void sim_set_szp8(uint8_t v) {
+    ZF = (v == 0) ? 1 : 0;
+    SF = (v & 0x80) ? 1 : 0;
+    // PF approximate: even parity of low 8
+    unsigned p = v;
+    p ^= p >> 4; p ^= p >> 2; p ^= p >> 1;
+    PF = (~p & 1) ? 1 : 0;
+}
+static inline void sim_set_szp16(uint16_t v) {
+    ZF = (v == 0) ? 1 : 0;
+    SF = (v & 0x8000) ? 1 : 0;
+    unsigned p = v & 0xFF;
+    p ^= p >> 4; p ^= p >> 2; p ^= p >> 1;
+    PF = (~p & 1) ? 1 : 0;
+}
+
+static inline void sim_set_cmp(uint16_t left, uint16_t right, bool is8) {
+    if (is8) {
+        uint8_t l = static_cast<uint8_t>(left), r = static_cast<uint8_t>(right);
+        uint8_t res = static_cast<uint8_t>(l - r);
+        CF = (l < r) ? 1 : 0;
+        OF = (((l ^ r) & (l ^ res)) & 0x80) ? 1 : 0;
+        sim_set_szp8(res);
+    } else {
+        uint16_t res = static_cast<uint16_t>(left - right);
+        CF = (left < right) ? 1 : 0;
+        OF = (((left ^ right) & (left ^ res)) & 0x8000) ? 1 : 0;
+        sim_set_szp16(res);
+    }
+}
+
+//=============================================================================
+// Effective address
+//=============================================================================
+
+static inline uint16_t sim_default_seg(SimState& st, x86_reg base, x86_reg index) {
+    if (st.seg_override != 0xFFFF) return st.seg_override;
+    // BP-based → SS, else DS (classic 16-bit)
+    if (base == X86_REG_BP || base == X86_REG_SP)
+        return SS;
+    (void)index;
+    return DS;
+}
+
+static inline bool sim_ea(SimState& st, const cs_x86_op& op,
+                          uint16_t& seg, uint16_t& off) {
+    if (op.type != X86_OP_MEM) return false;
+    const x86_op_mem& m = op.mem;
+    if (m.segment == X86_REG_CS) seg = CS;
+    else if (m.segment == X86_REG_DS) seg = DS;
+    else if (m.segment == X86_REG_ES) seg = ES;
+    else if (m.segment == X86_REG_SS) seg = SS;
+    else seg = sim_default_seg(st, m.base, m.index);
+
+    if (st.seg_override != 0xFFFF)
+        seg = st.seg_override;
+
+    uint32_t ea = static_cast<uint32_t>(static_cast<int32_t>(m.disp));
+    if (m.base != X86_REG_INVALID) {
+        uint16_t bv = 0;
+        if (!sim_reg_get(m.base, bv)) return false;
+        ea += bv;
+    }
+    if (m.index != X86_REG_INVALID) {
+        uint16_t iv = 0;
+        if (!sim_reg_get(m.index, iv)) return false;
+        ea += iv;
+    }
+    off = static_cast<uint16_t>(ea & 0xFFFF);
+    return true;
+}
+
+static inline bool sim_read_op(SimState& st, const cs_x86_op& op, uint16_t& val, bool is8) {
+    if (op.type == X86_OP_REG) {
+        uint16_t v = 0;
+        if (!sim_reg_get(op.reg, v)) return false;
+        val = is8 ? (v & 0xFF) : v;
+        return true;
+    }
+    if (op.type == X86_OP_IMM) {
+        val = static_cast<uint16_t>(op.imm);
+        if (is8) val &= 0xFF;
+        return true;
+    }
+    if (op.type == X86_OP_MEM) {
+        uint16_t seg = 0, off = 0;
+        if (!sim_ea(st, op, seg, off)) return false;
+        val = is8 ? st.mem.read8(seg, off) : st.mem.read16(seg, off);
+        return true;
+    }
+    return false;
+}
+
+static inline bool sim_write_op(SimState& st, const cs_x86_op& op, uint16_t val, bool is8) {
+    if (op.type == X86_OP_REG) {
+        if (is8) val &= 0xFF;
+        return sim_reg_set(op.reg, val);
+    }
+    if (op.type == X86_OP_MEM) {
+        uint16_t seg = 0, off = 0;
+        if (!sim_ea(st, op, seg, off)) return false;
+        if (is8) st.mem.write8(seg, off, static_cast<uint8_t>(val));
+        else st.mem.write16(seg, off, val);
+        return true;
+    }
+    return false;
+}
+
+//=============================================================================
+// Stack
+//=============================================================================
+
+static inline void sim_push(SimState& st, uint16_t v) {
+    SP = static_cast<uint16_t>(SP - 2);
+    st.mem.write16(SS, SP, v);
+}
+static inline uint16_t sim_pop(SimState& st) {
+    uint16_t v = st.mem.read16(SS, SP);
+    SP = static_cast<uint16_t>(SP + 2);
+    return v;
+}
+
+//=============================================================================
+// FCB helpers
+//=============================================================================
+
+static inline std::string sim_fcb_name(SimState& st, uint16_t seg, uint16_t off) {
+    // FCB: +0 drive, +1..8 name, +9..11 ext (space padded)
+    std::string n, e;
+    for (int i = 0; i < 8; ++i) {
+        char c = static_cast<char>(st.mem.read8(seg, static_cast<uint16_t>(off + 1 + i)));
+        if (c != ' ' && c != 0) n.push_back(c);
+    }
+    for (int i = 0; i < 3; ++i) {
+        char c = static_cast<char>(st.mem.read8(seg, static_cast<uint16_t>(off + 9 + i)));
+        if (c != ' ' && c != 0) e.push_back(c);
+    }
+    if (e.empty()) return n;
+    return n + "." + e;
+}
+
+/// Accept @p raw via sim_guest_path_ok and build the uppercase map key.
+static inline bool sim_guest_accept(const std::string& raw, std::string& key) {
+    if (!sim_guest_path_ok(raw.c_str()))
+        return false;
+    key.clear();
+    key.reserve(raw.size());
+    for (unsigned char c : raw) {
+        if (c >= 'a' && c <= 'z')
+            c = static_cast<unsigned char>(c - 'a' + 'A');
+        key.push_back(static_cast<char>(c));
+    }
+    return sim_guest_path_ok(key.c_str());
+}
+
+static inline std::string sim_read_asciiz(SimState& st, uint16_t seg, uint16_t off,
+                                          int limit) {
+    std::string name;
+    for (int i = 0; i < limit; ++i) {
+        char c = static_cast<char>(st.mem.read8(seg, off));
+        if (c == 0)
+            break;
+        name.push_back(c);
+        off = static_cast<uint16_t>(off + 1);
+    }
+    return name;
+}
+
+static inline uint16_t sim_fcb_rec_size(SimState& st, uint16_t seg, uint16_t off) {
+    uint16_t rec = st.mem.read16(seg, static_cast<uint16_t>(off + 0x0E));
+    if (rec == 0)
+        rec = 128;
+    return rec;
+}
+
+static inline uint32_t sim_fcb_random_rec(SimState& st, uint16_t seg, uint16_t off) {
+    return static_cast<uint32_t>(st.mem.read8(seg, static_cast<uint16_t>(off + 0x21)))
+         | (static_cast<uint32_t>(st.mem.read8(seg, static_cast<uint16_t>(off + 0x22))) << 8)
+         | (static_cast<uint32_t>(st.mem.read8(seg, static_cast<uint16_t>(off + 0x23))) << 16);
+}
+
+/// Copy at most @p want bytes from the guest file into DOS memory.
+/// @p want must already be <= kSimIoCap. Does not allocate.
+static inline size_t sim_guest_read_mem(SimState& st, const std::vector<uint8_t>& data,
+                                        uint32_t cursor, uint16_t seg, uint16_t off,
+                                        size_t want) {
+    if (want == 0 || static_cast<uint64_t>(cursor) >= data.size())
+        return 0;
+    size_t avail = data.size() - static_cast<size_t>(cursor);
+    size_t n = want < avail ? want : avail;
+    for (size_t i = 0; i < n; ++i) {
+        st.mem.write8(seg, static_cast<uint16_t>(off + static_cast<uint16_t>(i)),
+                      data[static_cast<size_t>(cursor) + i]);
+    }
+    return n;
+}
+
+/**
+ * @brief Drop a guest file's bytes and its capacity.
+ *
+ * @c clear keeps the allocation. A truncate-and-recreate loop would
+ * otherwise throw @c std::bad_alloc under the default breakpoint budget.
+ *
+ * @param data Guest file buffer. Empty and capacity-free on return.
+ */
+static inline void sim_guest_truncate(std::vector<uint8_t>& data)
+{
+    std::vector<uint8_t> empty;
+    data.swap(empty);
+}
+
+/**
+ * @brief True when creating @p gkey would stay within @c kSimGuestFileCap.
+ *
+ * An existing key may be truncated. A new key at the cap is refused.
+ *
+ * @param st   Simulator state.
+ * @param gkey Sandbox file name.
+ * @return False when this would be a new file past the cap.
+ */
+static inline bool sim_guest_can_create(const SimState& st, const std::string& gkey)
+{
+    if (st.guest_files.contains(gkey))
+    {
+        return true;
+    }
+    return st.guest_files.size() < kSimGuestFileCap;
+}
+
+/// Bytes currently stored in every guest file of this run.
+static inline size_t sim_guest_total_bytes(const SimState& st)
+{
+    size_t n = 0;
+    for (const auto& kv : st.guest_files)
+    {
+        n += kv.second.size();
+    }
+    return n;
+}
+
+/**
+ * @brief Copy at most @p want bytes from DOS memory into the guest file.
+ *
+ * Grows the file by at most kSimIoCap bytes. A cursor past EOF writes nothing
+ * (no guest-controlled hole allocation). Growth that would make the sum of
+ * all guest files exceed kSimGuestTotalCap writes nothing.
+ *
+ * @return Bytes written, or `size_t(-1)` when the total cap would be passed.
+ */
+static inline size_t sim_guest_write_mem(SimState& st, std::vector<uint8_t>& data,
+                                         uint32_t cursor, uint16_t seg, uint16_t off,
+                                         size_t want) {
+    if (want == 0 || static_cast<uint64_t>(cursor) > data.size())
+        return 0;
+    if (want > kSimIoCap)
+        want = kSimIoCap;
+    size_t cur = static_cast<size_t>(cursor);
+    size_t max_end = cur + want;
+    if (max_end < cur)
+        return 0;
+    if (max_end > data.size()) {
+        size_t growth = max_end - data.size();
+        if (growth > kSimIoCap) {
+            want = (data.size() - cur) + kSimIoCap;
+            max_end = cur + want;
+            growth = max_end - data.size();
+        }
+        const size_t total = sim_guest_total_bytes(st);
+        const size_t room = (total >= kSimGuestTotalCap) ? 0 : (kSimGuestTotalCap - total);
+        if (growth > room)
+        {
+            return static_cast<size_t>(-1);
+        }
+        data.resize(max_end, 0);
+    }
+    for (size_t i = 0; i < want; ++i) {
+        data[cur + i] = st.mem.read8(seg, static_cast<uint16_t>(off + static_cast<uint16_t>(i)));
+    }
+    return want;
+}
+
+//=============================================================================
+// INT 21h stubs
+//=============================================================================
+
+static inline void sim_int21(SimState& st, const Options& opts) {
+    st.int21_count++;
+    const uint8_t ah = AH;
+    CF = 0;
+
+    auto log_int = [&](std::string_view msg) {
+        // Always log file-ish / exit / string; skip spammy console I/O unless --trace
+        const bool noisy = (ah == 0x02 || ah == 0x06 || ah == 0x0B || ah == 0x0C);
+        if (noisy && !opts.simTrace) return;
+        std::cout << std::format("  [INT21 AH={:02X}h] {}\n", ah, msg);
+    };
+
+    switch (ah) {
+    case 0x00: // terminate
+    case 0x4C: // exit with code AL
+        st.halted = true;
+        st.halt_reason = std::format("DOS terminate (AH={:02X}h, AL={:02X}h)", ah, AL);
+        log_int(st.halt_reason);
+        return;
+
+    case 0x09: { // print $-string at DS:DX
+        std::string s;
+        uint16_t off = DX;
+        for (int i = 0; i < 4096; ++i) {
+            char c = static_cast<char>(st.mem.read8(DS, off));
+            if (c == '$') break;
+            s.push_back(c);
+            off = static_cast<uint16_t>(off + 1);
+        }
+        log_int(std::format("write string DS:{:04X}: \"{}\"", DX, s));
+        std::cout << "  DOS: " << s;
+        if (s.empty() || s.back() != '\n') std::cout << "\n";
+        return;
+    }
+
+    case 0x02: // write char DL
+        log_int(std::format("write char '{:c}'", DL >= 32 && DL < 127 ? DL : '.'));
+        return;
+
+    case 0x06: // direct console I/O
+        if (DL == 0xFF) {
+            // input: after a few polls inject Space so menus can advance
+            st.kbd_polls++;
+            if (st.kbd_polls > 30) {
+                AL = ' '; ZF = 0;
+                st.kbd_polls = 0;
+                st.keys_injected++; st.faithful = false;
+            } else {
+                AL = 0; ZF = 1;
+            }
+        } else {
+            log_int(std::format("console out {:02X}h", DL));
+        }
+        return;
+
+    case 0x07: // char input no echo
+    case 0x08: // char input no echo
+        AL = ' ';
+        st.keys_injected++; st.faithful = false;
+        return;
+
+    case 0x0A: { // buffered input DS:DX
+        // structure: max, count, data...
+        uint8_t max = st.mem.read8(DS, DX);
+        if (max > 0) {
+            st.mem.write8(DS, static_cast<uint16_t>(DX + 1), 0); // zero length
+        }
+        return;
+    }
+
+    case 0x0B: // check keyboard
+        st.kbd_polls++;
+        AL = (st.kbd_polls > 30) ? 0xFF : 0;
+        if (AL) st.kbd_polls = 0;
+        return;
+
+    case 0x0C: // flush + invoke AL
+        AL = ' ';
+        st.keys_injected++; st.faithful = false;
+        return;
+
+    case 0x1A: // set DTA
+        st.dta_seg = DS;
+        st.dta_off = DX;
+        log_int(std::format("set DTA {:04X}:{:04X}", DS, DX));
+        return;
+
+    case 0x25: // set vector
+        log_int(std::format("set INT {:02X}h vector to {:04X}:{:04X}", AL, DS, DX));
+        // Store in IVT
+        st.mem.write16(0, static_cast<uint16_t>(AL * 4), DX);
+        st.mem.write16(0, static_cast<uint16_t>(AL * 4 + 2), DS);
+        st.vec_set[AL] = true;
+        // P6: schedule the handler as its own path (returns into PSP:0, INT 20h).
+        if (st.explore != nullptr && st.explore->dispatch_int && AL != 0x20 && AL != 0x21) {
+            const CpuRegs keep = sim_save_regs();
+            const uint16_t sp0 = SP;
+            sim_push(st, FLAGS);
+            sim_push(st, st.psp_seg);
+            sim_push(st, 0x0000);
+            if (sim_fork(st, DS, DX, (0xFFFFull << 48) | (static_cast<uint64_t>(DS) << 16) | DX))
+                ++st.explore->dispatches;
+            sim_load_regs(keep);
+            SP = sp0;
+        }
+        return;
+
+    case 0x30: // DOS version
+        AX = 0x0005; // 5.00
+        BX = 0xFF00;
+        CX = 0;
+        log_int("get DOS version → 5.0");
+        return;
+
+    case 0x35: // get vector
+        BX = st.mem.read16(0, static_cast<uint16_t>(AL * 4));
+        ES = st.mem.read16(0, static_cast<uint16_t>(AL * 4 + 2));
+        log_int(std::format("get INT {:02X}h vector → {:04X}:{:04X}", AL, ES, BX));
+        return;
+
+    case 0x48: { // allocate paragraphs BX
+        // Toy allocator: hand out from high conventional mem downward
+        uint16_t paras = BX;
+        if (st.next_alloc < paras) {
+            CF = 1; AX = 8; BX = st.next_alloc; // not enough
+            log_int(std::format("alloc {:04X}h paras → FAIL", paras));
+        } else {
+            st.next_alloc = static_cast<uint16_t>(st.next_alloc - paras);
+            AX = st.next_alloc;
+            CF = 0;
+            log_int(std::format("alloc {:04X}h paras → {:04X}h", paras, AX));
+        }
+        return;
+    }
+
+    case 0x49: // free block ES
+        log_int(std::format("free block ES={:04X}h (ignored)", ES));
+        CF = 0;
+        return;
+
+    case 0x4A: // resize ES to BX paras
+        log_int(std::format("resize ES={:04X}h to {:04X}h paras (stub ok)", ES, BX));
+        CF = 0;
+        return;
+
+    case 0x0F: { // FCB open — guest map only
+        std::string raw = sim_fcb_name(st, DS, DX);
+        std::string gkey;
+        uint32_t slot = SimMemory::linear(DS, DX);
+        if (!sim_guest_accept(raw, gkey) || !st.guest_files.contains(gkey)) {
+            AL = 0xFF;
+            log_int(std::format("FCB open '{}' → FAIL", raw));
+        } else {
+            SimFile sf;
+            sf.path = gkey;
+            sf.cursor = 0;
+            st.fcb_files[slot] = sf;
+            st.mem.write16(DS, static_cast<uint16_t>(DX + 0x0E), 128);
+            AL = 0;
+            log_int(std::format("FCB open '{}' → OK", gkey));
+        }
+        return;
+    }
+
+    case 0x10: { // FCB close
+        uint32_t slot = SimMemory::linear(DS, DX);
+        auto it = st.fcb_files.find(slot);
+        if (it != st.fcb_files.end()) {
+            log_int(std::format("FCB close '{}'", it->second.path));
+            st.fcb_files.erase(it);
+            AL = 0;
+        } else {
+            AL = 0xFF;
+            log_int("FCB close → unknown FCB");
+        }
+        return;
+    }
+
+    case 0x14:   // sequential read
+    case 0x15:   // sequential write
+    case 0x21:   // random read
+    case 0x22:   // random write
+    case 0x27:   // random block read
+    case 0x28: { // random block write
+        const bool is_write = (ah == 0x15 || ah == 0x22 || ah == 0x28);
+        uint32_t slot = SimMemory::linear(DS, DX);
+        auto it = st.fcb_files.find(slot);
+        if (it == st.fcb_files.end() ||
+            !sim_guest_path_ok(it->second.path.c_str())) {
+            AL = 1;
+            log_int(is_write ? "FCB write → no open FCB" : "FCB read → no open FCB");
+            return;
+        }
+        auto git = st.guest_files.find(it->second.path);
+        if (git == st.guest_files.end()) {
+            AL = 1;
+            log_int(is_write ? "FCB write → missing guest file"
+                             : "FCB read → missing guest file");
+            return;
+        }
+        uint16_t rec_size = sim_fcb_rec_size(st, DS, DX);
+        const bool block = (ah == 0x27 || ah == 0x28);
+        uint16_t recs = block ? CX : 1;
+        uint64_t requested = static_cast<uint64_t>(recs) * static_cast<uint64_t>(rec_size);
+        bool capped = requested > kSimIoCap;
+        size_t want = capped ? kSimIoCap : static_cast<size_t>(requested);
+
+        uint32_t cursor = it->second.cursor;
+        if (ah == 0x21 || ah == 0x22 || ah == 0x27 || ah == 0x28) {
+            uint64_t pos = static_cast<uint64_t>(sim_fcb_random_rec(st, DS, DX))
+                         * static_cast<uint64_t>(rec_size);
+            if (pos > 0xFFFFFFFFu) {
+                AL = 1;
+                if (block)
+                    CX = 0;
+                log_int(std::format("FCB {} '{}' → partial (record past 4GiB)",
+                                    is_write ? "write" : "read", it->second.path));
+                return;
+            }
+            cursor = static_cast<uint32_t>(pos);
+        }
+
+        size_t n = is_write
+            ? sim_guest_write_mem(st, git->second, cursor, st.dta_seg, st.dta_off, want)
+            : sim_guest_read_mem(st, git->second, cursor, st.dta_seg, st.dta_off, want);
+        if (n == static_cast<size_t>(-1))
+        {
+            AL = 1;
+            if (block)
+            {
+                CX = 0;
+            }
+            log_int(std::format("FCB write '{}' → FAIL (guest file cap)", it->second.path));
+            return;
+        }
+        if (static_cast<uint64_t>(cursor) + n <= 0xFFFFFFFFu)
+            it->second.cursor = static_cast<uint32_t>(static_cast<uint64_t>(cursor) + n);
+        bool partial = capped || static_cast<uint64_t>(n) < requested;
+        if (block) {
+            uint64_t got = rec_size == 0 ? 0 : n / rec_size;
+            if (got > 0xFFFF)
+                got = 0xFFFF;
+            CX = static_cast<uint16_t>(got);
+        }
+        AL = partial ? 1 : 0;
+        log_int(std::format("FCB {} {} bytes {} '{}' → DTA {:04X}:{:04X} (AL={})",
+                            is_write ? "write" : "read", n,
+                            is_write ? "to" : "from",
+                            it->second.path, st.dta_seg, st.dta_off, AL));
+        return;
+    }
+
+    case 0x16: { // FCB create — truncates the guest map entry, not a host file
+        std::string raw = sim_fcb_name(st, DS, DX);
+        std::string gkey;
+        uint32_t slot = SimMemory::linear(DS, DX);
+        if (!sim_guest_accept(raw, gkey)) {
+            AL = 0xFF;
+            log_int(std::format("FCB create '{}' → FAIL", raw));
+        } else if (!sim_guest_can_create(st, gkey)) {
+            AL = 0xFF;
+            log_int(std::format("FCB create '{}' → FAIL (guest file cap)", raw));
+        } else {
+            sim_guest_truncate(st.guest_files[gkey]);
+            SimFile sf;
+            sf.path = gkey;
+            sf.cursor = 0;
+            st.fcb_files[slot] = sf;
+            st.mem.write16(DS, static_cast<uint16_t>(DX + 0x0E), 128);
+            AL = 0;
+            log_int(std::format("FCB create '{}' → OK", gkey));
+        }
+        return;
+    }
+
+    case 0x3C:   // handle create (truncate)
+    case 0x3D: { // handle open DS:DX asciiz
+        std::string raw = sim_read_asciiz(st, DS, DX, 128);
+        std::string gkey;
+        if (!sim_guest_accept(raw, gkey)) {
+            CF = 1;
+            AX = 3;
+            log_int(std::format("handle {} '{}' → FAIL",
+                                ah == 0x3C ? "create" : "open", raw));
+            return;
+        }
+        if (ah == 0x3C) {
+            if (!sim_guest_can_create(st, gkey))
+            {
+                CF = 1;
+                AX = 3;
+                log_int(std::format("handle create '{}' → FAIL (guest file cap)", raw));
+                return;
+            }
+            sim_guest_truncate(st.guest_files[gkey]);
+        } else if (!st.guest_files.contains(gkey)) {
+            CF = 1;
+            AX = 2;
+            log_int(std::format("handle open '{}' → FAIL", raw));
+            return;
+        }
+        uint16_t h = st.next_handle++;
+        SimFile sf;
+        sf.path = gkey;
+        sf.cursor = 0;
+        st.handle_files[h] = sf;
+        AX = h;
+        CF = 0;
+        log_int(std::format("handle {} '{}' → handle {:04X}h",
+                            ah == 0x3C ? "create" : "open", gkey, h));
+        return;
+    }
+
+    case 0x3E: { // close handle BX
+        auto it = st.handle_files.find(BX);
+        if (it == st.handle_files.end()) {
+            CF = 1; AX = 6;
+            log_int(std::format("handle close {:04X}h → FAIL", BX));
+        } else {
+            log_int(std::format("handle close {:04X}h ({})", BX, it->second.path));
+            st.handle_files.erase(it);
+            CF = 0;
+        }
+        return;
+    }
+
+    case 0x3F:   // read BX handle, CX bytes, DS:DX buffer
+    case 0x40: { // write BX handle, CX bytes, DS:DX buffer
+        const bool is_write = (ah == 0x40);
+        auto it = st.handle_files.find(BX);
+        if (it == st.handle_files.end() ||
+            !sim_guest_path_ok(it->second.path.c_str())) {
+            CF = 1; AX = 6;
+            log_int(is_write ? "handle write → bad handle" : "handle read → bad handle");
+            return;
+        }
+        auto git = st.guest_files.find(it->second.path);
+        if (git == st.guest_files.end()) {
+            CF = 1; AX = 6;
+            log_int(is_write ? "handle write → missing guest file"
+                             : "handle read → missing guest file");
+            return;
+        }
+        uint64_t requested = CX;
+        bool capped = requested > kSimIoCap;
+        size_t want = capped ? kSimIoCap : static_cast<size_t>(requested);
+        uint32_t cursor = it->second.cursor;
+        size_t n = is_write
+            ? sim_guest_write_mem(st, git->second, cursor, DS, DX, want)
+            : sim_guest_read_mem(st, git->second, cursor, DS, DX, want);
+        if (n == static_cast<size_t>(-1))
+        {
+            CF = 1;
+            AX = 5;
+            log_int(std::format("handle write '{}' → FAIL AX=5 (guest file cap)",
+                                it->second.path));
+            return;
+        }
+        if (static_cast<uint64_t>(cursor) + n <= 0xFFFFFFFFu)
+            it->second.cursor = static_cast<uint32_t>(static_cast<uint64_t>(cursor) + n);
+        AX = static_cast<uint16_t>(n > 0xFFFF ? 0xFFFF : n);
+        CF = 0;
+        log_int(std::format("handle {} {} bytes {} '{}' -> DS:{:04X}",
+                            is_write ? "write" : "read", n,
+                            is_write ? "to" : "from",
+                            it->second.path, DX));
+        return;
+    }
+
+    case 0x2A: // get date
+        CX = 2026; DH = 7; DL = 16; AL = 4;
+        return;
+    case 0x2C: // get time
+        CH = 12; CL = 0; DH = 0; DL = 0;
+        return;
+
+    default:
+        log_int(std::format("unimplemented → CF=1 ({})",
+                            format_int_annotation(0x21, ah, AL)));
+        CF = 1;
+        AX = 1;
+        return;
+    }
+}
+
+static inline void sim_int(SimState& st, const Options& opts, uint8_t num) {
+    if (num == 0x21) {
+        sim_int21(st, opts);
+        return;
+    }
+    if (num == 0x20) {
+        st.halted = true;
+        st.halt_reason = "INT 20h terminate";
+        std::cout << "  [INT20] terminate\n";
+        return;
+    }
+    if (num == 0x10) {
+        // Video: ignore most; log mode set
+        if (AH == 0x00)
+            std::cout << std::format("  [INT10] set video mode {:02X}h\n", AL);
+        return;
+    }
+    if (num == 0x16) {
+        // Keyboard: after idle polls inject Space (scan 0x39) then Enter
+        if (AH == 0x01) {
+            st.kbd_polls++;
+            if (st.kbd_polls > 40) {
+                ZF = 0;
+                AX = (st.keys_injected & 1) ? 0x1C0D : 0x3920;
+            } else {
+                ZF = 1;
+            }
+            return;
+        }
+        if (AH == 0x00) {
+            AX = (st.keys_injected & 1) ? 0x1C0D : 0x3920;
+            st.keys_injected++; st.faithful = false;
+            st.kbd_polls = 0;
+            return;
+        }
+        return;
+    }
+    std::cout << std::format("  [INT{:02X}] unhandled AH={:02X}h\n", num, AH);
+}
+
+//=============================================================================
+// Breakpoints
+//=============================================================================
+
+static inline bool sim_bp_match_ip(const Breakpoint& bp) {
+    if (!bp.enabled) return false;
+    if (bp.type == BreakpointType::Ip)
+        return IP == bp.ip;
+    if (bp.type == BreakpointType::CsIp)
+        return CS == bp.cs && IP == bp.ip;
+    return false;
+}
+
+static inline bool sim_bp_match_int(const Breakpoint& bp, uint8_t int_num) {
+    if (!bp.enabled) return false;
+    if (bp.type == BreakpointType::Int)
+        return bp.int_num == int_num;
+    if (bp.type == BreakpointType::IntAh)
+        return bp.int_num == int_num && bp.has_ah && bp.ah == AH;
+    return false;
+}
+
+static inline uint16_t sim_resolve_seg_token(std::string_view tok) {
+    if (tok == "cs") return CS;
+    if (tok == "ds") return DS;
+    if (tok == "es") return ES;
+    if (tok == "ss") return SS;
+    uint16_t v = 0;
+    Options::parse_u16_hex(tok, v);
+    return v;
+}
+
+static inline void sim_print_regs() {
+    std::cout << std::format(
+        "  AX={:04X} BX={:04X} CX={:04X} DX={:04X}  SI={:04X} DI={:04X} BP={:04X} SP={:04X}\n"
+        "  CS={:04X} DS={:04X} ES={:04X} SS={:04X}  IP={:04X}  FLAGS={:04X}"
+        "  [C={} Z={} S={} O={} D={} I={}]\n",
+        AX, BX, CX, DX, SI, DI, BP, SP,
+        CS, DS, ES, SS, IP, FLAGS,
+        static_cast<unsigned>(CF), static_cast<unsigned>(ZF),
+        static_cast<unsigned>(SF), static_cast<unsigned>(OF),
+        static_cast<unsigned>(DF), static_cast<unsigned>(IF));
+}
+
+static inline void sim_dump_mem(SimState& st, const DumpSpec& d) {
+    if (!d.valid) return;
+    uint16_t seg = sim_resolve_seg_token(d.seg_token);
+    std::cout << std::format("  dump {:s}:{:04X} len {:04X}h:\n", d.seg_token, d.offset, d.length);
+    std::vector<uint8_t> tmp(d.length);
+    for (uint16_t i = 0; i < d.length; ++i)
+        tmp[i] = st.mem.read8(seg, static_cast<uint16_t>(d.offset + i));
+    // Reuse hex printer with fake vector at offset 0 — print_hex_dump uses vector offset
+    print_hex_dump(tmp, 0, tmp.size(), "");
+}
+
+static inline bool sim_fire_bps_ip(SimState& st, Options& opts) {
+    bool should_stop = false;
+    for (auto& bp : opts.breakpoints) {
+        if (!sim_bp_match_ip(bp)) continue;
+        bp.hits++;
+        if (bp.log) {
+            std::cout << std::format("\n*** BREAKPOINT hit #{}  {}  at {:04X}:{:04X}  (insn {})\n",
+                                     bp.hits, bp.raw, CS, IP, st.insn_count);
+            sim_print_regs();
+            sim_dump_mem(st, opts.dumpOnHit);
+        }
+        if (bp.once) bp.enabled = false;
+        if (bp.stop) should_stop = true;
+    }
+    return should_stop;
+}
+
+static inline bool sim_fire_bps_int(SimState& st, Options& opts, uint8_t int_num) {
+    bool should_stop = false;
+    for (auto& bp : opts.breakpoints) {
+        if (!sim_bp_match_int(bp, int_num)) continue;
+        bp.hits++;
+        if (bp.log) {
+            std::cout << std::format(
+                "\n*** BREAKPOINT hit #{}  {}  INT {:02X}h AH={:02X}h AL={:02X}h  at {:04X}:{:04X}  (insn {})\n",
+                bp.hits, bp.raw, int_num, AH, AL, CS, IP, st.insn_count);
+            std::cout << "  " << format_int_annotation(int_num, AH, AL) << "\n";
+            sim_print_regs();
+            // Auto-dump FCB (37 bytes) on FCB-ish calls
+            if (int_num == 0x21 && (AH == 0x0F || AH == 0x10 || AH == 0x14 ||
+                                    AH == 0x15 || AH == 0x16 || AH == 0x21 ||
+                                    AH == 0x22 || AH == 0x27 || AH == 0x28)) {
+                std::string nm = sim_fcb_name(st, DS, DX);
+                std::cout << std::format("  FCB @ DS:{:04X} name='{}'\n", DX, nm);
+                DumpSpec fcb_dump;
+                fcb_dump.valid = true;
+                fcb_dump.seg_token = "ds";
+                fcb_dump.offset = DX;
+                fcb_dump.length = 0x25;
+                sim_dump_mem(st, fcb_dump);
+            }
+            if (int_num == 0x21 && AH == 0x3D) {
+                std::string name;
+                uint16_t off = DX;
+                for (int i = 0; i < 64; ++i) {
+                    char c = static_cast<char>(st.mem.read8(DS, off));
+                    if (!c) break;
+                    name.push_back(c);
+                    off = static_cast<uint16_t>(off + 1);
+                }
+                std::cout << std::format("  asciiz @ DS:{:04X} = '{}'\n", DX, name);
+            }
+            sim_dump_mem(st, opts.dumpOnHit);
+        }
+        if (bp.once) bp.enabled = false;
+        if (bp.stop) should_stop = true;
+    }
+    return should_stop;
+}
+
+//=============================================================================
+// Condition codes for jcc
+//=============================================================================
+
+static inline int sim_jcc(const std::string& m) {
+    if (m == "je" || m == "jz") return ZF ? 1 : 0;
+    if (m == "jne" || m == "jnz") return ZF ? 0 : 1;
+    if (m == "jb" || m == "jnae" || m == "jc") return CF ? 1 : 0;
+    if (m == "jnb" || m == "jae" || m == "jnc") return CF ? 0 : 1;
+    if (m == "jbe" || m == "jna") return (CF || ZF) ? 1 : 0;
+    if (m == "ja" || m == "jnbe") return (CF || ZF) ? 0 : 1;
+    if (m == "js") return SF ? 1 : 0;
+    if (m == "jns") return SF ? 0 : 1;
+    if (m == "jo") return OF ? 1 : 0;
+    if (m == "jno") return OF ? 0 : 1;
+    if (m == "jp" || m == "jpe") return PF ? 1 : 0;
+    if (m == "jnp" || m == "jpo") return PF ? 0 : 1;
+    if (m == "jl" || m == "jnge") return (SF != OF) ? 1 : 0;
+    if (m == "jge" || m == "jnl") return (SF == OF) ? 1 : 0;
+    if (m == "jle" || m == "jng") return (ZF || SF != OF) ? 1 : 0;
+    if (m == "jg" || m == "jnle") return (!ZF && SF == OF) ? 1 : 0;
+    if (m == "jcxz") return (CX == 0) ? 1 : 0;
+    return -1;
+}
+
+//=============================================================================
+// Execute one Capstone instruction; returns false if unsupported/halt
+//=============================================================================
+
+static inline bool sim_exec_insn(SimState& st, Options& opts) {
+    const cs_insn* in = st.insn;
+    const cs_x86& x86 = in->detail->x86;
+    std::string mnem = in->mnemonic;
+    // Capstone may fold REP into the mnemonic ("rep movsb") rather than only
+    // setting x86.prefix[]. Normalize so string ops and others still match.
+    bool rep_prefix = false;
+    bool repne_prefix = false;
+    if (mnem.starts_with("rep ")) {
+        rep_prefix = true;
+        mnem = mnem.substr(4);
+    } else if (mnem.starts_with("repe ") || mnem.starts_with("repz ")) {
+        rep_prefix = true;
+        mnem = mnem.substr(mnem.find(' ') + 1);
+    } else if (mnem.starts_with("repne ") || mnem.starts_with("repnz ")) {
+        repne_prefix = true;
+        mnem = mnem.substr(mnem.find(' ') + 1);
+    }
+    const uint16_t next_ip = static_cast<uint16_t>(IP + in->size);
+
+    // Segment prefixes from Capstone detail
+    st.seg_override = 0xFFFF;
+    for (int i = 0; i < x86.prefix[0] || i < 4; ++i) {
+        // Capstone stores segment override in prefix[1] typically
+    }
+    if (x86.prefix[1] == 0x2E) st.seg_override = CS;
+    else if (x86.prefix[1] == 0x3E) st.seg_override = DS;
+    else if (x86.prefix[1] == 0x26) st.seg_override = ES;
+    else if (x86.prefix[1] == 0x36) st.seg_override = SS;
+    else if (x86.prefix[1] == 0x64) st.seg_override = DS; // FS→DS fallback
+    else if (x86.prefix[1] == 0x65) st.seg_override = DS;
+
+    // Also scan raw bytes for override as first byte
+    if (in->size > 0) {
+        uint8_t b0 = in->bytes[0];
+        if (b0 == 0x2E) st.seg_override = CS;
+        else if (b0 == 0x3E) st.seg_override = DS;
+        else if (b0 == 0x26) st.seg_override = ES;
+        else if (b0 == 0x36) st.seg_override = SS;
+    }
+
+    auto op = [&](int i) -> const cs_x86_op& { return x86.operands[i]; };
+    auto is8 = [&](int i) {
+        if (x86.operands[i].type == X86_OP_REG)
+            return sim_is_byte_reg(x86.operands[i].reg);
+        return x86.operands[i].size == 1;
+    };
+
+    // ---- control / flags ----
+    if (mnem == "nop" || mnem == "pause") { IP = next_ip; return true; }
+    if (mnem == "cli") { IF = 0; IP = next_ip; return true; }
+    if (mnem == "sti") { IF = 1; IP = next_ip; return true; }
+    if (mnem == "cld") { DF = 0; IP = next_ip; return true; }
+    if (mnem == "std") { DF = 1; IP = next_ip; return true; }
+    if (mnem == "clc") { CF = 0; IP = next_ip; return true; }
+    if (mnem == "stc") { CF = 1; IP = next_ip; return true; }
+    if (mnem == "cmc") { CF = CF ? 0 : 1; IP = next_ip; return true; }
+    if (mnem == "sahf") {
+        FLAGS = static_cast<uint16_t>((FLAGS & 0xFF00) | (AH & 0xD5) | 0x02);
+        IP = next_ip; return true;
+    }
+    if (mnem == "lahf") { AH = static_cast<uint8_t>(FLAGS & 0xFF); IP = next_ip; return true; }
+
+    // ---- mov ----
+    if (mnem == "mov" && x86.op_count == 2) {
+        bool b = is8(0) || is8(1);
+        uint16_t v = 0;
+        if (!sim_read_op(st, op(1), v, b)) return false;
+        if (!sim_write_op(st, op(0), v, b)) return false;
+        IP = next_ip; return true;
+    }
+
+    // ---- lea ----
+    if (mnem == "lea" && x86.op_count == 2 && op(0).type == X86_OP_REG && op(1).type == X86_OP_MEM) {
+        uint16_t seg = 0, off = 0;
+        // LEA ignores segment
+        uint16_t save = st.seg_override;
+        st.seg_override = 0xFFFF;
+        if (!sim_ea(st, op(1), seg, off)) return false;
+        st.seg_override = save;
+        sim_reg_set(op(0).reg, off);
+        IP = next_ip; return true;
+    }
+
+    // ---- xchg ----
+    if (mnem == "xchg" && x86.op_count == 2) {
+        bool b = is8(0);
+        uint16_t a = 0, c = 0;
+        if (!sim_read_op(st, op(0), a, b) || !sim_read_op(st, op(1), c, b)) return false;
+        if (!sim_write_op(st, op(0), c, b) || !sim_write_op(st, op(1), a, b)) return false;
+        IP = next_ip; return true;
+    }
+
+    // ---- push / pop ----
+    if (mnem == "push" && x86.op_count == 1) {
+        uint16_t v = 0;
+        if (op(0).type == X86_OP_REG && op(0).reg == X86_REG_CS) v = CS;
+        else if (!sim_read_op(st, op(0), v, false)) return false;
+        sim_push(st, v);
+        IP = next_ip; return true;
+    }
+    if (mnem == "pop" && x86.op_count == 1) {
+        uint16_t v = sim_pop(st);
+        if (!sim_write_op(st, op(0), v, false)) return false;
+        IP = next_ip; return true;
+    }
+    if (mnem == "pushf" || mnem == "pushfd") { sim_push(st, FLAGS); IP = next_ip; return true; }
+    if (mnem == "popf" || mnem == "popfd") {
+        FLAGS = static_cast<uint16_t>((sim_pop(st) & 0x0FD7) | 0x0002);
+        IP = next_ip; return true;
+    }
+    if (mnem == "pusha" || mnem == "pushaw") {
+        uint16_t sp0 = SP;
+        sim_push(st, AX); sim_push(st, CX); sim_push(st, DX); sim_push(st, BX);
+        sim_push(st, sp0); sim_push(st, BP); sim_push(st, SI); sim_push(st, DI);
+        IP = next_ip; return true;
+    }
+    if (mnem == "popa" || mnem == "popaw") {
+        DI = sim_pop(st); SI = sim_pop(st); BP = sim_pop(st);
+        (void)sim_pop(st); // SP discarded
+        BX = sim_pop(st); DX = sim_pop(st); CX = sim_pop(st); AX = sim_pop(st);
+        IP = next_ip; return true;
+    }
+
+    // ---- alu binary ----
+    auto alu_bin = [&](auto apply, bool write_dst, bool is_cmp) -> bool {
+        if (x86.op_count != 2) return false;
+        bool b = is8(0);
+        uint16_t d = 0, s = 0;
+        if (!sim_read_op(st, op(0), d, b) || !sim_read_op(st, op(1), s, b)) return false;
+        uint16_t r = apply(d, s, b);
+        if (is_cmp) {
+            sim_set_cmp(d, s, b);
+        } else if (write_dst) {
+            if (!sim_write_op(st, op(0), r, b)) return false;
+        }
+        IP = next_ip;
+        return true;
+    };
+
+    if (mnem == "add") {
+        return alu_bin([&](uint16_t d, uint16_t s, bool b) {
+            uint32_t r = static_cast<uint32_t>(d) + s;
+            CF = b ? ((r & 0x100) != 0) : ((r & 0x10000) != 0);
+            uint16_t res = static_cast<uint16_t>(r);
+            if (b) {
+                OF = (((d ^ res) & (s ^ res)) & 0x80) ? 1 : 0;
+                sim_set_szp8(static_cast<uint8_t>(res));
+            } else {
+                OF = (((d ^ res) & (s ^ res)) & 0x8000) ? 1 : 0;
+                sim_set_szp16(res);
+            }
+            return res;
+        }, true, false);
+    }
+    if (mnem == "sub") {
+        return alu_bin([&](uint16_t d, uint16_t s, bool b) {
+            sim_set_cmp(d, s, b);
+            return static_cast<uint16_t>(d - s);
+        }, true, false);
+    }
+    if (mnem == "cmp") {
+        return alu_bin([&](uint16_t d, uint16_t s, bool b) {
+            (void)d; (void)s; (void)b;
+            return uint16_t{0};
+        }, false, true);
+    }
+    if (mnem == "xor") {
+        return alu_bin([&](uint16_t d, uint16_t s, bool b) {
+            uint16_t r = static_cast<uint16_t>(d ^ s);
+            CF = 0; OF = 0;
+            if (b) sim_set_szp8(static_cast<uint8_t>(r)); else sim_set_szp16(r);
+            return r;
+        }, true, false);
+    }
+    if (mnem == "or") {
+        return alu_bin([&](uint16_t d, uint16_t s, bool b) {
+            uint16_t r = static_cast<uint16_t>(d | s);
+            CF = 0; OF = 0;
+            if (b) sim_set_szp8(static_cast<uint8_t>(r)); else sim_set_szp16(r);
+            return r;
+        }, true, false);
+    }
+    if (mnem == "and" || mnem == "test") {
+        bool is_test = (mnem == "test");
+        return alu_bin([&](uint16_t d, uint16_t s, bool b) {
+            uint16_t r = static_cast<uint16_t>(d & s);
+            CF = 0; OF = 0;
+            if (b) sim_set_szp8(static_cast<uint8_t>(r)); else sim_set_szp16(r);
+            return r;
+        }, !is_test, false);
+    }
+    if (mnem == "adc") {
+        return alu_bin([&](uint16_t d, uint16_t s, bool b) {
+            uint32_t r = static_cast<uint32_t>(d) + s + CF;
+            CF = b ? ((r & 0x100) != 0) : ((r & 0x10000) != 0);
+            uint16_t res = static_cast<uint16_t>(r);
+            if (b) sim_set_szp8(static_cast<uint8_t>(res)); else sim_set_szp16(res);
+            return res;
+        }, true, false);
+    }
+    if (mnem == "sbb") {
+        return alu_bin([&](uint16_t d, uint16_t s, bool b) {
+            uint32_t r = static_cast<uint32_t>(d) - s - CF;
+            CF = b ? ((r & 0x100) != 0) : ((r & 0x10000) != 0);
+            uint16_t res = static_cast<uint16_t>(r);
+            if (b) sim_set_szp8(static_cast<uint8_t>(res)); else sim_set_szp16(res);
+            return res;
+        }, true, false);
+    }
+
+    // ---- unary ----
+    if ((mnem == "inc" || mnem == "dec") && x86.op_count == 1) {
+        bool b = is8(0);
+        uint16_t d = 0;
+        if (!sim_read_op(st, op(0), d, b)) return false;
+        uint16_t r = (mnem == "inc") ? static_cast<uint16_t>(d + 1)
+                                     : static_cast<uint16_t>(d - 1);
+        // INC/DEC do not affect CF
+        if (b) {
+            OF = ((mnem == "inc") ? (r == 0x80) : (r == 0x7F)) ? 1 : 0;
+            sim_set_szp8(static_cast<uint8_t>(r));
+        } else {
+            OF = ((mnem == "inc") ? (r == 0x8000) : (r == 0x7FFF)) ? 1 : 0;
+            sim_set_szp16(r);
+        }
+        if (!sim_write_op(st, op(0), r, b)) return false;
+        IP = next_ip; return true;
+    }
+    if ((mnem == "neg" || mnem == "not") && x86.op_count == 1) {
+        bool b = is8(0);
+        uint16_t d = 0;
+        if (!sim_read_op(st, op(0), d, b)) return false;
+        uint16_t r;
+        if (mnem == "not") {
+            r = static_cast<uint16_t>(~d);
+        } else {
+            r = static_cast<uint16_t>(0 - d);
+            CF = (d != 0) ? 1 : 0;
+            if (b) sim_set_szp8(static_cast<uint8_t>(r)); else sim_set_szp16(r);
+        }
+        if (!sim_write_op(st, op(0), r, b)) return false;
+        IP = next_ip; return true;
+    }
+
+    // ---- shifts ----
+    // Capstone may emit "rcr al, 1" with op_count 1 (implicit 1) or 2.
+    if (mnem == "shl" || mnem == "sal" || mnem == "shr" || mnem == "sar" ||
+        mnem == "rol" || mnem == "ror" || mnem == "rcl" || mnem == "rcr") {
+        if (x86.op_count < 1) return false;
+        bool b = is8(0);
+        uint16_t d = 0, cnt = 1;
+        if (!sim_read_op(st, op(0), d, b)) return false;
+        if (x86.op_count >= 2) {
+            if (op(1).type == X86_OP_REG && op(1).reg == X86_REG_CL) cnt = CL;
+            else if (op(1).type == X86_OP_IMM) cnt = static_cast<uint16_t>(op(1).imm);
+            else return false;
+        }
+        cnt &= 0x1F;
+        uint16_t r = d;
+        const uint16_t mask = b ? 0xFF : 0xFFFF;
+        const uint16_t msb = b ? 0x80 : 0x8000;
+        for (uint16_t i = 0; i < cnt; ++i) {
+            unsigned old_cf = CF;
+            if (mnem == "shl" || mnem == "sal") {
+                CF = (r & msb) ? 1 : 0;
+                r = static_cast<uint16_t>((r << 1) & mask);
+            } else if (mnem == "shr") {
+                CF = r & 1;
+                r = static_cast<uint16_t>((r >> 1) & mask);
+            } else if (mnem == "sar") {
+                CF = r & 1;
+                if (b) r = static_cast<uint16_t>(static_cast<int8_t>(r & 0xFF) >> 1) & 0xFF;
+                else r = static_cast<uint16_t>(static_cast<int16_t>(r) >> 1);
+            } else if (mnem == "rol") {
+                CF = (r & msb) ? 1 : 0;
+                r = static_cast<uint16_t>(((r << 1) | CF) & mask);
+            } else if (mnem == "ror") {
+                CF = r & 1;
+                r = static_cast<uint16_t>(((r >> 1) | (CF ? msb : 0)) & mask);
+            } else if (mnem == "rcl") {
+                CF = (r & msb) ? 1 : 0;
+                r = static_cast<uint16_t>(((r << 1) | old_cf) & mask);
+            } else if (mnem == "rcr") {
+                CF = r & 1;
+                r = static_cast<uint16_t>(((r >> 1) | (old_cf ? msb : 0)) & mask);
+            }
+        }
+        if (b) { r &= 0xFF; sim_set_szp8(static_cast<uint8_t>(r)); }
+        else sim_set_szp16(r);
+        if (!sim_write_op(st, op(0), r, b)) return false;
+        IP = next_ip; return true;
+    }
+
+    // ---- cbw / cwd ----
+    if (mnem == "cbw" || mnem == "cbtw") {
+        AH = (AL & 0x80) ? 0xFF : 0; IP = next_ip; return true;
+    }
+    // cwd / cdq — in 16-bit guest treat as sign-extend AX → DX:AX.
+    // Opcode 98 is the next arm: Capstone names it cwde, and this guest does cbw.
+    if (mnem == "cwd" || mnem == "cdq" || mnem == "cwtd" || mnem == "cqo") {
+        DX = (AX & 0x8000) ? 0xFFFF : 0; IP = next_ip; return true;
+    }
+    if (mnem == "cwde" || mnem == "cwtl") {
+        // Capstone 6 names opcode 98 `cwde` in CS_MODE_16; this guest treats it as cbw.
+        AH = (AL & 0x80) ? 0xFF : 0; IP = next_ip; return true;
+    }
+
+    // ---- lds / les ----
+    if ((mnem == "lds" || mnem == "les") && x86.op_count == 2 && op(1).type == X86_OP_MEM) {
+        uint16_t seg = 0, off = 0;
+        if (!sim_ea(st, op(1), seg, off)) return false;
+        uint16_t n_off = st.mem.read16(seg, off);
+        uint16_t n_seg = st.mem.read16(seg, static_cast<uint16_t>(off + 2));
+        if (!sim_reg_set(op(0).reg, n_off)) return false;
+        if (mnem == "lds") DS = n_seg; else ES = n_seg;
+        IP = next_ip; return true;
+    }
+
+    // ---- jumps (with loop-limit on backward edges) ----
+    // Capstone names: jmp (near), ljmp (far), sometimes jmp with far mem op
+    if (mnem == "ljmp" || mnem == "jmpf") {
+        if (x86.op_count >= 2 &&
+            op(0).type == X86_OP_IMM && op(1).type == X86_OP_IMM) {
+            // Capstone far imm: op0 is the segment, op1 the offset.
+            CS = static_cast<uint16_t>(op(0).imm & 0xFFFF);
+            IP = static_cast<uint16_t>(op(1).imm & 0xFFFF);
+            return true;
+        }
+        if (op(0).type == X86_OP_MEM) {
+            uint16_t seg = 0, off = 0;
+            if (!sim_ea(st, op(0), seg, off)) return false;
+            uint16_t n_ip = st.mem.read16(seg, off);
+            uint16_t n_cs = st.mem.read16(seg, static_cast<uint16_t>(off + 2));
+            CS = n_cs;
+            IP = n_ip;
+            return true;
+        }
+        return false;
+    }
+    if (mnem == "jmp" && x86.op_count >= 1) {
+        if (op(0).type == X86_OP_IMM) {
+            uint16_t target = static_cast<uint16_t>(
+                op(0).imm - static_cast<uint64_t>(CS) * 16u);
+            if (sim_should_skip_backedge(st, opts, IP, target, next_ip)) {
+                IP = next_ip; // force continue past the spin
+            } else {
+                IP = target;
+            }
+            return true;
+        }
+        if (op(0).type == X86_OP_MEM) {
+            // Near or far indirect
+            if (op(0).size == 4) {
+                uint16_t seg = 0, off = 0;
+                if (!sim_ea(st, op(0), seg, off)) return false;
+                uint16_t n_ip = st.mem.read16(seg, off);
+                uint16_t n_cs = st.mem.read16(seg, static_cast<uint16_t>(off + 2));
+                CS = n_cs;
+                IP = n_ip;
+                return true;
+            }
+            uint16_t t = 0;
+            if (!sim_read_op(st, op(0), t, false)) return false;
+            if (sim_should_skip_backedge(st, opts, IP, t, next_ip))
+                IP = next_ip;
+            else
+                IP = t;
+            return true;
+        }
+        if (op(0).type == X86_OP_REG) {
+            uint16_t t = 0;
+            if (!sim_read_op(st, op(0), t, false)) return false;
+            if (sim_should_skip_backedge(st, opts, IP, t, next_ip))
+                IP = next_ip;
+            else
+                IP = t;
+            return true;
+        }
+        return false;
+    }
+    if (mnem.size() >= 2 && mnem[0] == 'j' && mnem != "jmp" && mnem != "jecxz") {
+        int t = sim_jcc(mnem);
+        if (t < 0) return false;
+        // P6: fork the other outcome once per (CS, IP, target).
+        if (st.explore != nullptr && op(0).type == X86_OP_IMM) {
+            const uint16_t tgt = static_cast<uint16_t>(op(0).imm - static_cast<uint64_t>(CS) * 16u);
+            const uint16_t other = t == 1 ? next_ip : tgt;
+            sim_fork(st, CS, other,
+                     (static_cast<uint64_t>(CS) << 32) | (static_cast<uint64_t>(IP) << 16) | other);
+            // Mark the taken edge as seen so a forked path does not re-fork it.
+            st.explore->seen.insert((static_cast<uint64_t>(CS) << 32) |
+                                    (static_cast<uint64_t>(IP) << 16) | (t == 1 ? tgt : next_ip));
+        }
+        if (t == 1 && op(0).type == X86_OP_IMM) {
+            uint16_t target = static_cast<uint16_t>(
+                op(0).imm - static_cast<uint64_t>(CS) * 16u);
+            if (sim_should_skip_backedge(st, opts, IP, target, next_ip))
+                IP = next_ip;
+            else
+                IP = target;
+        } else {
+            IP = next_ip;
+        }
+        return true;
+    }
+    // LOOP/CX: always honor CX (finite). Do NOT apply loop-limit — cutting
+    // these short corrupts memset/strcpy-style Pascal RTL loops.
+    if (mnem == "loop" || mnem == "loope" || mnem == "loopz" ||
+        mnem == "loopne" || mnem == "loopnz") {
+        CX = static_cast<uint16_t>(CX - 1);
+        bool take = (CX != 0);
+        if (mnem == "loope" || mnem == "loopz") take = take && ZF;
+        if (mnem == "loopne" || mnem == "loopnz") take = take && !ZF;
+        if (take && op(0).type == X86_OP_IMM)
+            IP = static_cast<uint16_t>(op(0).imm - static_cast<uint64_t>(CS) * 16u);
+        else
+            IP = next_ip;
+        return true;
+    }
+
+    // ---- call / ret ----
+    if (mnem == "lcall") {
+        if (x86.op_count >= 2 &&
+            op(0).type == X86_OP_IMM && op(1).type == X86_OP_IMM) {
+            // Capstone far imm: op0 is the segment, op1 the offset.
+            sim_push(st, CS);
+            sim_push(st, next_ip);
+            CS = static_cast<uint16_t>(op(0).imm & 0xFFFF);
+            IP = static_cast<uint16_t>(op(1).imm & 0xFFFF);
+            return true;
+        }
+        return false;
+    }
+    if (mnem == "call") {
+        if (op(0).type == X86_OP_IMM) {
+            sim_push(st, next_ip);
+            IP = static_cast<uint16_t>(op(0).imm - static_cast<uint64_t>(CS) * 16u);
+            return true;
+        }
+        if (x86.op_count >= 1 && (op(0).type == X86_OP_MEM || op(0).type == X86_OP_REG)) {
+            // near or far — Capstone size 4 mem often far
+            if (op(0).type == X86_OP_MEM && op(0).size == 4) {
+                uint16_t seg = 0, off = 0;
+                if (!sim_ea(st, op(0), seg, off)) return false;
+                uint16_t n_ip = st.mem.read16(seg, off);
+                uint16_t n_cs = st.mem.read16(seg, static_cast<uint16_t>(off + 2));
+                sim_push(st, CS);
+                sim_push(st, next_ip);
+                CS = n_cs; IP = n_ip;
+                return true;
+            }
+            uint16_t t = 0;
+            if (!sim_read_op(st, op(0), t, false)) return false;
+            sim_push(st, next_ip);
+            IP = t;
+            return true;
+        }
+        return false;
+    }
+    if (mnem == "ret" || mnem == "retn") {
+        IP = sim_pop(st);
+        if (x86.op_count == 1 && op(0).type == X86_OP_IMM)
+            SP = static_cast<uint16_t>(SP + op(0).imm);
+        return true;
+    }
+    if (mnem == "retf" || mnem == "retfq") {
+        IP = sim_pop(st);
+        CS = sim_pop(st);
+        if (x86.op_count == 1 && op(0).type == X86_OP_IMM)
+            SP = static_cast<uint16_t>(SP + op(0).imm);
+        return true;
+    }
+
+    // ---- int ----
+    if (mnem == "int" && x86.op_count >= 1 && op(0).type == X86_OP_IMM) {
+        uint8_t n = static_cast<uint8_t>(op(0).imm);
+        // Log/hit BPs at the INT instruction, then run the stub so FCB opens etc.
+        // still happen (useful for --dump after read). Stop after the handler.
+        bool stop_bp = sim_fire_bps_int(st, opts, n);
+        // S-4: a vector the program installed runs its own handler.
+        if (st.vec_set[n] && n != 0x20 && n != 0x21 && !opts.simNoDispatchInt && !stop_bp) {
+            sim_push(st, FLAGS);
+            sim_push(st, CS);
+            sim_push(st, next_ip);
+            IP = st.mem.read16(0, static_cast<uint16_t>(n * 4));
+            CS = st.mem.read16(0, static_cast<uint16_t>(n * 4 + 2));
+            IF = 0;
+            TF = 0;
+            return true;
+        }
+        sim_int(st, opts, n);
+        if (stop_bp && !st.halted) {
+            st.halted = true;
+            st.halt_reason = "breakpoint (INT)";
+            return true;
+        }
+        if (!st.halted) IP = next_ip;
+        return true;
+    }
+    if (mnem == "into") { IP = next_ip; return true; }
+    if (mnem == "iret" || mnem == "iretd") {
+        IP = sim_pop(st);
+        CS = sim_pop(st);
+        FLAGS = sim_pop(st);
+        return true;
+    }
+
+    // ---- string ops (simplified) ----
+    if (mnem == "movsb" || mnem == "movsw" || mnem == "stosb" || mnem == "stosw" ||
+        mnem == "lodsb" || mnem == "lodsw" || mnem == "scasb" || mnem == "scasw" ||
+        mnem == "cmpsb" || mnem == "cmpsw") {
+        bool rep = rep_prefix || repne_prefix;
+        for (int pi = 0; pi < 4; ++pi) {
+            if (x86.prefix[pi] == 0xF3) { rep = true; rep_prefix = true; }
+            if (x86.prefix[pi] == 0xF2) { rep = true; repne_prefix = true; }
+        }
+
+        auto once = [&]() {
+            int step = (DF ? -1 : 1);
+            uint16_t src_seg = (st.seg_override != 0xFFFF) ? st.seg_override : DS;
+            if (mnem == "movsb") {
+                uint8_t v = st.mem.read8(src_seg, SI);
+                st.mem.write8(ES, DI, v);
+                SI = static_cast<uint16_t>(SI + step);
+                DI = static_cast<uint16_t>(DI + step);
+            } else if (mnem == "movsw") {
+                uint16_t v = st.mem.read16(src_seg, SI);
+                st.mem.write16(ES, DI, v);
+                SI = static_cast<uint16_t>(SI + 2 * step);
+                DI = static_cast<uint16_t>(DI + 2 * step);
+            } else if (mnem == "stosb") {
+                st.mem.write8(ES, DI, AL);
+                DI = static_cast<uint16_t>(DI + step);
+            } else if (mnem == "stosw") {
+                st.mem.write16(ES, DI, AX);
+                DI = static_cast<uint16_t>(DI + 2 * step);
+            } else if (mnem == "lodsb") {
+                AL = st.mem.read8(src_seg, SI);
+                SI = static_cast<uint16_t>(SI + step);
+            } else if (mnem == "lodsw") {
+                AX = st.mem.read16(src_seg, SI);
+                SI = static_cast<uint16_t>(SI + 2 * step);
+            } else if (mnem == "scasb") {
+                uint8_t v = st.mem.read8(ES, DI);
+                sim_set_cmp(AL, v, true);
+                DI = static_cast<uint16_t>(DI + step);
+            } else if (mnem == "scasw") {
+                uint16_t v = st.mem.read16(ES, DI);
+                sim_set_cmp(AX, v, false);
+                DI = static_cast<uint16_t>(DI + 2 * step);
+            } else if (mnem == "cmpsb") {
+                uint8_t a = st.mem.read8(src_seg, SI);
+                uint8_t b = st.mem.read8(ES, DI);
+                sim_set_cmp(a, b, true);
+                SI = static_cast<uint16_t>(SI + step);
+                DI = static_cast<uint16_t>(DI + step);
+            } else if (mnem == "cmpsw") {
+                uint16_t a = st.mem.read16(src_seg, SI);
+                uint16_t b = st.mem.read16(ES, DI);
+                sim_set_cmp(a, b, false);
+                SI = static_cast<uint16_t>(SI + 2 * step);
+                DI = static_cast<uint16_t>(DI + 2 * step);
+            }
+        };
+
+        const bool scan_cmp = (mnem == "scasb" || mnem == "scasw" ||
+                               mnem == "cmpsb" || mnem == "cmpsw");
+        if (rep) {
+            // Each iteration counts toward --max-insns. The outer loop adds
+            // one more, so reps-1 are charged here. CX==0 still counts as one
+            // instruction and performs no memory operation.
+            uint64_t reps = 0;
+            bool budget_stop = false;
+            while (CX != 0)
+            {
+                if (st.insn_count + reps >= opts.maxInsns)
+                {
+                    budget_stop = true;
+                    break;
+                }
+                once();
+                CX = static_cast<uint16_t>(CX - 1);
+                ++reps;
+                if (scan_cmp && rep_prefix && !ZF)
+                {
+                    break;
+                }
+                if (scan_cmp && repne_prefix && ZF)
+                {
+                    break;
+                }
+            }
+            if (reps > 1)
+            {
+                st.insn_count += reps - 1;
+            }
+            if (budget_stop && CX != 0)
+            {
+                return true;
+            }
+        } else {
+            once();
+        }
+        IP = next_ip; return true;
+    }
+
+    // ---- mul / imul / div / idiv ----
+    if ((mnem == "mul" || mnem == "imul") && x86.op_count == 1) {
+        bool b = is8(0);
+        uint16_t s = 0;
+        if (!sim_read_op(st, op(0), s, b)) return false;
+        if (mnem == "imul") {
+            if (b) {
+                int16_t r = static_cast<int8_t>(AL) * static_cast<int8_t>(s);
+                AX = static_cast<uint16_t>(r);
+                CF = OF = (AH == 0x00 || AH == 0xFF) ? 0 : 1;
+            } else {
+                const int64_t r = int64_t{static_cast<int16_t>(AX)} * static_cast<int16_t>(s);
+                AX = static_cast<uint16_t>(r);
+                DX = static_cast<uint16_t>(static_cast<uint64_t>(r) >> 16);
+                const int64_t sign_ext = static_cast<int16_t>(AX);
+                CF = OF = (r != sign_ext) ? 1 : 0;
+            }
+        } else if (b) {
+            uint16_t r = static_cast<uint16_t>(AL * static_cast<uint8_t>(s));
+            AX = r;
+            CF = OF = (AH != 0) ? 1 : 0;
+        } else {
+            uint32_t r = static_cast<uint32_t>(AX) * s;
+            AX = static_cast<uint16_t>(r);
+            DX = static_cast<uint16_t>(r >> 16);
+            CF = OF = (DX != 0) ? 1 : 0;
+        }
+        IP = next_ip; return true;
+    }
+    if (mnem == "imul" && x86.op_count == 2) {
+        // imul r16, r/m16
+        uint16_t d = 0, s = 0;
+        if (!sim_read_op(st, op(0), d, false) || !sim_read_op(st, op(1), s, false))
+            return false;
+        const int64_t r = int64_t{static_cast<int16_t>(d)} * static_cast<int16_t>(s);
+        sim_write_op(st, op(0), static_cast<uint16_t>(r), false);
+        CF = OF = (r != static_cast<int16_t>(r)) ? 1 : 0;
+        IP = next_ip; return true;
+    }
+    if (mnem == "imul" && x86.op_count == 3) {
+        uint16_t s = 0;
+        if (!sim_read_op(st, op(1), s, false)) return false;
+        // T1: the immediate is a 16-bit operand (imm8 already sign-extended);
+        // Capstone may report it as a 64-bit value, so truncate, then widen.
+        const int64_t imm = static_cast<int16_t>(static_cast<uint16_t>(op(2).imm));
+        const int64_t r = int64_t{static_cast<int16_t>(s)} * imm;
+        sim_write_op(st, op(0), static_cast<uint16_t>(r), false);
+        CF = OF = (r != static_cast<int16_t>(r)) ? 1 : 0;
+        IP = next_ip; return true;
+    }
+    if ((mnem == "div" || mnem == "idiv") && x86.op_count == 1) {
+        bool b = is8(0);
+        uint16_t s = 0;
+        if (!sim_read_op(st, op(0), s, b)) return false;
+        if (s == 0) {
+            st.halted = true;
+            st.halt_reason = "divide by zero";
+            return true;
+        }
+        // T1: 64-bit arithmetic (no INT_MIN / -1 UB); a quotient that does
+        // not fit is #DE on the CPU and stops the path here.
+        auto div_overflow = [&]() {
+            st.halted = true;
+            st.halt_reason = "divide overflow";
+            return true;
+        };
+        if (mnem == "idiv") {
+            if (b) {
+                const int64_t num = static_cast<int16_t>(AX);
+                const int64_t den = static_cast<int8_t>(s);
+                const int64_t q = num / den;
+                if (q < -128 || q > 127) return div_overflow();
+                AL = static_cast<uint8_t>(q);
+                AH = static_cast<uint8_t>(num % den);
+            } else {
+                const int64_t num = static_cast<int32_t>((static_cast<uint32_t>(DX) << 16) | AX);
+                const int64_t den = static_cast<int16_t>(s);
+                const int64_t q = num / den;
+                if (q < -32768 || q > 32767) return div_overflow();
+                AX = static_cast<uint16_t>(q);
+                DX = static_cast<uint16_t>(num % den);
+            }
+        } else if (b) {
+            const uint32_t num = AX;
+            const uint32_t q = num / static_cast<uint8_t>(s);
+            if (q > 0xFF) return div_overflow();
+            AL = static_cast<uint8_t>(q);
+            AH = static_cast<uint8_t>(num % static_cast<uint8_t>(s));
+        } else {
+            const uint64_t num = (static_cast<uint64_t>(DX) << 16) | AX;
+            const uint64_t q = num / s;
+            if (q > 0xFFFF) return div_overflow();
+            AX = static_cast<uint16_t>(q);
+            DX = static_cast<uint16_t>(num % s);
+        }
+        IP = next_ip; return true;
+    }
+
+    // ---- S-8: simple instructions that used to stop the run ----
+    if (mnem == "xlatb" || mnem == "xlat") {
+        const uint16_t seg = st.seg_override != 0xFFFF ? st.seg_override : DS;
+        AL = st.mem.read8(seg, static_cast<uint16_t>(BX + AL));
+        IP = next_ip; return true;
+    }
+    if (mnem == "aam") {
+        const uint8_t base = x86.op_count >= 1 && op(0).type == X86_OP_IMM
+                                 ? static_cast<uint8_t>(op(0).imm) : 10;
+        if (base == 0) { st.halted = true; st.halt_reason = "divide by zero (aam)"; return true; }
+        const uint8_t a = AL;
+        AH = static_cast<uint8_t>(a / base);
+        AL = static_cast<uint8_t>(a % base);
+        sim_set_szp8(AL);
+        IP = next_ip; return true;
+    }
+    if (mnem == "aad") {
+        const uint8_t base = x86.op_count >= 1 && op(0).type == X86_OP_IMM
+                                 ? static_cast<uint8_t>(op(0).imm) : 10;
+        AL = static_cast<uint8_t>(AL + AH * base);
+        AH = 0;
+        sim_set_szp8(AL);
+        IP = next_ip; return true;
+    }
+    if (mnem == "daa" || mnem == "das") {
+        const bool add = mnem == "daa";
+        uint8_t a = AL;
+        const uint8_t old = a;
+        const bool oldcf = CF;
+        bool cf = false;
+        if ((a & 0x0F) > 9 || AF) {
+            a = static_cast<uint8_t>(add ? a + 6 : a - 6);
+            cf = oldcf || (add ? old > 0xF9 : old < 6);
+            AF = 1;
+        } else {
+            AF = 0;
+        }
+        if (old > 0x99 || oldcf) {
+            a = static_cast<uint8_t>(add ? a + 0x60 : a - 0x60);
+            cf = true;
+        }
+        AL = a;
+        CF = cf ? 1 : 0;
+        sim_set_szp8(AL);
+        IP = next_ip; return true;
+    }
+    if (mnem == "aaa" || mnem == "aas") {
+        if ((AL & 0x0F) > 9 || AF) {
+            if (mnem == "aaa") { AL = static_cast<uint8_t>(AL + 6); AH = static_cast<uint8_t>(AH + 1); }
+            else { AL = static_cast<uint8_t>(AL - 6); AH = static_cast<uint8_t>(AH - 1); }
+            AF = CF = 1;
+        } else {
+            AF = CF = 0;
+        }
+        AL = static_cast<uint8_t>(AL & 0x0F);
+        IP = next_ip; return true;
+    }
+    if (mnem == "enter" && x86.op_count == 2) {
+        const uint16_t size = static_cast<uint16_t>(op(0).imm);
+        const uint8_t level = static_cast<uint8_t>(op(1).imm & 31);
+        sim_push(st, BP);
+        const uint16_t frame = SP;
+        for (uint8_t k = 1; k < level; ++k) {
+            BP = static_cast<uint16_t>(BP - 2);
+            sim_push(st, st.mem.read16(SS, BP));
+        }
+        if (level > 0) sim_push(st, frame);
+        BP = frame;
+        SP = static_cast<uint16_t>(SP - size);
+        IP = next_ip; return true;
+    }
+    if (mnem == "leave") {
+        SP = BP;
+        BP = sim_pop(st);
+        IP = next_ip; return true;
+    }
+    if (mnem == "bound") { IP = next_ip; return true; } // no #BR in the sandbox
+    if (mnem == "insb" || mnem == "insw" || mnem == "outsb" || mnem == "outsw") {
+        // Port I/O is not modelled; advance the index registers like the CPU.
+        bool rep = rep_prefix || repne_prefix;
+        const uint16_t w = (mnem.back() == 'w') ? 2 : 1;
+        const uint16_t n = rep ? CX : 1;
+        const int16_t step = static_cast<int16_t>(DF ? -w : w);
+        if (mnem[0] == 'i') {
+            for (uint16_t k = 0; k < n; ++k) {
+                if (w == 2) st.mem.write16(ES, DI, 0xFFFF); else st.mem.write8(ES, DI, 0xFF);
+                DI = static_cast<uint16_t>(DI + step);
+            }
+        } else {
+            SI = static_cast<uint16_t>(SI + step * n);
+        }
+        if (rep) CX = 0;
+        st.faithful = false; // port input is tainted
+        IP = next_ip; return true;
+    }
+
+    // ---- in / out ignore ----
+    if (mnem == "in") { st.faithful = false; IP = next_ip; return true; } // tainted port value
+    if (mnem == "out") { IP = next_ip; return true; }
+
+    // ---- hlt ----
+    if (mnem == "hlt") {
+        st.halted = true;
+        st.halt_reason = "HLT";
+        return true;
+    }
+
+    return false; // unsupported
+}
+
+//=============================================================================
+// Main run loop
+//=============================================================================
+
+static inline uint64_t sim_execute(SimState& st, Options& opts);
+
+static inline void sim_run_mz(Options& opts,
+                              const MZHeader& header,
+                              const std::vector<uint8_t>& fileData,
+                              const std::vector<RelocEntry>& relocs,
+                              size_t header_size_bytes,
+                              int64_t load_image_size,
+                              std::vector<std::pair<uint16_t, uint16_t>>* witness = nullptr,
+                              std::vector<std::pair<uint16_t, uint16_t>>* witness_likely = nullptr,
+                              SimExplore* explore = nullptr,
+                              uint64_t* executed = nullptr) {
+    SimState st;
+    st.witness = witness;
+    st.witness_likely = witness_likely;
+    st.explore = explore;
+    st.image_seg = opts.loadBase;
+    st.psp_seg = static_cast<uint16_t>(opts.loadBase - 0x0010);
+    st.dta_seg = st.psp_seg;
+    st.dta_off = 0x80;
+
+    size_t img_bytes = load_image_size > 0
+        ? static_cast<size_t>(load_image_size)
+        : (fileData.size() > header_size_bytes
+               ? fileData.size() - header_size_bytes
+               : 0);
+
+    st.mem.load_mz(st.image_seg, st.psp_seg, fileData,
+                   header_size_bytes, img_bytes, relocs);
+
+    // CPU power-on DOS load state
+    CS = static_cast<uint16_t>(st.image_seg + header.cs);
+    IP = header.ip;
+    SS = static_cast<uint16_t>(st.image_seg + header.ss);
+    SP = header.sp;
+    DS = st.psp_seg;
+    ES = st.psp_seg;
+    AX = BX = CX = DX = 0;
+    SI = DI = BP = 0;
+    FLAGS = 0x0202; // IF set-ish + reserved bit1
+
+    const uint64_t n = sim_execute(st, opts);
+    if (executed != nullptr) *executed = n;
+}
+
+/// Load a .COM image (PSP at the load segment, code at IP 0100h) and execute.
+/// Guest file I/O uses the in-memory map only. @p entry_offset is 0 when the
+/// file has no embedded PSP, or >= 0x100 when the file already contains one.
+static inline void sim_run_com(Options& opts,
+                               const std::vector<uint8_t>& fileData,
+                               size_t entry_offset,
+                               std::vector<std::pair<uint16_t, uint16_t>>* witness = nullptr,
+                               std::vector<std::pair<uint16_t, uint16_t>>* witness_likely = nullptr,
+                               SimExplore* explore = nullptr,
+                               uint64_t* executed = nullptr) {
+    SimState st;
+    st.witness = witness;
+    st.witness_likely = witness_likely;
+    st.explore = explore;
+    st.image_seg = opts.loadBase;
+    st.psp_seg = opts.loadBase;
+    st.dta_seg = st.psp_seg;
+    st.dta_off = 0x80;
+
+    st.mem.write8(st.psp_seg, 0x00, 0xCD);
+    st.mem.write8(st.psp_seg, 0x01, 0x20);
+    st.mem.write16(st.psp_seg, 0x02, 0xA000);
+    st.mem.write8(st.psp_seg, 0x80, 0);
+    st.mem.write8(st.psp_seg, 0x81, 0x0D);
+
+    const bool embedded_psp = entry_offset >= 0x100;
+    const uint32_t base = embedded_psp ? 0u : 0x100u;
+    for (size_t i = 0; i < fileData.size(); ++i) {
+        uint32_t a = (static_cast<uint32_t>(st.psp_seg) * 16u + base
+                      + static_cast<uint32_t>(i)) & 0xFFFFFu;
+        st.mem.ram[a] = fileData[i];
+    }
+
+    CS = opts.loadBase;
+    DS = opts.loadBase;
+    ES = opts.loadBase;
+    SS = opts.loadBase;
+    IP = 0x0100;
+    SP = 0xFFFE;
+    AX = BX = CX = DX = 0;
+    SI = DI = BP = 0;
+    FLAGS = 0x0202;
+
+    const uint64_t n = sim_execute(st, opts);
+    if (executed != nullptr) *executed = n;
+}
+
+static inline uint64_t sim_execute(SimState& st, Options& opts) {
+    if (!opts.simQuiet) {
+        std::cout << "Load Image Segment: " << hex_format(st.image_seg, 4) << "\n";
+        std::cout << "PSP Segment:        " << hex_format(st.psp_seg, 4) << "\n";
+        std::cout << "Guest files:        in-memory only (no host file I/O)\n";
+        std::cout << "Max instructions:   " << opts.maxInsns << "\n";
+        std::cout << "Loop limit:         " << opts.loopLimit
+                  << (opts.loopLimit == 0 ? " (disabled)" : " back-edges then skip")
+                  << "\n";
+        if (!opts.breakpoints.empty()) {
+            std::cout << "Breakpoints (" << opts.breakpoints.size() << "):\n";
+            for (const auto& bp : opts.breakpoints)
+                std::cout << "  - " << bp.raw << "\n";
+        }
+        std::cout << "\nInitial Register State:\n";
+        sim_print_regs();
+        std::cout << "\n=== Execution ===\n";
+        if (!opts.simTrace && opts.breakpoints.empty())
+            std::cout << "(use --trace to print each insn, --bp=... to stop on events)\n\n";
+        else if (!opts.simTrace)
+            std::cout << "(running until breakpoint or max-insns; --trace for full log)\n\n";
+        else
+            std::cout << "\n";
+    }
+
+    if (cs_open(CS_ARCH_X86, CS_MODE_16, &st.cs_handle) != CS_ERR_OK) {
+        std::cerr << "Error: Capstone init failed\n";
+        return 0;
+    }
+    cs_option(st.cs_handle, CS_OPT_DETAIL, CS_OPT_ON);
+    st.insn = cs_malloc(st.cs_handle);
+    if (!st.insn) {
+        cs_close(&st.cs_handle);
+        std::cerr << "Error: Capstone malloc failed\n";
+        return 0;
+    }
+
+    while (!st.halted && st.insn_count < opts.maxInsns) {
+        // IP breakpoints before fetch
+        if (sim_fire_bps_ip(st, opts)) {
+            st.halted = true;
+            st.halt_reason = "breakpoint (IP)";
+            break;
+        }
+
+        uint32_t lin = SimMemory::linear(CS, IP);
+        const uint8_t* code = st.mem.ram.data() + lin;
+        // Available bytes until end of 1MB or wrap — use 16 max for one insn
+        size_t avail = 16;
+        if (lin + avail > SimMemory::kSize) avail = SimMemory::kSize - lin;
+
+        const uint8_t* ptr = code;
+        size_t size = avail;
+        uint64_t addr = static_cast<uint64_t>(CS) * 16u + IP;
+
+        if (!cs_disasm_iter(st.cs_handle, &ptr, &size, &addr, st.insn)) {
+            st.halted = true;
+            st.halt_reason = std::format("disasm failed at {:04X}:{:04X}", CS, IP);
+            std::cout << "  [" << st.halt_reason << "]\n";
+            break;
+        }
+
+        if (opts.simTrace) {
+            std::cout << std::format("{:04X}:{:04X}  {:8} {}\n",
+                                     CS, IP, st.insn->mnemonic, st.insn->op_str);
+        } else if (!opts.simQuiet && opts.breakpoints.empty() && st.insn_count < 40) {
+            // Short startup listing when no BPs (legacy-friendly)
+            std::cout << std::format("{:04x}: {} {}",
+                                     IP, st.insn->mnemonic, st.insn->op_str);
+            if (std::string(st.insn->mnemonic) == "int" && st.insn->size >= 2)
+                std::cout << "  " << format_int_annotation(st.insn->bytes[1], AH, AL);
+            std::cout << "\n";
+        }
+
+        if (!st.insn->detail) {
+            st.halted = true;
+            st.halt_reason = "no Capstone detail";
+            break;
+        }
+
+        if (!st.faithful && st.witness_likely != nullptr)
+            st.witness_likely->emplace_back(CS, IP);
+        else if (st.witness != nullptr)
+            st.witness->emplace_back(CS, IP);
+
+        if (!sim_exec_insn(st, opts)) {
+            st.halted = true;
+            st.unsupported_stop = true;
+            st.halt_reason = std::format("unsupported opcode at {:04X}:{:04X}: {} {}",
+                                         CS, IP, st.insn->mnemonic, st.insn->op_str);
+            std::cout << "  STOP: " << st.halt_reason << "\n";
+            sim_print_regs();
+            break;
+        }
+
+        st.insn_count++;
+    }
+
+    if (!st.halted && st.insn_count >= opts.maxInsns) {
+        st.halt_reason = "max-insns reached";
+        st.halted = true;
+    }
+
+    std::cout << "\n=== Simulation stopped ===\n";
+    std::cout << "Reason: " << st.halt_reason << "\n";
+    std::cout << "Instructions executed: " << st.insn_count << "\n";
+    std::cout << "INT 21h calls: " << st.int21_count << "\n";
+    std::cout << "Loop back-edges skipped: " << st.loops_skipped << "\n";
+    if (!opts.breakpoints.empty()) {
+        std::cout << "Breakpoint hits:\n";
+        for (const auto& bp : opts.breakpoints)
+            std::cout << std::format("  {} → {} hit(s)\n", bp.raw, bp.hits);
+    }
+    std::cout << "Final registers:\n";
+    sim_print_regs();
+
+    cs_free(st.insn, 1);
+    st.insn = nullptr;
+    cs_close(&st.cs_handle);
+    return st.insn_count;
+}
+
+/// P6 result: executed image linears with their frame, split by evidence strength.
+struct SimWitness {
+    std::vector<std::pair<uint32_t, int32_t>> faithful; ///< Witnessed (first path, unforced)
+    std::vector<std::pair<uint32_t, int32_t>> likely;   ///< only on forced/dispatched paths
+    size_t paths = 0;        ///< paths run (first one included)
+    size_t forks = 0;        ///< forks queued
+    size_t dispatches = 0;   ///< installed-vector paths queued
+    size_t pending = 0;      ///< forks left when a cap stopped exploration
+    uint64_t insns = 0;      ///< instructions over all paths
+    bool total_cap = false;  ///< --sim-total-insns stopped exploration
+};
+
+/**
+ * @brief P6: run the simulator silently under caps and return the image
+ *        linears it executed, with the frame (CS*16 relative to the image).
+ *
+ * Path 1 is today's single run. With opts.simPaths > 1 the other outcome of
+ * each conditional branch (once per site and target) and each handler the
+ * program installs with INT 21h/25h become queued paths, run first-in
+ * first-out; a queued path whose start was already executed is skipped.
+ * Everything a forked path executes is Likely, never Witnessed (S-6).
+ * Guest file I/O stays in memory. Breakpoints and tracing are off; all
+ * simulator output is discarded. Deterministic.
+ */
+static inline SimWitness
+sim_explore(const Options& opts_in, const std::vector<uint8_t>& fileData, bool com,
+            size_t com_entry_offset, std::span<const RelocEntry> relocs, uint64_t max_insns)
+{
+    Options o = opts_in;
+    o.breakpoints.clear();
+    o.simTrace = false;
+    o.simQuiet = true;
+    o.maxInsns = max_insns;
+    std::vector<std::pair<uint16_t, uint16_t>> raw;
+    std::vector<std::pair<uint16_t, uint16_t>> raw_likely;
+    std::ostringstream sink;
+    struct CoutRestore
+    {
+        std::streambuf* old;
+        ~CoutRestore() { std::cout.rdbuf(old); }
+    } restore{std::cout.rdbuf(sink.rdbuf())};
+    const CpuRegs saved = sim_save_regs();
+    SimExplore ex;
+    ex.max_paths = static_cast<size_t>(std::max<uint64_t>(1, o.simPaths));
+    ex.max_depth = static_cast<int>(o.simForkDepth);
+    ex.dispatch_int = !o.simNoDispatchInt;
+    SimExplore* exp = ex.max_paths > 1 ? &ex : nullptr;
+    SimWitness w;
+    uint64_t n = 0;
+    if (com)
+    {
+        sim_run_com(o, fileData, com_entry_offset, &raw, &raw_likely, exp, &n);
+    }
+    else if (fileData.size() >= sizeof(MZHeader))
+    {
+        MZHeader h{};
+        std::memcpy(&h, fileData.data(), sizeof(h));
+        const size_t hdr = static_cast<size_t>(h.header_size) * 16u;
+        int64_t size = static_cast<int64_t>(h.num_blocks) * 512 -
+                       (h.final_len ? 512 - h.final_len : 0) - static_cast<int64_t>(hdr);
+        std::vector<RelocEntry> rv(relocs.begin(), relocs.end());
+        sim_run_mz(o, h, fileData, rv, hdr, size, &raw, &raw_likely, exp, &n);
+    }
+    w.paths = 1;
+    w.insns = n;
+    std::set<uint32_t> ran;
+    for (const auto& [cs, ip] : raw)
+        ran.insert(SimMemory::linear(cs, ip));
+    while (exp != nullptr && !ex.queue.empty())
+    {
+        if (w.insns >= o.simTotalInsns)
+        {
+            w.total_cap = true;
+            break;
+        }
+        SimFork f = std::move(ex.queue.front());
+        ex.queue.pop_front();
+        if (ran.count(SimMemory::linear(f.regs.cs, f.regs.ip)))
+            continue; // coverage: nothing new to start from
+        ++ex.started;
+        ++w.paths;
+        o.maxInsns = std::min<uint64_t>(max_insns, o.simTotalInsns - w.insns);
+        const size_t before = raw_likely.size();
+        sim_load_regs(f.regs);
+        w.insns += sim_execute(f.st, o);
+        for (size_t k = before; k < raw_likely.size(); ++k)
+            ran.insert(SimMemory::linear(raw_likely[k].first, raw_likely[k].second));
+    }
+    w.forks = ex.forks_made;
+    w.dispatches = ex.dispatches;
+    w.pending = ex.queue.size();
+    sim_load_regs(saved);
+
+    const uint32_t base = static_cast<uint32_t>(o.loadBase) * 16u;
+    std::set<uint32_t> seen;
+    auto collect = [&](const std::vector<std::pair<uint16_t, uint16_t>>& v,
+                       std::vector<std::pair<uint32_t, int32_t>>& out)
+    {
+        for (const auto& [cs, ip] : v)
+        {
+            const int64_t phys = static_cast<int64_t>(cs) * 16 + ip;
+            if (phys < base)
+                continue;
+            const uint32_t lin = static_cast<uint32_t>(phys - base);
+            if (seen.insert(lin).second)
+                out.emplace_back(lin, static_cast<int32_t>(static_cast<int64_t>(cs) * 16 - base));
+        }
+    };
+    collect(raw, w.faithful);
+    collect(raw_likely, w.likely);
+    return w;
+}
+
+/// Single-path wrapper (the 2.35 interface): every executed address.
+static inline std::vector<std::pair<uint32_t, int32_t>>
+sim_witness(const Options& opts_in, const std::vector<uint8_t>& fileData, bool com,
+            size_t com_entry_offset, std::span<const RelocEntry> relocs, uint64_t max_insns)
+{
+    Options o = opts_in;
+    o.simPaths = 1;
+    SimWitness w = sim_explore(o, fileData, com, com_entry_offset, relocs, max_insns);
+    w.faithful.insert(w.faithful.end(), w.likely.begin(), w.likely.end());
+    return w.faithful;
+}
+
+#endif // SIM_H

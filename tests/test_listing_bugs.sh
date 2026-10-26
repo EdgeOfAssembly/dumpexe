@@ -1,0 +1,706 @@
+#!/usr/bin/env bash
+# Regression tests for dumpexe listing/CFG bugs 2, 5, and 11.
+# Invoked by `make test`.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=fixtures.sh
+source "$ROOT/tests/fixtures.sh"
+cd "$ROOT"
+
+if [[ -z "${PKG_CONFIG_PATH:-}" && -d /usr/local/lib/pkgconfig ]]; then
+  export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
+fi
+
+# Honor the parent make's -jN / jobserver (`make -j2 test`); standalone, use at most 4 jobs.
+if [[ "${MAKEFLAGS:-}" =~ (^|[[:space:]])-j[0-9]+|--jobserver ]]; then
+  make -s V=0
+else
+  JOBS="$(nproc 2>/dev/null || echo 1)"; (( JOBS > 4 )) && JOBS=4
+  make -s V=0 -j"$JOBS"
+fi
+BIN="$ROOT/dumpexe"
+[[ -x "$BIN" ]] || { echo "FAIL: dumpexe was not built"; exit 1; }
+
+TD="$(mktemp -d /tmp/dumpexe-listbugs-XXXXXX)"
+trap 'rm -rf "$TD"' EXIT
+
+python3 - "$TD" << 'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+p.joinpath("YESNO.COM").write_bytes(bytes.fromhex(
+    "b38032ff8a1fc78781002028c7878300592fc78785004e29c78787002024"
+    "ba8200b409cd21b40dcd21b401cd2132e43c6e741a3c4e7416fec43c797410"
+    "3c59740c3c0d74bbb208b402cd21ebdc50b20db402cd21b20ab402cd2158"
+    "b04c86e0cd21"))
+p.joinpath("STARTUP.COM").write_bytes(bytes.fromhex("BAD7012E89165301B430CD21"))
+# je lands on the immediate of `mov ax, 0x1234` (IP 0101), not an insn start.
+p.joinpath("JCCMID.COM").write_bytes(bytes.fromhex("B8341274FC"))
+# je +1 lands inside the next instruction (mov ax, 0x1234). Fall-through
+# must keep B8 34 12; the interior byte must not become xor al, 0x12.
+p.joinpath("JCCFWD.COM").write_bytes(bytes.fromhex("7401B83412C3"))
+# Near call to the ret, then far lcall (seg 0x60 is inside the PSP hole),
+# nop (far-call fall-through), far ljmp (must not fall into mov ax), ret.
+p.joinpath("FARCALL.COM").write_bytes(bytes.fromhex(
+    "e80e009a6823600090ea78564000b83412c3"))
+PY
+
+fail=0
+pass=0
+check() {
+  local name=$1
+  shift
+  if "$@"; then
+    echo "PASS $name"
+    pass=$((pass + 1))
+  else
+    echo "FAIL $name"
+    fail=$((fail + 1))
+  fi
+}
+
+# Bug 2: YESNO must not overlap, and the six-byte mov stays one instruction.
+# mov dx / mov ah,9 appear before the first int 0x21.
+"$BIN" -d --no-asm-file "$TD/YESNO.COM" >"$TD/yesno.txt" 2>"$TD/yesno.err"
+check yesno_no_overlap python3 - "$TD/yesno.txt" << 'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read().splitlines()
+rows = []
+for line in text:
+    m = re.match(r"\s+([0-9A-Fa-f]{4})\s+([0-9A-Fa-f]+)\s+\S+", line)
+    if not m:
+        continue
+    ip = int(m.group(1), 16)
+    hx = m.group(2)
+    if len(hx) % 2:
+        print("odd hex", line)
+        sys.exit(1)
+    nbytes = len(hx) // 2
+    rows.append((ip, nbytes, line))
+if not rows:
+    print("no instructions")
+    sys.exit(1)
+for (ip, n, line), (ip2, _, line2) in zip(rows, rows[1:]):
+    shown = n if n < 8 else 8
+    if ip2 < ip + shown:
+        print("overlap", line)
+        print("       ", line2)
+        sys.exit(1)
+blob = next((ln for ln in text if "C78785004E29" in ln.upper()), None)
+if blob is None:
+    print("missing C78785004E29 as one instruction")
+    sys.exit(1)
+m = re.search(r"\s+([0-9A-Fa-f]{4})\s+C78785004E29", blob, re.I)
+if not m:
+    print("six-byte mov hex is not a single field:", blob)
+    sys.exit(1)
+want = int(m.group(1), 16) + 6
+if not any(ip == want for ip, _, _ in rows):
+    print("no instruction at +6 after the six-byte mov")
+    sys.exit(1)
+code = [ln for ln in text if re.match(r"\s+[0-9A-Fa-f]{4}\s+[0-9A-Fa-f]", ln)]
+def is_int21(ln):
+    return re.search(r"\bint\b", ln, re.I) and re.search(r"0x21\b", ln, re.I)
+def is_mov_dx(ln):
+    return re.search(r"\bmov\b", ln, re.I) and re.search(r"\bdx\b", ln, re.I) and re.search(r"0x82\b|82h", ln, re.I)
+def is_mov_ah9(ln):
+    return (re.search(r"\bmov\b", ln, re.I) and re.search(r"\bah\b", ln, re.I)
+            and re.search(r"(?:,\s*9\b|,\s*0x9\b)", ln, re.I))
+try:
+    i_int = next(i for i, ln in enumerate(code) if is_int21(ln))
+except StopIteration:
+    print("no int 0x21")
+    sys.exit(1)
+pre = code[:i_int]
+if not any(is_mov_dx(ln) for ln in pre):
+    print("mov dx, 0x82 not before first int 0x21")
+    sys.exit(1)
+if not any(is_mov_ah9(ln) for ln in pre):
+    print("mov ah, 9 not before first int 0x21")
+    sys.exit(1)
+print("yesno overlap ok", len(rows), "insns")
+PY
+
+# Bug 2: Turbo C startup bytes must not be split at offset 2.
+"$BIN" -d --no-asm-file "$TD/STARTUP.COM" >"$TD/startup.txt" 2>"$TD/startup.err"
+check startup_bytes python3 - "$TD/startup.txt" << 'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+if "1689" in text:
+    print("mis-decoded add [0x1689]")
+    sys.exit(1)
+if not re.search(r"mov\s+dx,\s*(0x1d7|1d7h)\b", text, re.I):
+    print("missing mov dx, 0x1d7")
+    sys.exit(1)
+if not re.search(r"mov\s+word ptr cs:\[[^\]]+\],\s*dx", text, re.I):
+    print("missing mov cs:[...], dx")
+    sys.exit(1)
+if not re.search(r"mov\s+ah,\s*(0x30|30h)\b", text, re.I):
+    print("missing mov ah, 0x30")
+    sys.exit(1)
+if not re.search(r"\bint\s+0x21\b", text, re.I):
+    print("missing int 0x21")
+    sys.exit(1)
+# order: mov dx before int
+lines = text.splitlines()
+i_dx = next(i for i, ln in enumerate(lines) if re.search(r"mov\s+dx,\s*(0x1d7|1d7h)", ln, re.I))
+i_int = next(i for i, ln in enumerate(lines) if re.search(r"\bint\s+0x21\b", ln, re.I))
+if not (i_dx < i_int):
+    print("mov dx is not before int 0x21")
+    sys.exit(1)
+print("startup ok")
+PY
+
+check startup_no_overlap python3 - "$TD/startup.txt" << 'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read().splitlines()
+rows = []
+for line in text:
+    m = re.match(r"\s+([0-9A-Fa-f]{4})\s+([0-9A-Fa-f]+)\s+\S+", line)
+    if not m:
+        continue
+    ip = int(m.group(1), 16)
+    n = len(m.group(2)) // 2
+    rows.append((ip, n, line))
+for (ip, n, line), (ip2, _, line2) in zip(rows, rows[1:]):
+    shown = n if n < 8 else 8
+    if ip2 < ip + shown:
+        print("overlap", line, line2)
+        sys.exit(1)
+print("startup overlap ok")
+PY
+
+# Bug 5: COM without a PSP is org 0100h, and "; source:" is the filename.
+check com_org100 python3 - "$TD/yesno.txt" "$TD/YESNO.COM" << 'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+name = sys.argv[2]
+if f"; source: {name}" not in text:
+    print("source line is not the input filename")
+    for ln in text.splitlines():
+        if "source:" in ln:
+            print(ln)
+    sys.exit(1)
+if "; source: binary" in text:
+    print("source is the literal word binary")
+    sys.exit(1)
+if "func_0100" not in text:
+    print("missing func_0100")
+    sys.exit(1)
+if re.search(r"func_0000\b", text):
+    print("unexpected func_0000")
+    sys.exit(1)
+if not re.search(r"entry=0100h", text):
+    print("entry is not 0100h")
+    sys.exit(1)
+rows = []
+for line in text.splitlines():
+    m = re.match(r"\s+([0-9A-Fa-f]{4})\s+[0-9A-Fa-f]", line)
+    if m:
+        rows.append(int(m.group(1), 16))
+if not rows or rows[0] != 0x100:
+    print("first address column is not 0100:", rows[:4])
+    sys.exit(1)
+# Branch targets share the IP base: no CS*16 linear immediates (0x1xxxx).
+if re.search(r"\b0x1[0-9A-Fa-f]{4}\b", text):
+    print("branch/immediate still uses a linear 0x1xxxx address")
+    sys.exit(1)
+print("com org ok")
+PY
+
+# Bug 11: jcc targets on an instruction boundary become loc_XXXX and are defined.
+# YESNO's forward je lands on `push ax` (not a call/jmp entry) → loc_.
+# The backward je lands on the entry → func_0100, which must stay.
+check jcc_loc python3 - "$TD/yesno.txt" << 'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+uses = set(re.findall(r"\b(?:j[a-z]+|loop[a-z]*)\s+loc_([0-9A-Fa-f]{4})\b", text))
+defs = set(re.findall(r"(?m)^loc_([0-9A-Fa-f]{4}):", text))
+if not uses:
+    print("no jcc/loop operand uses loc_")
+    sys.exit(1)
+missing = uses - defs
+if missing:
+    print("loc_ used but not defined", sorted(missing))
+    sys.exit(1)
+if not re.search(r"\bje\s+func_0100\b", text):
+    print("backward je to entry was not kept as func_0100")
+    sys.exit(1)
+if not re.search(r"\bjmp\s+func_[0-9A-Fa-f]{4}\b", text):
+    print("jmp func_ label was lost")
+    sys.exit(1)
+print("jcc loc ok", sorted(uses))
+PY
+
+# A target strictly inside an owned instruction stays numeric (same IP base).
+"$BIN" -d --no-asm-file "$TD/JCCMID.COM" >"$TD/jccmid.txt" 2>"$TD/jccmid.err"
+check jcc_numeric_inside python3 - "$TD/jccmid.txt" << 'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+if not re.search(r"\bje\s+0x101\b", text):
+    print("expected numeric je 0x101")
+    print(text)
+    sys.exit(1)
+if "loc_0101" in text:
+    print("interior target was labeled loc_0101")
+    sys.exit(1)
+if "0x10101" in text.lower():
+    print("linear address 0x10101 leaked")
+    sys.exit(1)
+print("jcc interior numeric ok")
+PY
+
+# Forward jcc into the next instruction must not steal its opcode.
+"$BIN" -d --no-asm-file "$TD/JCCFWD.COM" >"$TD/jccfwd.txt" 2>"$TD/jccfwd.err"
+check jcc_forward_keeps_mov python3 - "$TD/jccfwd.txt" << 'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+if not re.search(r"B83412", text, re.I):
+    print("mov ax immediate was split; missing B83412")
+    print(text)
+    sys.exit(1)
+if re.search(r"\bxor\s+al,\s*0x12\b", text, re.I):
+    print("interior byte decoded as xor al, 0x12")
+    print(text)
+    sys.exit(1)
+if not re.search(r"\bmov\s+ax,\s*0x1234\b", text, re.I):
+    print("missing mov ax, 0x1234")
+    print(text)
+    sys.exit(1)
+print("jcc forward ok")
+PY
+
+# Far lcall: Capstone operand 0 is the segment. Keep seg,off text; do not
+# invent func_<segment>. Far call falls through; far jmp does not.
+# Near call in the same image still gets a func_ label.
+"$BIN" -d -o - --no-repack --no-asm-file "$TD/FARCALL.COM" >"$TD/far.txt" 2>"$TD/far.err"
+check far_lcall_keeps_seg_off python3 - "$TD/far.txt" "$TD/FARCALL.asm" << 'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+asm = sys.argv[2]
+import os
+if os.path.exists(asm):
+    print(" -o - still wrote", asm)
+    sys.exit(1)
+if not re.search(r"\blcall\b", text, re.I):
+    print("missing lcall")
+    print(text)
+    sys.exit(1)
+if not re.search(r"0x60\b", text, re.I) or not re.search(r"0x2368\b", text, re.I):
+    print("lcall segment/offset text missing")
+    print(text)
+    sys.exit(1)
+if "func_0060" in text or "func_0040" in text:
+    print("far segment was turned into a near func_ label")
+    print(text)
+    sys.exit(1)
+if not re.search(r"\bljmp\b", text, re.I):
+    print("missing ljmp (far call did not fall through)")
+    print(text)
+    sys.exit(1)
+if not re.search(r"0x40:0x5678", text, re.I):
+    print("ljmp seg:off text missing")
+    print(text)
+    sys.exit(1)
+if not re.search(r"\bnop\b", text, re.I):
+    print("missing nop after far call")
+    print(text)
+    sys.exit(1)
+if re.search(r"\bmov\s+ax,\s*0x1234\b", text, re.I):
+    print("far jmp fell through into mov ax")
+    print(text)
+    sys.exit(1)
+if not re.search(r"\bcall\s+func_0111\b", text):
+    print("near call label was lost")
+    print(text)
+    sys.exit(1)
+if not re.search(r"(?m)^func_0111:", text):
+    print("near call target label missing")
+    print(text)
+    sys.exit(1)
+print("far lcall ok")
+PY
+
+# Same-segment far call: 9A 00 10 00 00 is lcall 0:0x1000. With --base=0 the
+# segment matches CS, so IP 0x1000 (mov ax, 0x1234) is a real target.
+python3 - "$TD" << 'PY'
+from pathlib import Path
+import sys
+td = Path(sys.argv[1])
+blob = bytearray(0xF04)
+blob[0:5] = bytes.fromhex("9A00100000")
+blob[0xF00:0xF04] = bytes.fromhex("B83412C3")
+(td / "FARSAME.COM").write_bytes(blob)
+PY
+"$BIN" -d -o - --no-repack --no-asm-file --no-psp --base=0 "$TD/FARSAME.COM" \
+  >"$TD/farsame.txt" 2>"$TD/farsame.err"
+check far_same_seg_target python3 - "$TD/farsame.txt" << 'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+if "func_1000" not in text:
+    print("missing func_1000")
+    print(text)
+    sys.exit(1)
+if not re.search(r"mov\s+ax,\s*0x1234", text, re.I):
+    print("missing mov ax, 0x1234")
+    print(text)
+    sys.exit(1)
+if not re.search(r";\s*→\s*func_1000", text):
+    print("far call was not named ; → func_1000")
+    print(text)
+    sys.exit(1)
+if "func_0000" in text and re.search(r"lcall\s+func_0000", text):
+    print("segment was used as a near target")
+    sys.exit(1)
+print("same-seg far call ok")
+PY
+
+# More reachable blocks than the listing cap. The entry sits at the high end
+# and must still be emitted, with a stderr truncation line.
+python3 - "$TD" << 'PY'
+import struct, sys
+from pathlib import Path
+td = Path(sys.argv[1])
+n = 2100
+body = bytearray(b"\xEB\x00" * n)
+entry = n * 2
+# jmp is 3 bytes at entry+3; the displacement is relative to entry+6.
+rel = (0 - (entry + 6)) & 0xFFFF
+body += bytes([0xB8, 0xEF, 0xBE, 0xE9, rel & 0xFF, (rel >> 8) & 0xFF])
+total = 32 + len(body)
+final_len = total % 512
+num_blocks = (total + 511) // 512
+if final_len == 0:
+    final_len = 0
+hdr = bytearray(32)
+struct.pack_into("<14H", hdr, 0, 0x5A4D, final_len, num_blocks, 0, 2,
+                 0, 0xFFFF, 0, 0x200, 0, entry, 0, 0x1C, 0)
+(td / "TRUNC.EXE").write_bytes(bytes(hdr) + bytes(body))
+PY
+"$BIN" -d --no-asm-file --no-repack "$TD/TRUNC.EXE" >"$TD/trunc.txt" 2>"$TD/trunc.err"
+check listing_keeps_entry python3 - "$TD/trunc.txt" "$TD/trunc.err" << 'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+err = open(sys.argv[2], encoding="utf-8", errors="replace").read()
+if not re.search(r"mov\s+ax,\s*0xbeef", text, re.I):
+    print("entry mov ax, 0xbeef was truncated away")
+    sys.exit(1)
+m = re.search(r"listing: truncated (\d+) blocks", err)
+if not m or int(m.group(1)) <= 0:
+    print("missing stderr truncation line")
+    print(err)
+    sys.exit(1)
+print("entry kept, truncated", m.group(1))
+PY
+
+mkdir -p "$TD/sy"
+printf '\xc3' > "$TD/sy/t.com"
+ln -s "$TD/sy/missing-asm" "$TD/sy/t.asm"
+set +e
+"$BIN" -d --no-repack "$TD/sy/t.com" >"$TD/sy/out.txt" 2>"$TD/sy/err.txt"
+echo $? >"$TD/sy/rc.txt"
+set -e
+check dangling_asm_symlink python3 - "$TD/sy" << 'PY'
+import os, sys
+from pathlib import Path
+sy = Path(sys.argv[1])
+missing = sy / "missing-asm"
+link = sy / "t.asm"
+if missing.exists():
+    print("dangling symlink target was created", missing)
+    sys.exit(1)
+if not link.is_symlink():
+    print("t.asm is no longer a symlink")
+    sys.exit(1)
+rc = int((sy / "rc.txt").read_text().strip())
+if rc == 0:
+    print("refusing an existing asm symlink exited 0")
+    sys.exit(1)
+err = (sy / "err.txt").read_text(encoding="utf-8", errors="replace")
+if "refuse to overwrite" not in err or "t.asm" not in err:
+    print("missing refuse line")
+    print(err)
+    sys.exit(1)
+print("dangling asm symlink ok")
+PY
+
+# Default <stem>.asm is kept. -o PATH may replace that same file.
+mkdir -p "$TD/ow"
+printf 'KEEP\n' > "$TD/ow/t.asm"
+printf '\xc3' > "$TD/ow/t.com"
+set +e
+"$BIN" -d "$TD/ow/t.com" >"$TD/ow/stdout.txt" 2>"$TD/ow/err.txt"
+echo $? >"$TD/ow/rc.txt"
+set -e
+check asm_refuse_default python3 - "$TD/ow/t.asm" "$TD/ow/err.txt" "$TD/ow/stdout.txt" "$TD/ow/rc.txt" << 'PY'
+import sys
+asm, err_p, out_p, rc_p = sys.argv[1:]
+body = open(asm, encoding="utf-8").read()
+if body != "KEEP\n":
+    print("default asm was overwritten:", repr(body[:80]))
+    sys.exit(1)
+rc = int(open(rc_p, encoding="utf-8").read().strip())
+if rc == 0:
+    print("refusing an existing default asm exited 0")
+    sys.exit(1)
+err = open(err_p, encoding="utf-8", errors="replace").read()
+want = f"listing: refuse to overwrite '{asm}'"
+if want not in err:
+    print("missing", want)
+    print(err)
+    sys.exit(1)
+out = open(out_p, encoding="utf-8", errors="replace").read()
+if "Multi-pass assembly listing" not in out:
+    print("listing did not stay on stdout")
+    sys.exit(1)
+print("asm refuse ok")
+PY
+
+"$BIN" -d -o "$TD/ow/t.asm" "$TD/ow/t.com" >"$TD/ow/stdout2.txt" 2>"$TD/ow/err2.txt"
+check asm_o_may_replace python3 - "$TD/ow/t.asm" "$TD/ow/err2.txt" << 'PY'
+import sys
+asm, err_p = sys.argv[1:]
+body = open(asm, encoding="utf-8", errors="replace").read()
+if body == "KEEP\n" or "KEEP" == body.strip() and "func_" not in body:
+    print(" -o did not replace t.asm:", repr(body[:80]))
+    sys.exit(1)
+if "func_0100" not in body:
+    print("replaced asm has no listing")
+    print(body[:400])
+    sys.exit(1)
+err = open(err_p, encoding="utf-8", errors="replace").read()
+if "refuse to overwrite" in err:
+    print(" -o was refused:", err)
+    sys.exit(1)
+print("asm -o replace ok")
+PY
+
+check help_keeps_default_outputs bash -c "$BIN -h 2>&1 | grep -q 'unless -o or --repack-output'"
+
+# Repack: existing default <stem>.repack.exe is kept. --repack-output may replace.
+CAT="$(fixture fx03 || true)"
+if [[ ! -f "$CAT" ]]; then
+  echo "SKIP repack tests (fixture unavailable)"
+else
+  mkdir -p "$TD/re"
+  cp -f "$CAT" "$TD/re/fx03.exe"
+  "$BIN" -d "$TD/re/fx03.exe" >/dev/null 2>"$TD/re/err1.txt"
+  cp -f "$TD/re/fx03.repack.exe" "$TD/re/first.repack.exe"
+  set +e
+  "$BIN" -d "$TD/re/fx03.exe" >/dev/null 2>"$TD/re/err2.txt"
+  echo $? >"$TD/re/rc2.txt"
+  set -e
+  check repack_refuse_default python3 - "$TD/re" << 'PY'
+import pathlib, sys
+re = pathlib.Path(sys.argv[1])
+first = (re / "first.repack.exe").read_bytes()
+second = (re / "fx03.repack.exe").read_bytes()
+if first != second:
+    print("default repack bytes changed", len(first), len(second))
+    sys.exit(1)
+if len(first) < 64:
+    print("repack output too small")
+    sys.exit(1)
+rc = int((re / "rc2.txt").read_text(encoding="utf-8").strip())
+if rc == 0:
+    print("second -d should exit non-zero: default asm already exists")
+    sys.exit(1)
+err = (re / "err2.txt").read_text(encoding="utf-8", errors="replace")
+want = "repack: refuse to overwrite '" + str(re / "fx03.repack.exe") + "'"
+if want not in err:
+    print("missing", want)
+    print(err)
+    sys.exit(1)
+if "repack: failed" in err:
+    print("refuse also printed repack: failed")
+    print(err)
+    sys.exit(1)
+print("repack refuse ok", len(first))
+PY
+  printf 'KEEP' > "$TD/re/named.exe"
+  set +e
+  "$BIN" -d --repack-output="$TD/re/named.exe" "$TD/re/fx03.exe" >/dev/null 2>"$TD/re/err3.txt"
+  echo $? >"$TD/re/rc3.txt"
+  set -e
+  check repack_named_overwrite python3 - "$TD/re" << 'PY'
+import pathlib, sys
+re = pathlib.Path(sys.argv[1])
+named = (re / "named.exe").read_bytes()
+if named.startswith(b"KEEP") or named == b"KEEP":
+    print("--repack-output did not replace named.exe")
+    sys.exit(1)
+if not named.startswith(b"MZ"):
+    print("named.exe is not an MZ image")
+    sys.exit(1)
+kept = (re / "fx03.repack.exe").read_bytes()
+first = (re / "first.repack.exe").read_bytes()
+if kept != first:
+    print("named repack rewrote the default file")
+    sys.exit(1)
+rc = int((re / "rc3.txt").read_text(encoding="utf-8").strip())
+if rc == 0:
+    print("named repack should still exit non-zero: default asm already exists")
+    sys.exit(1)
+err = (re / "err3.txt").read_text(encoding="utf-8", errors="replace")
+if "repack: failed" in err:
+    print(err)
+    sys.exit(1)
+if "repack: wrote" not in err:
+    print("missing repack: wrote")
+    print(err)
+    sys.exit(1)
+print("repack named overwrite ok", len(named))
+PY
+fi
+
+# X3: an MZ whose declared load image is empty fails. No listing file.
+mkdir -p "$TD/x3"
+python3 - "$TD/x3/empty.exe" "$TD/x3/tiny.exe" << 'PY'
+import struct, sys
+empty_p, tiny_p = sys.argv[1:]
+# header is 2 paragraphs (32 bytes). Declared file size equals the header,
+# so the load image length is 0. CS:IP 0000:0000 sits on the header end,
+# which validate_header still accepts.
+empty = struct.pack(
+    "<2s13H",
+    b"MZ",
+    32, 1, 0, 2, 0, 0xFFFF, 0, 0, 0, 0, 0, 0x1C, 0,
+)
+open(empty_p, "wb").write(empty.ljust(32, b"\0"))
+image = b"\xC3"
+size = 32 + len(image)
+tiny = struct.pack(
+    "<2s13H",
+    b"MZ",
+    size % 512,
+    (size + 511) // 512,
+    0, 2, 0x10, 0xFFFF, 0, 0x200, 0, 0, 0, 0x1C, 0,
+)
+open(tiny_p, "wb").write(tiny.ljust(32, b"\0") + image)
+PY
+printf '\xc3' >"$TD/x3/tiny.com"
+set +e
+"$BIN" -d "$TD/x3/empty.exe" >"$TD/x3/empty.out" 2>"$TD/x3/empty.err"
+echo $? >"$TD/x3/empty.rc"
+"$BIN" -d --no-asm-file "$TD/x3/tiny.com" >"$TD/x3/tinycom.out" 2>"$TD/x3/tinycom.err"
+echo $? >"$TD/x3/tinycom.rc"
+"$BIN" -d --no-asm-file "$TD/x3/tiny.exe" >"$TD/x3/tinymz.out" 2>"$TD/x3/tinymz.err"
+echo $? >"$TD/x3/tinymz.rc"
+set -e
+check x3_empty_image python3 - "$TD/x3" << 'PY'
+import pathlib, sys
+d = pathlib.Path(sys.argv[1])
+rc = int((d / "empty.rc").read_text().strip())
+out = (d / "empty.out").read_text(encoding="utf-8", errors="replace")
+err = (d / "empty.err").read_text(encoding="utf-8", errors="replace")
+if rc != 1:
+    print("empty image exit", rc)
+    print(out)
+    print(err)
+    sys.exit(1)
+if "listing: empty load image" not in err:
+    print("stderr missing listing: empty load image")
+    print(err)
+    sys.exit(1)
+if "Listing: image offset outside file or empty." in out:
+    print("stdout still has the old success sentence")
+    print(out)
+    sys.exit(1)
+asms = list(d.glob("*.asm"))
+if asms:
+    print("listing file created:", asms)
+    sys.exit(1)
+print("empty image ok")
+PY
+check x3_tiny_ok python3 - "$TD/x3" << 'PY'
+import pathlib, sys
+d = pathlib.Path(sys.argv[1])
+for name in ("tinycom", "tinymz"):
+    rc = int((d / f"{name}.rc").read_text().strip())
+    if rc != 0:
+        err = (d / f"{name}.err").read_text(encoding="utf-8", errors="replace")
+        out = (d / f"{name}.out").read_text(encoding="utf-8", errors="replace")
+        print(name, "exit", rc)
+        print(out[-400:])
+        print(err[-400:])
+        sys.exit(1)
+print("tiny listings ok")
+PY
+
+# X12: a whitelist-only program has nothing to verify and must not spawn.
+mkdir -p "$TD/x12"
+printf '\xb8\x00\x4c\xcd\x21' >"$TD/x12/wl.com"
+cat >"$TD/x12/uasm-wrap" << 'EOF'
+#!/bin/sh
+echo SPAWNED >&2
+exit 99
+EOF
+chmod +x "$TD/x12/uasm-wrap"
+set +e
+"$BIN" --uasm --uasm-verify --uasm-bin "$TD/x12/uasm-wrap" \
+  -o "$TD/x12/wl.asm" "$TD/x12/wl.com" \
+  >"$TD/x12/wl.out" 2>"$TD/x12/wl.err"
+echo $? >"$TD/x12/rc"
+set -e
+check x12_zero_candidates python3 - "$TD/x12" << 'PY'
+import pathlib, sys
+d = pathlib.Path(sys.argv[1])
+rc = int((d / "rc").read_text().strip())
+err = (d / "wl.err").read_text(encoding="utf-8", errors="replace")
+asm = (d / "wl.asm").read_text(encoding="utf-8", errors="replace")
+if rc != 0:
+    print("exit", rc)
+    print(err)
+    print(asm)
+    sys.exit(1)
+if "SPAWNED" in err:
+    print("assembler was spawned")
+    print(err)
+    sys.exit(1)
+if "; NOT VERIFIED (0 candidates)" not in asm:
+    print("missing zero-candidate header")
+    print(asm)
+    sys.exit(1)
+if "; verified:" in asm:
+    print("header claims verified")
+    print(asm)
+    sys.exit(1)
+print("zero candidates ok")
+PY
+
+# N4: near jbe whose 16-bit target is FFFE is outside the image.
+# 0F 86 FA FE is jbe rel16; EB 00 is an in-image short jump; C3 is ret.
+mkdir -p "$TD/n4"
+printf '\x0f\x86\xfa\xfe\xeb\x00\xc3' >"$TD/n4/out.com"
+"$BIN" -d --no-asm-file --base=0500 "$TD/n4/out.com" >"$TD/n4/out.txt" 2>"$TD/n4/out.err"
+check n4_outside_near python3 - "$TD/n4/out.txt" << 'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+if "0500:FFFE (outside image)" not in text:
+    print("missing 0500:FFFE (outside image)")
+    print(text)
+    sys.exit(1)
+if "jbe 0x4ffe" in text.lower():
+    print("still printing Capstone linear jbe 0x4ffe")
+    print(text)
+    sys.exit(1)
+short = []
+for line in text.splitlines():
+    if not re.match(r"\s+[0-9A-Fa-f]{4}\s+", line):
+        continue
+    if re.search(r"\bjbe\b", line, re.I):
+        continue
+    if re.search(r"\bjmp\b", line, re.I):
+        short.append(line)
+if len(short) != 1:
+    print("expected one in-image short jump, got", short)
+    print(text)
+    sys.exit(1)
+if "(outside image)" in short[0]:
+    print("in-image short jump marked outside:", short[0])
+    sys.exit(1)
+print("outside near ok")
+PY
+
+echo "---"
+echo "passed=$pass failed=$fail"
+fixtures_exit "$fail"

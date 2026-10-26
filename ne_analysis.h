@@ -1,0 +1,724 @@
+// ne_analysis.h - Windows 3.x NE (New Executable) analysis
+// Author: EdgeOfAssembly <haxbox2000@gmail.com>
+// License: GPLv2 | Commercial (contact author)
+//
+// Detect NE via MZ e_lfanew, dump header / segments / modules / resources,
+// and optionally disassemble code segments (Capstone 16-bit).
+
+#ifndef NE_ANALYSIS_H
+#define NE_ANALYSIS_H
+
+#include "ne.h"
+#include "ne_shift.h"
+#include "options.h"
+#include "formatting.h"
+#include "disasm.h"
+#include "json_escape.h"
+
+#include <cstdint>
+#include <cstring>
+#include <format>
+#include <iomanip>
+#include <iostream>
+#include <map>
+#include <string>
+#include <utility>
+#include <vector>
+
+//=============================================================================
+// Helpers
+//=============================================================================
+
+/// Read little-endian u16 from buffer (bounds-checked).
+static inline bool ne_read_u16(const std::vector<uint8_t>& data, size_t off,
+                               uint16_t& out)
+{
+    if (off + 2 > data.size())
+        return false;
+    out = static_cast<uint16_t>(data[off]) |
+          (static_cast<uint16_t>(data[off + 1]) << 8);
+    return true;
+}
+
+/// Read little-endian u32 from buffer (bounds-checked).
+static inline bool ne_read_u32(const std::vector<uint8_t>& data, size_t off,
+                               uint32_t& out)
+{
+    if (off + 4 > data.size())
+        return false;
+    out = static_cast<uint32_t>(data[off]) |
+          (static_cast<uint32_t>(data[off + 1]) << 8) |
+          (static_cast<uint32_t>(data[off + 2]) << 16) |
+          (static_cast<uint32_t>(data[off + 3]) << 24);
+    return true;
+}
+
+/// True if file is MZ with a valid NE header at e_lfanew.
+static inline bool ne_probe(const std::vector<uint8_t>& data, uint32_t& e_lfanew_out)
+{
+    if (data.size() < MZ_E_LFANEW_MIN)
+        return false;
+    if (data[0] != 'M' || data[1] != 'Z')
+        return false;
+    uint32_t e_lfanew = 0;
+    if (!ne_read_u32(data, MZ_E_LFANEW_OFF, e_lfanew))
+        return false;
+    if (e_lfanew < MZ_E_LFANEW_MIN || e_lfanew + sizeof(NEHeader) > data.size())
+        return false;
+    uint16_t magic = 0;
+    if (!ne_read_u16(data, static_cast<size_t>(e_lfanew), magic))
+        return false;
+    if (magic != NE_SIGNATURE)
+        return false;
+    e_lfanew_out = e_lfanew;
+    return true;
+}
+
+static inline const char* ne_exetyp_name(uint8_t t)
+{
+    switch (t)
+    {
+    case NE_EXETYP_OS2:     return "OS/2";
+    case NE_EXETYP_WINDOWS: return "Windows";
+    case NE_EXETYP_DOS4:    return "European DOS 4.x";
+    case NE_EXETYP_WIN386:  return "Windows 386";
+    case NE_EXETYP_BOSS:    return "BOSS";
+    default:                return "Unknown";
+    }
+}
+
+static inline const char* ne_rt_name(uint16_t type_id)
+{
+    const uint16_t id = type_id & 0x7FFFu;
+    switch (id)
+    {
+    case NE_RT_CURSOR:       return "CURSOR";
+    case NE_RT_BITMAP:       return "BITMAP";
+    case NE_RT_ICON:         return "ICON";
+    case NE_RT_MENU:         return "MENU";
+    case NE_RT_DIALOG:       return "DIALOG";
+    case NE_RT_STRING:       return "STRING";
+    case NE_RT_FONTDIR:      return "FONTDIR";
+    case NE_RT_FONT:         return "FONT";
+    case NE_RT_ACCELERATOR:  return "ACCELERATOR";
+    case NE_RT_RCDATA:       return "RCDATA";
+    case NE_RT_GROUP_CURSOR: return "GROUP_CURSOR";
+    case NE_RT_GROUP_ICON:   return "GROUP_ICON";
+    case NE_RT_VERSION:      return "VERSION";
+    default:                 return "UNKNOWN";
+    }
+}
+
+/// Length-prefixed string at absolute file offset (Pascal-style).
+static inline std::string ne_pstring(const std::vector<uint8_t>& data, size_t off)
+{
+    if (off >= data.size())
+        return {};
+    const size_t n = data[off];
+    if (off + 1 + n > data.size())
+        return {};
+    return std::string(reinterpret_cast<const char*>(data.data() + off + 1), n);
+}
+
+//=============================================================================
+// Parsed view
+//=============================================================================
+
+struct NEParsed {
+    uint32_t e_lfanew = 0;
+    NEHeader hdr{};
+    std::vector<NESegment> segs;
+    std::vector<std::string> module_names; ///< imported module names (KERNEL, …)
+    std::string module_name;               ///< resident name ordinal 0
+    std::string description;               ///< non-resident name ordinal 0
+    bool ok = false;
+    std::string error;
+};
+
+static inline bool ne_parse(const std::vector<uint8_t>& data, NEParsed& out)
+{
+    out = NEParsed{};
+    if (!ne_probe(data, out.e_lfanew))
+    {
+        out.error = "Not an NE executable (no MZ+e_lfanew+NE)";
+        return false;
+    }
+    std::memcpy(&out.hdr, data.data() + out.e_lfanew, sizeof(NEHeader));
+    if (out.hdr.magic != NE_SIGNATURE)
+    {
+        out.error = "NE magic mismatch";
+        return false;
+    }
+
+    const size_t ne_base = static_cast<size_t>(out.e_lfanew);
+    const size_t seg_off = ne_base + out.hdr.segtab;
+    out.segs.resize(out.hdr.cseg);
+    for (uint16_t i = 0; i < out.hdr.cseg; ++i)
+    {
+        const size_t off = seg_off + static_cast<size_t>(i) * sizeof(NESegment);
+        if (off + sizeof(NESegment) > data.size())
+        {
+            out.error = "Segment table truncated";
+            return false;
+        }
+        std::memcpy(&out.segs[i], data.data() + off, sizeof(NESegment));
+    }
+
+    // Module reference table: array of offsets into imported names table
+    const size_t modtab = ne_base + out.hdr.modtab;
+    const size_t imptab = ne_base + out.hdr.imptab;
+    for (uint16_t i = 0; i < out.hdr.cmod; ++i)
+    {
+        uint16_t name_off = 0;
+        if (!ne_read_u16(data, modtab + static_cast<size_t>(i) * 2, name_off))
+            break;
+        out.module_names.push_back(ne_pstring(data, imptab + name_off));
+    }
+
+    // Resident name table: length-prefixed names + ordinal u16; ends with len=0
+    {
+        size_t p = ne_base + out.hdr.restab;
+        bool first = true;
+        while (p < data.size())
+        {
+            const uint8_t len = data[p];
+            if (len == 0)
+                break;
+            if (p + 1 + len + 2 > data.size())
+                break;
+            std::string name(reinterpret_cast<const char*>(data.data() + p + 1), len);
+            uint16_t ord = 0;
+            ne_read_u16(data, p + 1 + len, ord);
+            if (first)
+            {
+                out.module_name = std::move(name);
+                first = false;
+            }
+            p += 1 + len + 2;
+        }
+    }
+
+    // Non-resident name table (file offset)
+    if (out.hdr.nrestab != 0 && out.hdr.nrestab < data.size())
+    {
+        size_t p = static_cast<size_t>(out.hdr.nrestab);
+        if (p < data.size() && data[p] != 0)
+        {
+            const uint8_t len = data[p];
+            if (p + 1 + len <= data.size())
+                out.description.assign(
+                    reinterpret_cast<const char*>(data.data() + p + 1), len);
+        }
+    }
+
+    out.ok = true;
+    return true;
+}
+
+/**
+ * @brief File offset of one NE segment's bytes.
+ *
+ * Sector 0 is the no-data sentinel and returns 0 before any shift. Any other
+ * sector uses @c ne_shift_left, which is 0 when the alignment shift is above 16.
+ *
+ * @param[in] hdr NE header. @c hdr.align is the sector shift.
+ * @param[in] seg Segment table entry. @c seg.sector is the sector index.
+ * @return File offset of the segment bytes.
+ * @retval 0 @c seg.sector is 0, or @c hdr.align is greater than 16.
+ */
+static inline size_t ne_seg_file_offset(const NEHeader& hdr, const NESegment& seg)
+{
+    if (seg.sector == 0)
+    {
+        return 0;
+    }
+    return ne_shift_left(seg.sector, hdr.align);
+}
+
+/// On-disk length of segment (0 in header means 65536).
+static inline size_t ne_seg_file_length(const NESegment& seg)
+{
+    return seg.cbseg == 0 ? 65536u : static_cast<size_t>(seg.cbseg);
+}
+
+//=============================================================================
+// Printing
+//=============================================================================
+
+static inline void ne_print_header(const NEParsed& ne, int64_t fileSize)
+{
+    const NEHeader& h = ne.hdr;
+    std::cout << "\n=== New Executable (NE) — Windows 3.x era ===\n";
+    std::cout << "File size                                  "
+              << std::hex << fileSize << "h  (" << std::dec << fileSize << ")\n";
+    std::cout << "e_lfanew (NE header file offset)           "
+              << std::hex << ne.e_lfanew << "h\n";
+    std::cout << "Linker version                             "
+              << std::dec << static_cast<unsigned>(h.ver) << "."
+              << static_cast<unsigned>(h.rev) << "\n";
+    std::cout << "Module flags                               "
+              << std::hex << h.flags << "h\n";
+    std::cout << "Automatic data segment                     "
+              << std::dec << h.autodata << "\n";
+    std::cout << "Initial heap / stack                       "
+              << h.heap << " / " << h.stack << " bytes\n";
+    std::cout << "Entry point (CS:IP)                        "
+              << std::hex << h.cs << ":" << h.ip
+              << "  (seg index " << std::dec << h.cs << ")\n";
+    std::cout << "Stack (SS:SP)                              "
+              << std::hex << h.ss << ":" << h.sp << std::dec << "\n";
+    std::cout << "Segment count                              " << h.cseg << "\n";
+    std::cout << "Module ref count                           " << h.cmod << "\n";
+    std::cout << "Sector alignment shift                     " << std::dec
+              << h.align;
+    if (ne_align_shift_ok(h.align))
+    {
+        std::cout << "  (sector size " << ne_shift_left(1, h.align) << ")\n";
+    }
+    else
+    {
+        std::cerr << "Warning: NE sector alignment shift " << std::dec
+                  << h.align << " is out of range\n";
+        std::cout << "  (out of range)\n";
+    }
+    std::cout << "Target OS                                  "
+              << static_cast<unsigned>(h.exetyp) << " ("
+              << ne_exetyp_name(h.exetyp) << ")\n";
+    std::cout << "Expected Windows version                   "
+              << static_cast<unsigned>(h.expver_maj) << "."
+              << static_cast<unsigned>(h.expver_min) << "\n";
+    if (!ne.module_name.empty())
+        std::cout << "Module name (resident)                     "
+                  << ne.module_name << "\n";
+    if (!ne.description.empty())
+        std::cout << "Description (non-resident)                 "
+                  << ne.description << "\n";
+}
+
+static inline void ne_print_segments(const NEParsed& ne)
+{
+    std::cout << "\n=== Segment table (" << ne.segs.size() << " entries) ===\n";
+    std::cout << "Idx  Type  Flags   Sector   FileOff    Length   MinAlloc\n";
+    for (size_t i = 0; i < ne.segs.size(); ++i)
+    {
+        const NESegment& s = ne.segs[i];
+        const char* kind = (s.flags & NE_SEG_DATA) ? "DATA" : "CODE";
+        const size_t foff = ne_seg_file_offset(ne.hdr, s);
+        const size_t flen = ne_seg_file_length(s);
+        std::cout << std::dec << std::setw(3) << (i + 1) << "  "
+                  << kind << "  "
+                  << std::hex << std::setw(4) << s.flags << "h  "
+                  << std::setw(6) << s.sector << "h  "
+                  << std::setw(8) << foff << "h  "
+                  << std::setw(6) << flen << "h  "
+                  << std::setw(6) << (s.minalloc == 0 ? 65536u : s.minalloc)
+                  << "h\n";
+    }
+    std::cout << std::dec;
+}
+
+static inline void ne_print_modules(const NEParsed& ne)
+{
+    if (ne.module_names.empty())
+        return;
+    std::cout << "\n=== Imported modules (" << ne.module_names.size() << ") ===\n";
+    for (size_t i = 0; i < ne.module_names.size(); ++i)
+        std::cout << "  [" << (i + 1) << "] " << ne.module_names[i] << "\n";
+}
+
+static inline void ne_print_resources(const std::vector<uint8_t>& data,
+                                      const NEParsed& ne)
+{
+    const size_t ne_base = static_cast<size_t>(ne.e_lfanew);
+    const size_t rsrctab = ne_base + ne.hdr.rsrctab;
+    // Resource table may equal resident name table if no resources
+    if (ne.hdr.rsrctab == 0 || ne.hdr.rsrctab == ne.hdr.restab)
+    {
+        std::cout << "\n=== Resource table ===\n  (none)\n";
+        return;
+    }
+    if (rsrctab + 2 > data.size())
+    {
+        std::cout << "\n=== Resource table ===\n  (truncated)\n";
+        return;
+    }
+
+    uint16_t align_shift = 0;
+    ne_read_u16(data, rsrctab, align_shift);
+    std::cout << "\n=== Resource table (align_shift=" << std::dec
+              << align_shift << ") ===\n";
+    const bool align_ok = ne_align_shift_ok(align_shift);
+    if (!align_ok)
+    {
+        std::cerr << "Warning: NE resource alignment shift " << std::dec
+                  << align_shift << " is out of range\n";
+    }
+
+    size_t pos = rsrctab + 2;
+    while (pos + 8 <= data.size())
+    {
+        uint16_t type_id = 0, count = 0;
+        uint32_t reserved = 0;
+        ne_read_u16(data, pos, type_id);
+        if (type_id == 0)
+            break;
+        ne_read_u16(data, pos + 2, count);
+        ne_read_u32(data, pos + 4, reserved);
+        pos += 8;
+
+        std::string type_label;
+        if (type_id & 0x8000u)
+            type_label = std::string(ne_rt_name(type_id)) +
+                         " (int " + std::to_string(type_id & 0x7FFFu) + ")";
+        else
+            type_label = "\"" + ne_pstring(data, rsrctab + type_id) + "\"";
+
+        std::cout << "Type " << type_label << " — " << count << " resource(s)\n";
+
+        for (uint16_t i = 0; i < count; ++i)
+        {
+            if (pos + sizeof(NEResource) > data.size())
+                break;
+            NEResource res{};
+            std::memcpy(&res, data.data() + pos, sizeof(NEResource));
+            pos += sizeof(NEResource);
+
+            size_t file_off = 0;
+            size_t file_len = 0;
+            if (align_ok)
+            {
+                file_off = ne_shift_left(res.offset, align_shift);
+                file_len = ne_shift_left(res.length, align_shift);
+            }
+
+            std::string id_label;
+            if (res.id & 0x8000u)
+                id_label = "#" + std::to_string(res.id & 0x7FFFu);
+            else
+                id_label = "\"" + ne_pstring(data, rsrctab + res.id) + "\"";
+
+            std::cout << "  id=" << id_label
+                      << "  flags=" << std::hex << res.flags << "h"
+                      << "  off=" << file_off << "h"
+                      << "  len=" << file_len << "h"
+                      << std::dec << "\n";
+        }
+    }
+}
+
+// P7 model (needs NEParsed and the segment helpers above).
+#include "ne_reloc.h"
+
+/**
+ * @brief File window @c ne_disasm_segment passes to disassemble.
+ *
+ * DATA segments, sector 0, and offsets past EOF have no window. @p flen is
+ * the length argument disassemble receives, clamped to the bytes on disk.
+ *
+ * @param data File bytes.
+ * @param ne Parsed NE image.
+ * @param seg_index_0based Segment table index.
+ * @param foff Set to the file offset when the return is true.
+ * @param flen Set to the decoded length when the return is true.
+ * @return false when this segment is not disassembled.
+ */
+static inline bool ne_code_disasm_window(const std::vector<uint8_t>& data,
+                                         const NEParsed& ne,
+                                         size_t seg_index_0based,
+                                         size_t& foff,
+                                         size_t& flen)
+{
+    foff = 0;
+    flen = 0;
+    if (seg_index_0based >= ne.segs.size())
+    {
+        return false;
+    }
+    const NESegment& seg = ne.segs[seg_index_0based];
+    if (seg.flags & NE_SEG_DATA)
+    {
+        return false;
+    }
+    foff = ne_seg_file_offset(ne.hdr, seg);
+    flen = ne_seg_file_length(seg);
+    if (foff == 0 || foff >= data.size())
+    {
+        return false;
+    }
+    if (foff + flen > data.size())
+    {
+        flen = data.size() - foff;
+    }
+    return true;
+}
+
+/// @brief Byte budget for the NE -a CODE-segment loop.
+/// @param file_size On-disk size. The entry preview is not charged.
+/// @return min(16 MiB, max(2 * file_size, 1)).
+static inline uint64_t ne_a_disasm_budget(uint64_t file_size)
+{
+    constexpr uint64_t kCap = 16ull * 1024ull * 1024ull;
+    uint64_t twice = file_size;
+    if (file_size > (UINT64_MAX / 2ull))
+    {
+        twice = UINT64_MAX;
+    }
+    else
+    {
+        twice = file_size * 2ull;
+    }
+    if (twice < 1ull)
+    {
+        twice = 1ull;
+    }
+    if (twice > kCap)
+    {
+        return kCap;
+    }
+    return twice;
+}
+
+/// Disassemble one CODE segment for its on-disk length, not a preview cap.
+static inline void ne_disasm_segment(const std::vector<uint8_t>& data,
+                                     const NEParsed& ne,
+                                     size_t seg_index_0based,
+                                     const NeModel* model)
+{
+    size_t foff = 0;
+    size_t flen = 0;
+    if (!ne_code_disasm_window(data, ne, seg_index_0based, foff, flen))
+    {
+        return;
+    }
+
+    std::cout << "\n=== Disassembly CODE segment " << (seg_index_0based + 1)
+              << " (file " << std::hex << foff << "h, decoded "
+              << std::dec << flen << " bytes) ===\n";
+
+    Options o{};
+    o.showDisasm = true;
+    o.noIntAnnot = true;
+    o.writeAsmFile = false;
+    // One segment is at most 64 KiB, so its listing is bounded: no block cap.
+    o.cfgMaxBlocks = 65536;
+    const uint16_t cs = static_cast<uint16_t>(seg_index_0based + 1);
+    // S2: the same roots as per-segment --uasm (entry, exports, internal far
+    // fixup targets), not only offset 0.
+    if (model != nullptr)
+        for (CfgLin r : ne_segment_roots(data, ne, *model, seg_index_0based, flen))
+            if (r != 0)
+                o.extraEntries.push_back(static_cast<uint32_t>(r));
+    // A relocation that patches the operand of a 9A (far call) marks that
+    // call as an instruction: seed it, so code reached only from there and
+    // its far calls (named below) are listed.
+    if (model != nullptr)
+    {
+        const size_t own = ne_reloc_owner(*model, seg_index_0based);
+        if (own < model->relocs.size())
+            for (const NeReloc& r : model->relocs[own])
+                for (uint16_t site : r.sites)
+                {
+                    const size_t back = r.atype == 3 ? 1 : (r.atype == 2 ? 3 : 0);
+                    if (back == 0 || site < back || site + 4 - back > flen)
+                        continue;
+                    if (data[foff + site - back] == 0x9A)
+                        o.extraEntries.push_back(static_cast<uint32_t>(site - back));
+                }
+    }
+    std::string text;
+    {
+        NeCoutCapture cap;
+        // flen starts at foff, which is IP 0 for this segment.
+        disassemble(data, foff, cs, /*ip=*/0, o, flen);
+        text = cap.buf.str();
+    }
+    // P7: relocation sites named on the multi-pass listing.
+    std::cout << (model ? ne_annotate_listing(text, *model, seg_index_0based) : text);
+}
+
+/**
+ * @brief Disassemble CODE segments for -a, deduped and budget-capped.
+ *
+ * The entry preview is not part of this loop and does not spend the budget.
+ * DATA segments are skipped. A CODE segment whose file offset and decoded
+ * length match an earlier disassembled CODE segment prints
+ * "same bytes as segment k" (k is that earlier 1-based segment index) and
+ * is not disassembled again. Its length is not added to the running sum.
+ *
+ * The budget is min(16 MiB, max(2 * file size, 1)). The sum counts bytes
+ * passed to disassemble from this loop only. When the next new segment
+ * would exceed the budget, it and every later CODE segment are not
+ * disassembled. One line "truncated: N more CODE segments" counts those
+ * remaining non-DATA segments, excluding a duplicate already reported as
+ * the same bytes.
+ *
+ * @param fileData Whole file.
+ * @param ne Parsed NE image.
+ */
+static inline void ne_disasm_all_code(const std::vector<uint8_t>& fileData,
+                                      const NEParsed& ne,
+                                      const NeModel& model)
+{
+    const uint64_t budget = ne_a_disasm_budget(static_cast<uint64_t>(fileData.size()));
+    uint64_t used = 0;
+    std::map<std::pair<size_t, size_t>, size_t> seen;
+    bool stop = false;
+    size_t more = 0;
+    for (size_t i = 0; i < ne.segs.size(); ++i)
+    {
+        if (ne.segs[i].flags & NE_SEG_DATA)
+        {
+            continue;
+        }
+        size_t foff = 0;
+        size_t flen = 0;
+        const bool have = ne_code_disasm_window(fileData, ne, i, foff, flen);
+        if (have)
+        {
+            const std::pair<size_t, size_t> key{foff, flen};
+            const auto it = seen.find(key);
+            if (it != seen.end())
+            {
+                std::cout << std::format("same bytes as segment {}\n", it->second);
+                continue;
+            }
+        }
+        if (stop)
+        {
+            ++more;
+            continue;
+        }
+        if (!have)
+        {
+            continue;
+        }
+        if (static_cast<uint64_t>(flen) > budget - used)
+        {
+            stop = true;
+            ++more;
+            continue;
+        }
+        seen.emplace(std::pair<size_t, size_t>{foff, flen}, i + 1);
+        used += static_cast<uint64_t>(flen);
+        ne_disasm_segment(fileData, ne, i, &model);
+    }
+    if (more > 0)
+    {
+        std::cout << std::format("truncated: {} more CODE segments\n", more);
+    }
+}
+
+//=============================================================================
+// Top-level analyze
+//=============================================================================
+
+/**
+ * @brief Analyze an NE image and write its report.
+ *
+ * Headers are always printed. Segments, modules, and resources follow.
+ * -d disassembles the entry code segment (and, with -a, other CODE segments).
+ *
+ * @param ne_error On failure, the parse diagnostic. Not printed here.
+ * @return true when a full NE report was written (caller should exit 0).
+ *         false when the NE signature did not parse; @p ne_error is set and
+ *         the caller should warn and fall back to the MZ report.
+ */
+static inline bool analyze_ne(const Options& opts,
+                             const std::vector<uint8_t>& fileData,
+                             int64_t fileSize,
+                             std::string& ne_error)
+{
+    NEParsed ne;
+    if (!ne_parse(fileData, ne))
+    {
+        ne_error = ne.error.empty() ? std::string("NE parse failed") : ne.error;
+        return false;
+    }
+    ne_error.clear();
+
+    if (opts.jsonOut)
+    {
+        // Minimal JSON for scripting (full schema later)
+        std::cout << "{\n"
+                  << "  \"tool\": \"dumpexe\",\n"
+                  << "  \"format\": \"ne\",\n"
+                  << "  \"file\": \"" << json_escape(opts.filename) << "\",\n"
+                  << "  \"e_lfanew\": " << ne.e_lfanew << ",\n"
+                  << "  \"linker_version\": \"" << static_cast<unsigned>(ne.hdr.ver)
+                  << "." << static_cast<unsigned>(ne.hdr.rev) << "\",\n"
+                  << "  \"exetyp\": " << static_cast<unsigned>(ne.hdr.exetyp)
+                  << ",\n"
+                  << "  \"cseg\": " << ne.hdr.cseg << ",\n"
+                  << "  \"cmod\": " << ne.hdr.cmod << ",\n"
+                  << "  \"entry_cs\": " << ne.hdr.cs << ",\n"
+                  << "  \"entry_ip\": " << ne.hdr.ip << ",\n"
+                  << "  \"module\": \"" << json_escape(ne.module_name) << "\",\n"
+                  << "  \"description\": \"" << json_escape(ne.description) << "\"\n"
+                  << "}\n";
+        return true;
+    }
+
+    std::cout << "Display of File " << opts.filename << "\n";
+    ne_print_header(ne, fileSize);
+    ne_print_segments(ne);
+    ne_print_modules(ne);
+    const NeModel model = ne_build_model(fileData, ne);
+    ne_print_exports(model, std::cout);
+    ne_print_resources(fileData, ne);
+    if (opts.showDisasm || opts.showAll)
+        ne_print_relocs(model, std::cout);
+
+    if (opts.showDisasm || opts.showAll)
+    {
+        // Entry segment is 1-based CS index
+        if (ne.hdr.cs >= 1 && ne.hdr.cs <= ne.segs.size())
+        {
+            const size_t idx = static_cast<size_t>(ne.hdr.cs - 1);
+            const NESegment& seg = ne.segs[idx];
+            const size_t foff = ne_seg_file_offset(ne.hdr, seg);
+            size_t flen = ne_seg_file_length(seg);
+            if (foff < fileData.size())
+            {
+                if (foff + flen > fileData.size())
+                    flen = fileData.size() - foff;
+                // Start disasm at entry IP within segment
+                const size_t entry_off = foff + ne.hdr.ip;
+                const size_t remain =
+                    (entry_off < foff + flen) ? (foff + flen - entry_off) : 0;
+                const size_t dump_len =
+                    remain > 512 ? 512 : remain;
+                if (dump_len > 0)
+                {
+                    std::cout << "\n=== Disassembly at entry CS:IP "
+                              << std::hex << ne.hdr.cs << ":" << ne.hdr.ip
+                              << " (file " << entry_off << "h) ===\n"
+                              << std::dec;
+                    Options o = opts;
+                    o.writeAsmFile = false;
+                    std::string text;
+                    {
+                        NeCoutCapture cap;
+                        // entry_off is foff+IP; flen is from foff because of the rewind.
+                        disassemble(fileData, entry_off, ne.hdr.cs, ne.hdr.ip, o, flen);
+                        text = cap.buf.str();
+                    }
+                    std::cout << ne_annotate_listing(text, model, idx);
+                }
+            }
+        }
+        if (opts.showAll)
+        {
+            ne_disasm_all_code(fileData, ne, model);
+        }
+    }
+
+    if (opts.simulate)
+    {
+        std::cerr << "Note: --simulate is DOS real-mode only; "
+                     "NE/Win16 simulation is not implemented yet.\n";
+    }
+
+    return true;
+}
+
+#endif // NE_ANALYSIS_H

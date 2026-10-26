@@ -1,0 +1,42 @@
+Display of File examples/ctmouse.exe
+
+DOS File Size                                     016C5h  (  5829. )
+Load Image Size                                   016A5h  (  5797. )
+Relocation Table entry count                      0000h  (     0. )
+Relocation Table address                          001Ch  (    28. )
+Header Size                                       0020h  (    32. )
+Minimum Extra Memory                              0020h paragraphs (512 bytes)
+Maximum Memory Requirement                        0020h paragraphs (512 bytes)
+File load checksum                                0000h  (     0. )
+Overlay Number                                    0000h  (     0. )
+Entry Point File Offset                           00020h  (    32. )
+Entry Point Image Offset                          00000h  (     0. )
+
+Initial Stack Segment  (SS:SP)			  FFF0:19AE
+Program Entry Point    (CS:IP)			  FFF0:0100
+
+=== Toolchain (auto) ===
+Confidence:  98%
+Toolchain:   JWASM 1.80 (jwasmd -mt) + tlink/wlink + exe2bin + com2exe -s512
+Assembler:   JWASM 1.80
+JWASM 1.8:   yes (1.80 class — era tool in bin/jwasm/)
+Tool binary: bin/jwasm/jwasm-1.8.exe (Win32) / jwasmd-1.8.exe (DOS)
+Product:     CuteMouse 2.1 beta4 [FreeDOS]
+COM-in-EXE:  yes  (CS:IP=FFF0:0100, COM org=0100h)
+Note:        Image is a COM program wrapped as MZ; prefer org 100h labels when mapping symbols.
+Evidence:
+  - MZ CS:IP = FFF0:0100 (COM-in-EXE / com2exe-style load)
+  - zero relocation entries (typical com2exe)
+  - 32-byte MZ header (com2exe -s512 style)
+  - string "CuteMouse" at file 0xB20
+  - banner at 0x12CC: CuteMouse v2.1 beta4 [FreeDOS]
+  - string "CTMOUSE" at file 0x1120
+  - INT 33h opcode at file 0xFC7
+  - rebuild-proven: CuteMouse 2.1b4 load image byte-identical with bin/jwasm/jwasm-1.8.exe
+=== End Toolchain ===
+
+Code at Entry Point (first 64 bytes):
+00000020  e9 0b 0b 00 08 00 10 00  00 01 00 01 31 00 31 00  |............1.1.|
+00000030  ff 77 00 77 00 00 00 00  ff 3f ff 1f ff 0f ff 07  |.w.w.....?......|
+00000040  ff 03 ff 01 ff 00 7f 00  3f 00 1f 00 ff 01 ff 00  |........?.......|
+00000050  ff 30 7f f8 7f f8 ff fc  00 00 00 40 00 60 00 70  |.0.........@.`.p|

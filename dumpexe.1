@@ -1,0 +1,1127 @@
+.TH DUMPEXE 1 2026-10-25 "dumpexe 2.45.0"
+.SH NAME
+dumpexe \- MS-DOS / Win16 binary analyzer: MZ EXE, NE, .COM, and .SYS
+.SH SYNOPSIS
+.B dumpexe
+.RB [ \-h | \-\-help ]
+.br
+.B dumpexe
+.RB [ \-v | \-\-version ]
+.br
+.B dumpexe
+.RB [ options ]
+.I file
+.SH DESCRIPTION
+.B dumpexe
+is a comprehensive utility for analyzing 16-bit MS-DOS and Windows 3.x binaries.
+It supports MZ EXE, Windows 3.x NE (New Executable), plain .COM programs,
+and DOS device driver (.SYS) files — and provides TDUMP-style output with
+multiple analysis modes:
+.IP \(bu 2
+Static header analysis with detailed field information
+.IP \(bu 2
+Relocation table display with padding analysis (MZ EXE)
+.IP \(bu 2
+Hex+ASCII dumps with zero-compression (like hexdump -C)
+.IP \(bu 2
+x86-16 disassembly using Capstone (static code analysis)
+.IP \(bu 2
+DOS load simulation with register tracking (dynamic execution trace)
+.IP \(bu 2
+NE header, segment table, imports, and resource table (Win16)
+.PP
+The file format is detected automatically from the file content:
+.RS
+.IP \(bu 2
+.B MZ EXE
+\(em first two bytes are
+.B 4Dh 5Ah
+('MZ') or
+.B 5Ah 4Dh
+('ZM'); pure DOS load image (no NE at e_lfanew).
+The computed load image is capped at 1114112 bytes (1 MiB + 64 KiB).
+.B \-\-max-image=N
+raises that cap.
+An empty load image is an error.
+.IP \(bu 2
+.B NE EXE (Windows 3.x / Win16)
+\(em MZ stub with
+.B e_lfanew
+at offset 3Ch pointing to
+.B 4Eh 45h
+('NE'). Dumps segments, imports, resources;
+.B \-d
+disassembles the entry code segment and stops at that segment's on-disk end.
+.IP \(bu 2
+.B .SYS device driver
+\(em first four bytes are
+.B FFFFFFFFh
+.IP \(bu 2
+.B .COM (plain binary)
+\(em fallback for all other DOS binaries
+.RE
+
+.SH OPTIONS
+.SS General Options
+.TP
+.BR \-h ", " \-\-help
+Display usage information and exit. Also shown when no arguments are provided.
+.TP
+.BR \-v ", " \-\-version
+Display version information and exit.
+
+.SS Display Sections
+If no mode option is given
+.RB ( \-r ", " \-x ", " \-d ", " \-\-strings ", " \-\-json ", " \-\-uasm ", " \-\-cfg ", " \-\-cfg-interesting ", " \-\-cfg-dot ", " \-\-simulate ", " \-\-xrefs ),
+dumpexe runs the full
+.B \-a
+analysis, including its default
+.I <stem>.asm
+file.
+Modifiers such as
+.BR \-\-base ", " \-n " or " \-\-no-asm-file
+do not count as a mode.
+.B \-\-header-only
+prints only the file header information (and, for MZ EXE and .COM, a 64-byte hex+ASCII preview of the entry point).
+Multiple options can be combined.
+
+.TP
+.BR \-r ", " \-\-relocation
+Show relocation table with all entries, including header padding before and after the table.
+.B MZ EXE only.
+The relocation table contains segment fixup locations that DOS applies when loading the program.
+.TP
+.BR \-x ", " \-\-hexdump
+Show complete hex+ASCII dump from entry point to end of file.
+Uses canonical hexdump -C format with zero-compression (repeated lines shown as *).
+.TP
+.BR \-d ", " \-\-disassemble
+Show x86-16 disassembly from entry point to end of file using Capstone.
+This is
+.B static analysis
+\- shows all instructions without execution.
+.TP
+.BR \-a ", " \-\-all
+Show all sections in order: static info, relocation table (EXE), hexdump, and disassembly.
+Also unpacks the same packers as \-d.
+This is the default when no mode option is given.
+.TP
+.B \-\-header-only
+Print only the header report and the entry preview; turns off the
+.B \-a
+default.
+Cannot be combined with
+.BR \-a .
+.TP
+.BR \-n ", " \-\-no-int-annotations
+Suppress INT annotation comments in disassembly output.
+.TP
+.B \-\-strings
+Extract Pascal length-prefixed, CALL-inline, and ASCIIZ strings (opt-in; default off).
+.TP
+.B \-\-no-pascal-mt
+Disable Pascal MT+86 3.1.1 detection and annotation.
+.B Default: on.
+When signatures match, dumpexe prints compiler ID, entry CALL + segment table,
+near-JMP procedure vector table, and INIPC/PASLIB fingerprint hits.
+Only a disable switch is provided (sane-defaults CLI policy).
+.TP
+.B \-\-json
+Emit a machine-readable JSON report on stdout (default: off).
+Includes MZ header, Pascal MT+ report, strings, and CFG summary.
+Human text sections are suppressed.
+Does not unpack.
+Combine with
+.B \-\-cfg-dot
+to also write a Graphviz file (path recorded in JSON).
+.TP
+.B \-\-cfg-dot=FILE
+Write a Graphviz DOT digraph of the static CFG to FILE (default: off).
+Nodes are colored by role (entry, interesting, jump-table, call target).
+Does not imply a full human CFG dump unless
+.B \-\-cfg
+is also given. Render with e.g.
+.BR "dot -Tpng FILE -o cfg.png" .
+.TP
+.BR \-d ", " \-\-disassemble
+Emit a
+.B multi-pass
+annotated assembly listing (not a single Capstone stream only):
+provisional
+.B func_<IP>
+labels, INT annotations, near
+.B call
+/
+.B jmp
+targets rewritten to labels, blank lines after procedure regions.
+There is
+.B no
+.B \-\-listing
+flag; this
+.I is
+the listing mode.
+Also writes
+.I <stem>.asm
+next to the input by default.
+Microsoft EXEPACK, LZEXE 0.91, LZEXE 0.90, PKLITE, DIET, and LHarc also write
+.I <stem>_UNPACKED.EXE
+(or
+.I .COM
+when the image is not MZ) and
+.I <stem>_UNPACKED.asm
+of the unpacked program.
+.B \-o
+names only the packed listing.
+DIET matches Deark
+.B identify_diet_fmt
+(EXE stub at
+.I codestart\-32+{77,72,52,55}
+plus the COM and data patterns).
+The four bytes
+.B DIET
+at file offset 1Ch are not enough.
+LHarc matches an embedded header that would pass Deark
+.B de_identify_lha
+and also has a level-0/1 header checksum or a level-2 CRC, a packed
+size that fits, and a start in the SFX trailer (the end of the MZ image).
+An
+.B LHA
+sentence is not enough.
+A checksummed header in the middle of the file is not enough.
+LZEXE 0.91 or 0.90 suppresses LHarc.
+.TP
+.BR \-o ", " \-\-output " PATH"
+Override the listing output path (default:
+.IR <stem>.asm ).
+.B \-\-output=PATH
+is the same switch.
+Use
+.B \-
+for stdout only.
+.B \-o \-
+writes no
+.IR <stem>.asm ,
+no
+.IR <stem>_UNPACKED.EXE ,
+and no
+.IR <stem>_UNPACKED.asm .
+Both listings still go to stdout.
+.TP
+.B \-\-no-asm-file
+Do not write an
+.B .asm
+file (default when disassembling is to write one).
+With
+.B \-\-uasm
+and no
+.BR \-o ,
+this is an error.
+.TP
+.B \-\-uasm
+Write UASM source for
+.BR uasm (1)
+(v2.57) to
+.I <stem>.asm
+or to the path named by
+.BR \-o .
+This switch is enable-only and does not require
+.BR \-d .
+The UASM file has no address column and no hex-byte column: one instruction
+per line (mnemonic and operands only), or
+.B db
+of the exact bytes.
+Opcode 98 is printed
+.B cbw
+and opcode 99 is printed
+.B cwd .
+A relative branch is
+.B jmp short ,
+.B jmp near ptr ,
+.B call near ptr ,
+or a conditional
+.B short
+when the target is a label.
+A branch whose operand is a number is left as
+.B db
+and is not offered to the assembler.
+Any other non-branch line stays
+.B db
+unless
+.B \-\-uasm-verify
+is set and
+.BR uasm (1)
+assembles that line back to those bytes.
+The default
+.B \-\-uasm
+listing does not run an assembler.
+Its header says
+.BR "; NOT VERIFIED" .
+.B \-\-uasm-verify
+is enable-only (there is no
+.BR \-\-no-uasm-verify ).
+It requires
+.B \-\-uasm
+and does not imply
+.BR \-\-uasm-stats .
+The assembler is
+.BR \-\-uasm-bin ,
+else
+.BR $DUMPEXE_UASM ,
+else
+.B uasm
+on
+.BR PATH .
+There is no built-in assembler path.
+PATH search ignores an empty or relative directory.
+A clean batch is one assemble of every distinct candidate line.
+When that assemble accepts every line, the header says
+.B "; verified: uasm … at PATH" .
+A line the assembler rejects is dropped and the rest are assembled
+again (at most 16 runs).
+Those bytes may still be promoted.
+The header then says
+.B "; NOT VERIFIED (assembler rejected N candidates)"
+and does not say verified.
+When recovery stops with candidates still queued, the header says
+.B "; NOT VERIFIED (assembler rejected K candidates, unverified M)"
+and does not say verified.
+If verify is on and no assembler can be run, dumpexe writes an error
+on stderr and exits non-zero.
+.PP
+Readability (with \-\-uasm\-verified; bytes unchanged):
+printable ASCII runs in data that look like text are quoted
+.B db
+strings (quote and macro characters stay numeric);
+data runs of 8+ bytes with bit 7 set that decode to text keep hex
+.B db
+under a
+.B "; hi-bit text:"
+comment (one trailing bit-7-clear printable byte is included);
+.B int 21h
+gets a DOS function comment when AH is set by an immediate
+.B mov
+earlier in the same block;
+near call targets are named
+.B func_XXXXX
+(a
+.B \-\-hints
+label wins) after a separator comment line.
+.PP
+With
+.BR \-\-uasm\-verified ,
+NUL-terminated text in data is labeled
+.B cstr_
+(header
+.BR "; C strings: N" ).
+A run needs at least 4 text bytes and 3 letters.
+A run shorter than 8 bytes must also look like text: only letters,
+digits, blanks and common punctuation, each letter run all upper case
+or CamelCase, and no period-2 repetition.
+Printf conversions (
+.BR %s ,
+.BR %\-5ld ,
+.BR %*d ,
+.BR %% )
+count as one blank each and lift the repetition test.
+The C startup pattern
+.B "call X / push ax / call Y"
+adds the comment
+.B "; hint: possibly _main"
+on X only when the pattern starts within 512 bytes after the entry and Y
+is a known exit: no path from Y returns, or a path through Y and its near
+or relocated far callees (three levels) reaches
+.B "int 21h"
+with AH=4Ch.
+The hint is a comment only; no label is renamed.
+.PP
+The verified fixpoint also seeds startup entries in the entry frame:
+each record of a Borland startup init/exit table (decoded
+.B "mov si, S / mov di, E / call P"
+where P walks 6-byte records; type 0 near, type 1 far with a relocated
+segment equal to the entry frame; any other type rejects the table),
+INT 21h function 25h handlers set with DS = CS, and immediates stored by
+.B "mov word ptr ds:[X], imm"
+into a cell that decoded code calls with
+.B "call word ptr ds:[X]"
+when every store and call for that cell sits in the entry code segment.
+The header line
+.B "; startup entries: N init/exit table record(s), M DS=CS interrupt handler(s), K stored code pointer(s)"
+counts them.
+.PP
+Far interrupt handlers: an INT 21h function 25h whose DS is a relocated
+segment
+.RB ( "mov r, seg / mov ds, r" " then " "mov dx, imm" ,
+or
+.B "lds dx, [bp+d]"
+with paired relocated
+.B "mov word ptr [bp+d], imm / mov word ptr [bp+d+2], seg"
+stores in the same call-free run) seeds seg:imm as an entry in that
+segment's frame; the header line
+.B "; far interrupt handlers: N"
+counts them. Tables
+.B "jmp|call cs:[bx|bp|si|di+T]"
+are also bounded (the smaller of this and any compare bound) when a bit-mask interpretation of the call-free run
+before the jump, from its last inner entry point, leaves the index mask
+at 2^k\-2 (at most 256 entries); targets outside the entry segment are
+seeded in their own frame.
+.PP
+Turbo Pascal programs: System.Halt is recognized by its code signature
+(exactly one match, with the relocated data segment word) and RunError by
+.B "pop cx / pop bx / jmp short"
+to Halt's Terminate. A far call to either, or the last overlay stub
+.RB ( "int 3Fh"
+and its 3 stub bytes), followed only by zero padding to the next paragraph
+ends the code there; the padding stays data, and the next paragraph is
+seeded when it is a relocated segment frame starting with
+.BR "push bp / mov bp, sp" .
+.PP
+Callback arguments: an immediate pushed (\fBpush imm\fR, or \fBmov r, imm\fR
+then \fBpush r\fR) in the argument slot that a near callee calls through
+(\fBcall word ptr [bp+d]\fR, with BP set only by its
+\fBpush bp / mov bp, sp\fR prologue, restored only by a \fBpop bp\fR directly
+before a return, never used as a value, and [bp+d] otherwise only read) is a
+code pointer in the caller's segment (EXE and COM; not 0, not in DGROUP): it is seeded as an entry when it lies
+in data and printed as a symbolic offset. The header line
+.B "; callback arguments: N code pointer(s) ..."
+counts the distinct seeded targets.
+.PP
+Segment layout rule
+.RB ( \-\-uasm\-verified
+only, Borland C++ 3.1-compatible startup, not tiny):
+the entry's relocated
+.B "mov dx, DGROUP"
+gives DGROUP (the value times 16).
+From DGROUP through the end of the load image is forced to data, and the
+C-string scan looks only there, but only when the decoder found no
+instruction in that range; otherwise the header says
+.BR "; segment layout: not applied (N decoded instruction(s) at or past DGROUP)" .
+In the huge model, far data from the lowest segment named by a relocated
+.B "mov ax, seg X"
+/
+.B "mov ds, ax"
+up to DGROUP is also data when nothing there was decoded.
+The header line
+.B "; segment layout: DGROUP at ..."
+reports it.
+These built-in ranges are not counted in the
+.B "; hints:"
+line, which counts only
+.B \-\-hints
+file entries.
+.PP
+A relocated
+.B "mov r16, imm16"
+(opcodes B8 through BF) whose paragraph frame lies in this image is printed as
+.B "mov rx, (dxfrm_XXXX - dximg0) SHR 4"
+and is not sent through that one-instruction check.
+Ordinary
+.B \-d
+/
+.B \-a
+stdout keeps the address listing
+.RI ( "0100  B8004C  mov ..." )
+when the UASM text is written to a file.
+.B \-d
+or
+.B \-a
+together with this switch and a real
+.B \-o
+path prints that address listing and writes UASM to the file.
+.B \-o \-
+writes UASM to stdout and no file. With
+.B \-\-uasm
+that stdout is the UASM source only: no address listing, including when
+.B \-d
+or
+.B \-a
+is also set.
+.B .186
+/
+.B .286
+/
+.B .386
+are emitted after
+.B .model
+so a stood-behind 16-bit instruction is not assembled as USE32.
+.B \-\-json
+keeps JSON on stdout and still writes the UASM file.
+MZ, COM and NE.
+NE writes one verified listing per code segment
+.RI ( <stem>_segN.asm )
+plus
+.I <stem>.nemap
+and
+.I <stem>.neskel
+for
+.BR bin2ne .
+\&.SYS and a 32-bit extender payload are rejected.
+Auto-repack is skipped and the file does not contain a REPACK-V1 block.
+COM uses
+.B .model tiny
+and
+.B org 100h
+so
+.B uasm -bin
+matches the COM bytes.
+An EXE load image uses
+.B org 0 .
+.B uasm -mz
+writes a 32-byte MZ header (0 relocations, CS:IP and SS:SP 0:0)
+and warns A4205 and A4204.
+Prefer
+.B uasm -bin
+and
+.B bin2exe \-\-header
+to restore the original header.
+.RI ( "e_cparhdr * 16" )
+is the header size, not the load image.
+The load image begins after that header.
+An image longer than 65536 bytes is split into byte-aligned
+.B sN segment
+/
+.B org 0
+/
+.B sN ends
+chunks of at most 65536 bytes with no padding and no
+.BR .stack .
+.PP
+A multi-segment listing ends with a bare
+.B end
+so
+.B uasm \-bin
+accepts it.
+Past 64 KiB is decoded when reached through the entry, near wrap,
+or a decoded relocation-pinned far call.
+An in-image linear entry is decoded, including past 64 KiB.
+Its label stays inside its
+.B sN
+segment.
+An entry outside the image is not labeled
+.B func_FFFF
+and the listing ends with a bare
+.BR end .
+A same-segment far call is followed when its segment matches the
+file CS in the MZ header, including when
+.B \-\-base
+is left at the default 1000h.
+A relocation-pinned far target is followed when
+.B seg*16+off
+is inside the image, including past 64 KiB.
+A pinned target outside the image is not followed.
+COM and a one-segment EXE still end with
+.B end func_XXXX .
+.BR bin2exe (1)
+copies the original header, including CS:IP:
+.B bin2exe \-\-header ORIGINAL.EXE IMAGE.bin \-o RESTORED.EXE .
+The default
+.B bin2exe
+mode, with no
+.BR \-\-header ,
+wraps a COM-sized image so DOS enters it at PSP:0100.
+dumpexe does not run bin2exe.
+.PP
+.B \-\-uasm-stats
+is enable-only.
+It does not turn
+.B \-\-uasm
+on.
+Without
+.B \-\-uasm
+the program rejects the command.
+When both are set and a UASM listing was emitted, one coverage line is
+written to stderr (walked image bytes, decoded CFG bytes, bytes emitted as
+instructions,
+.B db
+bytes, label definitions and whole-token references, and whether
+verification ran).
+stdout stays the product.
+The line is not a JSON field.
+There is no disable form.
+.PP
+An existing default
+.I <stem>.asm
+or
+.I <stem>.repack.exe
+is kept.
+.B \-o
+or
+.B \-\-repack-output
+may replace the path it names.
+An existing
+.IR <stem>_UNPACKED.EXE ,
+.IR .COM ,
+or
+.I .asm
+is kept.
+A kept unpacked image is not paired with a new
+.I _UNPACKED.asm .
+.PP
+.B \-\-no-toolchain
+and
+.B \-\-json
+skip unpack.
+There is no
+.B \-\-unpack
+switch. Auto-repack stays on;
+.B \-\-no-repack
+turns it off.
+
+.SS CFG, toolchain, and trace options
+These flags are parsed by
+.BR \-\-help .
+Defaults that are already on have only a
+.B \-\-no-*
+form.
+.TP
+.B \-\-cfg
+Build and print the static CFG with INT and string cross-references.
+.TP
+.B \-\-cfg-interesting
+Print only the interesting-block summary. No full dump.
+.TP
+.B \-\-cfg-no-insns
+CFG edges and tags only. No per-block disassembly.
+.TP
+.B \-\-cfg-no-calls
+Do not follow near call targets as new leaders.
+.TP
+.BI \-\-cfg-max= N
+Maximum basic blocks in the CFG full dump.
+Default 500.
+The
+.B \-d
+listing cap is the greater of
+.I N
+and 2000.
+.TP
+.BI \-\-cfg-insns= N
+Instructions shown per CFG block (default 12; 0 means all).
+.TP
+.BI \-\-cfg-interesting-max= N
+Maximum interesting blocks to expand (default 80).
+.TP
+.BI \-\-cfg-load-depth= N
+Reverse-walk depth for the load and I/O graph (default 6).
+.TP
+.BI \-\-cfg-load-max= N
+Maximum path and FCB seeds in the load graph (default 40).
+.TP
+.B \-\-no-toolchain
+Disable JWASM 1.8, COM-in-EXE, CuteMouse, Borland C++ and Turbo Pascal,
+linker, memory model, and packer detection (default on). Also skips unpack.
+See TOOLCHAIN DETECTION.
+.TP
+.B \-\-no-dos-extender
+Disable DOS extender and DPMI stub detection (default on).
+.TP
+.BR \-\-bits= 16|32
+Force the Capstone x86 width. Default is auto (32 when an extender is detected).
+.TP
+.BI \-\-map= FILE
+Load a symbol map. Disables the need for auto-load.
+.TP
+.B \-\-no-map
+Do not auto-load
+.I <stem>.sym
+or
+.I <stem>.map
+(default is auto on).
+.TP
+.BI \-\-model= M
+JWASM export memory model:
+tiny, small, medium, compact, large, or huge.
+Default small when unknown.
+.B .COM
+and COM-in-EXE stay tiny.
+.TP
+.B \-\-no-repack
+Do not write
+.I <stem>.repack.exe
+after a Turbo Pascal or JWASM export (default on).
+.TP
+.BI \-\-repack-output= PATH
+Override the repack EXE path. Implies repack on.
+.TP
+.B \-\-trace
+Print every executed instruction. Implies
+.BR \-\-simulate .
+.TP
+.B \-\-sim-quiet
+Print only breakpoint hits and a final summary. Implies
+.BR \-\-simulate .
+.TP
+.BI \-\-max-insns= N
+Stop after
+.I N
+instructions (default 64, 10000 with
+.BR \-\-trace ,
+or 1000000 with
+.BR \-\-bp ).
+A leading minus is an error.
+Implies
+.BR \-\-simulate .
+.TP
+.BI \-\-loop-limit= N
+Take a short backward jmp or jcc at most
+.I N
+times, then fall through
+(default 10000; 0 disables). Implies
+.BR \-\-simulate .
+.TP
+.BI \-\-loop-span= XX
+Maximum IP distance of a tight loop, in hex (default 100h).
+Implies
+.BR \-\-simulate .
+.TP
+.BI \-\-bp= SPEC
+Add a breakpoint. Repeatable. Implies
+.BR \-\-simulate .
+Forms:
+.IR ip:XXXX ,
+.IR CS:IP ,
+.IR int:21 ,
+.IR int:21,ah=0F .
+.TP
+.BI \-\-dump= seg:off:len
+Hex-dump memory on each breakpoint hit.
+.I seg
+is hex or cs, ds, es, or ss.
+.I len
+is hex and defaults to 40h.
+Implies
+.BR \-\-simulate .
+
+.SS Simulation Options
+.TP
+.B \-\-simulate
+Enable DOS load simulation mode. This performs
+.B dynamic analysis
+by simulating how DOS loads and starts the program.
+The simulator is an in-memory sandbox.
+Guest data files start empty.
+Guest I/O does not open host files.
+A write to handle 1 (stdout) or handle 2 (stderr) returns CF=1 and AX=6.
+At most 64 guest files are created.
+Truncating a guest file releases its allocation, so recreate does not
+keep the old capacity.
+Shows:
+.RS
+.IP \(bu 2
+Initial CPU register state (CS, IP, SS, SP, DS, ES, FLAGS, etc.)
+.IP \(bu 2
+Relocation fixups applied to the image (MZ EXE only)
+.IP \(bu 2
+Register tracing — simple instruction emulation showing register changes
+.RE
+.TP
+.BI \-\-base= XXXX
+Set the load base segment for simulation (hexadecimal value, default: 1000h).
+This is the segment address where DOS loads the program.
+Common values: 1000, 2000, etc.
+
+.SS COM-Specific Options
+These options only affect .COM file analysis; they are silently ignored for MZ EXE and .SYS files.
+.TP
+.B \-\-psp
+Force the .COM file to be treated as containing an embedded PSP.
+The entry point will be set to file offset 0100h.
+Overrides the automatic PSP detection heuristic.
+.TP
+.B \-\-no-psp
+Force the .COM file to be treated as
+.B not
+containing an embedded PSP.
+The entry point will be set to file offset 0000h.
+Overrides the automatic PSP detection heuristic.
+These two flags are mutually exclusive.
+
+.TP
+.BI \-\-max-image= N
+Raise the MZ load-image cap (default 1114112 bytes, 1 MiB + 64 KiB) to
+.I N
+bytes.
+.TP
+.BI \-\-hints-out= FILE
+With
+.BR \-\-uasm-verified :
+write the hints this run used (seeded entries, data ranges and names).
+Reading the file back with
+.B \-\-hints
+reproduces the listing.
+.TP
+.BI \-\-bytemap= FILE
+With
+.BR \-\-uasm-verified :
+write one line per run of bytes:
+.I LO-HI
+.BR code | data
+and the evidence rung.
+.TP
+.BI \-\-explain= HEX
+With
+.BR \-\-uasm-verified :
+print on stderr why the byte at linear address
+.I HEX
+is code or data (unit, rung, model facts, seeding, hints).
+.TP
+.B \-\-strict
+With
+.BR \-\-uasm-verified :
+print code only where the model has a Derived or stronger fact;
+blocks whose head is only Likely are printed as data.
+.TP
+.B \-\-evidence=sim
+With
+.BR \-\-uasm-verified :
+run the simulator silently (cap
+.BR \-\-max-insns ,
+default 1000000; guest files in memory only) and decode executed code the
+static graph missed. Opt-in.
+.TP
+.BI \-\-sim-paths= N
+With
+.BR \-\-evidence=sim :
+explore up to
+.I N
+paths (default 1, range 1..4096): the other side of each conditional branch
+and handlers installed with INT 21h/25h. Forked paths are Likely evidence
+(not seeded under
+.BR \-\-strict ).
+.TP
+.BI \-\-sim-fork-depth= D
+With
+.BR \-\-evidence=sim :
+forks along one path (default 40, range 0..1000).
+.TP
+.BI \-\-sim-total-insns= T
+With
+.BR \-\-evidence=sim :
+instructions summed over all paths (default 50000000).
+.TP
+.B \-\-sim-no-dispatch-int
+Do not run handlers the program installed when it executes INT n (debugging).
+.TP
+.B \-\-uasm-header
+With
+.BR \-\-uasm-verified :
+put the MZ header (relocation table as expressions) and the file tail in the
+listing, so
+.B uasm -bin
+rebuilds the whole EXE.
+.TP
+.B \-\-xrefs
+Print a flat edge list: the entry first, then breadth-first from the entries
+(source, target, kind, evidence). A mode option.
+
+.SH COM PSP DETECTION
+A standard .COM file on disk starts directly with code/data — the PSP is built by DOS in
+memory at program load time and is
+.B not
+part of the file.  Occasionally a .COM is saved as a raw memory snapshot that begins with a
+256-byte PSP.
+.B dumpexe
+distinguishes these cases using two checks:
+.IP 1. 4
+First two bytes are
+.B CDh 20h
+(INT 20h instruction — the canonical PSP opener).
+.IP 2. 4
+The command-tail at file offset
+.B 80h
+is plausible: the length byte is ≤ 7Eh and the byte at
+.B 81h + length
+is
+.B 0Dh
+(carriage return).
+.PP
+Both checks must pass for a PSP to be declared present.  A file shorter than 256 bytes cannot
+contain a PSP and is always treated as no-PSP.
+Use
+.B \-\-psp
+or
+.B \-\-no-psp
+to override this heuristic.
+
+.SH OUTPUT FORMAT
+.SS Static Header Information
+Always displayed first.
+.B MZ EXE:
+comprehensive header analysis including DOS File Size, Load Image Size,
+Relocation Table entry count and address, Header Size, Memory Requirements,
+Entry Point locations (file offset and image offset), and initial SS:SP / CS:IP values.
+.br
+.B COM:
+File Size, Load Model (PSP embedded or not), Entry Point File Offset, and
+initial CS:IP / SS:SP / DS / ES values.
+.br
+.B SYS:
+Driver type (character or block), attributes, strategy and interrupt entry
+point offsets, device name (char) or unit count and signature (block), and file size.
+
+.SS Relocation Table (-r, MZ EXE only)
+Formatted table showing each relocation entry with:
+.IP \(bu 2
+Entry number
+.IP \(bu 2
+Segment:Offset pair
+.IP \(bu 2
+File location in hex
+.IP \(bu 2
+Linear offset within image
+.PP
+Also shows any padding between header and relocation table, and between table and image.
+
+.SS Hex+ASCII Dump (-x)
+Complete dump from entry point to EOF in canonical hexdump -C format:
+.IP \(bu 2
+8-digit hex addresses (lowercase)
+.IP \(bu 2
+16 bytes per line with space after 8th byte
+.IP \(bu 2
+ASCII panel with | delimiters
+.IP \(bu 2
+Zero-compression: repeated identical lines shown as single * (saves enormous space)
+.PP
+Example:
+.nf
+00000420  1e b8 00 00 50 06 2e a1  00 00 8e c0 8e d8 58 a3  |....P.........X.|
+00000430  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+*
+00000450  ff ff ff ff 21 00 2a 00  33 00 44 00 55 00 66 00  |....!.*.3.D.U.f.|
+.fi
+
+.SS Disassembly (-d)
+.B Static code analysis
+using Capstone x86-16 disassembler. Shows file offset, raw bytes, mnemonic, and
+operands for instructions reached from the entry point.
+A NE segment stops at its on-disk end.
+INT 20h, INT 27h, and INT 21h with AH 00h, 4Ch, or 31h end the walk.
+Opcode 98 is shown as
+.B cbw
+and opcode 99 as
+.B cwd
+unless a 66h prefix is present.
+INT instructions
+are annotated with descriptions from the Ralf Brown Interrupt List (RBIL) database.
+
+.SS Simulation (--simulate)
+.B Dynamic execution trace
+that simulates DOS loading and program startup.
+A direct far call or jump sets CS:IP from the segment and the offset.
+Opcode 98 is CBW in this 16-bit guest (Capstone names it CWDE).
+Guest data files start empty.
+Create, open, read, and write stay inside the simulator and do not
+open host files.
+A write to handle 1 or handle 2 returns CF=1 and AX=6.
+At most 64 guest files. Truncate releases capacity:
+
+.B Initial Register State:
+.RS
+For MZ EXE: CS and SS are shifted by the load base; DS and ES = load base.
+.br
+For .COM: CS = DS = ES = SS = load base; IP = 0100h; SP = FFFEh.
+.RE
+
+.B Relocation Fixups (MZ EXE only):
+.RS
+Shows each segment value being adjusted by the load base.
+.RE
+
+.B Register Tracing (with Capstone):
+.RS
+Best-effort emulation of first ~20 instructions showing register changes.
+Not a full emulator — focuses on common register operations for quick insight.
+.RE
+
+.SH TOOLCHAIN DETECTION
+.SS Linker (MZ header)
+A
+.B Linker:
+line comes from header bytes 1Ch..1Fh.
+.B Borland TLINK N.x
+needs 01 00 FB vv with the relocation table at 3Eh or later; only the
+major series (vv >> 4) is reported, never an exact version.
+.B Microsoft LINK (likely)
+needs the relocation table at 1Eh and word 0001h at 1Ch.
+.B Turbo Pascal linker (likely)
+needs the relocation table at 1Ch and Turbo Pascal runtime evidence.
+The assembler is never inferred.
+When an EXE packer is detected the label adds
+.I (packed by P: header may be the packer's; low confidence) .
+.B Debug info: Borland
+is a hint when bytes FB 52 follow the load image (TLINK /v).
+.SS Memory model
+.B Memory model: X (Borland C++ 3.1-compatible startup)
+is printed only when the entry matches the BC++ 3.1 c0 store
+mov cs:[DGROUP@],dx (2E 89 16 imm16, then B4 30) with the operand of that
+model (tiny 0396h after 8C CA; small 02BEh, medium 02C4h, compact 028Bh,
+large 0291h, huge 0284h after BA imm16). Otherwise nothing is printed.
+.SS Turbo Pascal
+The version comes from the RTL copyright year. A main block that opens with
+the stack-check far call (55 89 E5, 31 C0 or B8 imm16, 9A) adds TP 7.0-style
+evidence; TP 5.5 has none and $S- removes it. The TP export's
+.I memory model
+comment is the TASM .model for the export only.
+.SS JSON keys
+MZ reports add
+.B turbo_pascal
+(detected, confidence, compiler, version, toolchain, product,
+main_stack_check, evidence) and
+.B linker
+(detected, linker, evidence, packed, packer, debug_trailer_offset;
+debug_trailer_offset is \-1 when absent), and
+.B toolchain.memory_model
+when a model was found. NE reports give the header linker version as
+.BR linker_version .
+.SH STATIC vs DYNAMIC ANALYSIS
+.B Static Analysis (-d):
+.RS
+Disassembles all code without execution. Shows complete instruction stream. Good for
+understanding program structure, finding all code paths, and analyzing algorithms.
+.RE
+
+.B Dynamic Analysis (--simulate):
+.RS
+Simulates execution from entry point. Shows register state changes. Good for
+understanding program initialization and verifying relocation correctness.
+.RE
+
+.B Combined (-d --simulate):
+.RS
+Shows both full disassembly and dynamic trace — complete picture of the binary.
+.RE
+
+.SH EXIT STATUS
+.TP
+.B 0
+Success
+.TP
+.B 1
+Error (invalid file, bad arguments, corrupted header)
+
+.SH EXAMPLES
+.TP
+.B dumpexe program.exe
+Full analysis, the same as
+.B dumpexe -a program.exe
+.TP
+.B dumpexe --header-only program.exe
+Show only static header information
+.TP
+.B dumpexe -r program.exe
+Show header and relocation table
+.TP
+.B dumpexe -x game.exe
+Show header and complete hex dump
+.TP
+.B dumpexe -d game.exe
+Show header and full disassembly (static analysis)
+.TP
+.B dumpexe --simulate game.exe
+Show header and DOS load simulation (dynamic analysis)
+.TP
+.B dumpexe -a program.exe
+Show everything: relocations, hexdump, disassembly
+.TP
+.B dumpexe -d --simulate --base=2000 game.exe
+Disassemble and simulate loading at segment 2000h
+.TP
+.B dumpexe program.com
+Analyze a .COM file (PSP presence auto-detected)
+.TP
+.B dumpexe --no-psp -d program.com
+Analyze a .COM file, forcing no-PSP mode (entry at file offset 0)
+.TP
+.B dumpexe --psp -d memdump.com
+Analyze a .COM memory dump that includes a PSP (entry at file offset 0100h)
+.TP
+.B dumpexe driver.sys
+Analyze a DOS device driver
+.TP
+.B dumpexe -x program.com | less
+Page through hexdump output of a .COM file
+
+.SH FILES
+.TP
+.B dumpexe.h
+Umbrella header that includes all modular sub-headers
+.TP
+.B com.h
+MS-DOS .COM format constants (PSP size, entry offset, command-tail offsets)
+.TP
+.B com_analysis.h
+COM analysis functions: PSP heuristic detection and full analysis output
+.TP
+.B dumpexe.cpp
+Main implementation file
+
+.SH TECHNICAL DETAILS
+.SS MZ EXE Format
+.IP \(bu 2
+Signature: 'MZ' (0x5A4D little-endian) or 'ZM' (0x4D5A little-endian)
+.IP \(bu 2
+28-byte minimum header
+.IP \(bu 2
+Header sizes in paragraphs (16-byte units)
+.IP \(bu 2
+File size: num_blocks × 512 when final_len is 0 (last page full); otherwise ((num_blocks-1) × 512) + final_len
+.IP \(bu 2
+Entry point: header_size + (CS × 16) + IP
+
+.SS COM Format
+.IP \(bu 2
+Flat binary image; DOS places the PSP at CS:0000 and loads the file at CS:0100
+.IP \(bu 2
+CS = DS = ES = SS = load segment at startup
+.IP \(bu 2
+SP initialised to 0xFFFE (top of 64 KB segment minus two bytes)
+.IP \(bu 2
+Execution always starts at CS:0100h
+
+.SS SYS Device Driver Format
+.IP \(bu 2
+Starts with 0xFFFFFFFF (next-driver pointer = end of chain)
+.IP \(bu 2
+16-bit attribute word (bit 15 = character device)
+.IP \(bu 2
+Strategy and interrupt handler offsets
+.IP \(bu 2
+8-byte device name (character) or unit count + 7-byte signature (block)
+
+.SS Register State Representation
+Uses packed unions and bitfields for authentic x86 register access:
+.IP \(bu 2
+AX/BX/CX/DX with hi/lo byte access (AH/AL, etc.)
+.IP \(bu 2
+Segment registers: CS, DS, ES, SS
+.IP \(bu 2
+Pointers: IP, SP, BP, SI, DI
+.IP \(bu 2
+FLAGS with individual bit access (CF, ZF, SF, OF, etc.)
+
+.SH NOTES
+.IP \(bu 2
+Read-only analysis — never modifies files
+.IP \(bu 2
+Works cross-platform (analyze DOS binaries on Linux/Unix)
+.IP \(bu 2
+Zero-compression in hex dumps saves space for AI context windows
+.IP \(bu 2
+Hex values displayed lowercase (canonical format)
+.IP \(bu 2
+Simulation is best-effort, not cycle-accurate emulation
+.IP \(bu 2
+Requires GCC 14+ and libcapstone-dev to build
+
+.SH SEE ALSO
+.BR bin2exe (1),
+.BR objdump (1),
+.BR hexdump (1),
+.BR file (1),
+.BR readelf (1)
+
+.SH AUTHORS
+Written for the RetroCodeMess project.
+
+.SH COPYRIGHT
+This is free software; see the source for copying conditions.

@@ -1,0 +1,27 @@
+Display of File examples/reloc.exe
+
+DOS File Size                                     00060h  (    96. )
+Load Image Size                                   00020h  (    32. )
+Relocation Table entry count                      0003h  (     3. )
+Relocation Table address                          001Ch  (    28. )
+Header Size                                       0040h  (    64. )
+Minimum Extra Memory                              0010h paragraphs (256 bytes)
+Maximum Memory Requirement                        FFFFh  ( 65535. paragraphs = 1048560 bytes, all available )
+File load checksum                                0000h  (     0. )
+Overlay Number                                    0000h  (     0. )
+Entry Point File Offset                           00040h  (    64. )
+Entry Point Image Offset                          00000h  (     0. )
+
+Initial Stack Segment  (SS:SP)			  0004:0100
+Program Entry Point    (CS:IP)			  0000:0000
+
+=== Relocation Table (3 entries) ===
+Entry  Segment:Offset  File Location (Hex)  Linear Offset
+-----  --------------  -------------------  -------------
+00000  0000:0001        00000041h          000001h
+00001  0000:0008        00000048h          000008h
+00002  0000:000D        0000004Dh          00000Dh
+
+Padding:
+00000028  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000038  00 00 00 00 00 00 00 00                           |........        |

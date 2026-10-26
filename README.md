@@ -1,0 +1,299 @@
+# dumpexe
+
+**16-bit MS-DOS / Win16 Binary Analyzer & Multi-Pass Listing**, version 2.45.0 (see [CHANGELOG.md](CHANGELOG.md))
+
+A comprehensive command-line utility for analyzing MS-DOS 16-bit binary files: MZ EXE executables, Windows 3.x NE executables, plain `.COM` programs, and device driver (`.SYS`) files. Provides TDUMP-style header analysis, relocation tables, hex dumps, Capstone x86-16 disassembly, multi-pass listings, toolchain fingerprints (Pascal MT+, JWASM 1.8, COM-in-EXE), Graphviz CFG, JSON reports, and DOS load simulation.
+
+## Features
+
+- **MZ EXE / COM / SYS**: Header decode, relocations, entry, memory requirements. `MZ` and `ZM` are both EXE. An empty load image is an error. The computed MZ/COM load image, including an unpacked listing, is capped at 1114112 bytes (1 MiB + 64 KiB); `--max-image=N` raises it. NE `-a` disassembles each distinct CODE segment once and stops at min(16 MiB, twice the file size).
+- **Multi-pass listing** (`-d` and `-a`): `func_*` labels, INT notes, call/jmp rewrite; default write `<stem>.asm`
+- **UASM source** (`--uasm`, enable-only): no address column. COM round-trips with `uasm -bin`. An EXE load image round-trips with `uasm -mz`, which writes a 32-byte MZ header (0 relocations, CS:IP and SS:SP 0:0) plus warnings A4205/A4204 and then the payload only. `e_cparhdr * 16` is that header size, not the load image. Prefer `uasm -bin` and `bin2exe --header` to restore the original header. A multi-segment listing ends with a bare `end`. Past 64 KiB is decoded when reached through the entry, near wrap, or a decoded relocation-pinned far call. `--uasm` does not spawn an assembler (header `; NOT VERIFIED`). `--uasm-verify` (enable-only, requires `--uasm`) assembles distinct candidate lines with `--uasm-bin`, else `$DUMPEXE_UASM`, else `uasm` on `PATH`. PATH search ignores an empty or relative directory. A branch whose operand is a number is left as `db` and is not offered. A clean batch is one assemble and the header says `; verified: uasm … at PATH`. A line the assembler rejects is dropped, the rest are assembled again, and the header says `; NOT VERIFIED (assembler rejected N candidates)`. When recovery stops with candidates still queued, the header says rejected K, unverified M. `--uasm` does not write `_UNPACKED` files unless `-d` or `-a` is also set.
+- **Verified listing extras** (`--uasm --uasm-verified`): NUL-terminated text in data is labeled `cstr_` (header `; C strings: N`). A run needs 4+ text bytes with 3+ letters; a run under 8 bytes must also look like text (letters, digits, blanks and `.,:;!?'"-%()/\_+=*#&@<>[]$^` only, each letter run all upper case or CamelCase, no period-2 repeat; printf conversions such as `%s`, `%-5ld`, `%*d` and `%%` count as one blank each and lift the repeat test, so `%s%s%s` is labeled), so `$RPj`, `pNzK` or `tMtMtM` are not labeled. The C startup `call X / push ax / call Y` gives a `; hint: possibly _main` comment on X only when the run is within 512 bytes after the entry and Y is a known exit: no path from Y returns, or a path through Y and its near or relocated far callees (3 levels) reaches `int 21h` with AH=4Ch. The hint is a comment; no label is renamed. Startup entries: the fixpoint also seeds, as entries in the entry frame, (1) each record of a Borland startup init/exit table (decoded `mov si, S` / `mov di, E` / `call P` where P walks 6-byte records with `add bx, 6` and an `es:[bx]` operand; DS is the COM's 0, the inferred DGROUP, or the entry's relocated `mov dx, DGROUP`; type 0 is near, type 1 is far with a relocated segment equal to the entry frame, any other type rejects the table), (2) INT 21h/25h handlers set with DS = CS (`push cs`/`pop ds` or `mov r, cs`/`mov ds, r`, then `mov dx, imm`, `int 21h`, nothing else in the run), and (3) immediates stored by `mov word ptr ds:[X], imm` into a cell X that decoded code calls with `call word ptr ds:[X]`, when every store to X and every call through it sit in the entry code segment (a near call goes to the caller's CS, so a cell used from another code segment is not seeded). The header line `; startup entries: N init/exit table record(s), M DS=CS interrupt handler(s), K stored code pointer(s)` counts them. Far interrupt handlers (the Borland FP emulator hooking INT 34h-3Eh): an INT 21h/25h whose DS is a relocated segment, set by `mov r, seg` / `mov ds, r` then `mov dx, imm`, or by `lds dx, [bp+d]` where every `mov word ptr [bp+d], imm` pairs with a `mov word ptr [bp+d+2], seg` (relocated) in the same call-free run of at most 32 instructions, seeds seg:imm as an entry in that segment's own frame (header `; far interrupt handlers: N`). Jump and call tables `jmp|call cs:[bx|bp|si|di+T]` are also bounded by a register mask (with a compare bound too, the smaller bound is used): over the call-free contiguous run before the jump (started at its last inner entry point: a branch from outside, a backward branch or a table entry), a bit-mask interpretation (mov imm, and, xor-self, shifts, xchg, mov reg) must leave the index mask at 2^k-2 with at most 256 entries; mask/2+1 words are read. Table targets in a non-entry segment are seeded in that segment's frame. Turbo Pascal programs (no symbols): System.Halt is found by its code signature (`xor cx,cx / xor bx,bx / mov dx,DSEG` (relocated) `/ mov ds,dx / sti / mov [ExitCode],ax / mov ax,cx / or ax,bx / je`, exactly one match) and RunError as `pop cx / pop bx / jmp short` to Halt's Terminate. A far call to either, or the last overlay stub (`int 3Fh` plus its 3 stub bytes), followed only by zero padding up to the next paragraph ends the code: the padding stays data, and the next paragraph is seeded when it is a relocated segment frame starting with `push bp / mov bp, sp`. A call followed by real code (a procedure epilogue after `Halt`) keeps its fall-through. Callback arguments: for a near `call F`, when F starts with `push bp / mov bp, sp`, its body (reachable without entering framed callees; frameless local helpers are included and must be called only from the body; `jmp word ptr ds:[X]` is a tail call; any other unresolved indirect jump rejects F) writes BP only in that prologue and a `pop bp` directly before a `ret`, never uses BP as a value (no `mov si, bp`, no `push bp` to a nested routine), calls `call word ptr [bp+d]` and otherwise only reads [bp+d] (push, mov, cmp; any other [bp+d] access of any displacement size or segment prefix, `lea` of it, or a write through [bp+reg+d] with d >= 0 rejects), and the caller's contiguous push run before the call (no branch or table entry into it, no other SP write) pushes that argument slot as `push imm` or `push r` after `mov r, imm`, then CS:imm is a code entry (Borland printf passing `__FPUTN` to `__VPRINTER`; EXE and COM). An immediate 0 (NULL) or one pointing at or above DGROUP is not. It is seeded when it lies in data (header `; callback arguments: N`, distinct targets) and the immediate is printed as a symbolic offset.
+- **Readability** (`--uasm --uasm-verified`, game-agnostic, bytes unchanged; the plain `--uasm` listing is unchanged): (R1) in data, a run of printable ASCII (CR/LF/TAB allowed inside) with a 6+ byte printable stretch (4+ when followed by NUL, `$` or CRLF) that looks like text (60%+ letters/blanks, 3+ distinct letters, a 3+ letter run, 15%+ vowels, no char over half the run, no period-2 pattern or constant-stride table) is a quoted `db`; quotes and `<>!&%;` stay numeric and a following NUL joins the line. (R2) 8+ data bytes with bit 7 set whose low 7 bits pass the same text test (plus at most one trailing printable bit-7-clear byte) stay hex `db` under a `; hi-bit text: "..."` comment. (R3) `int 21h` gets `DOS AH=xxh: <function>` when AH comes from `mov ah, imm` / `mov ax, imm` earlier in the same block with no call, branch target or AX write between. (R4) near `call` targets are named `func_XXXXX` (a `--hints` label wins) after a `; ----` separator line.
+- **Segment layout rule** (`--uasm-verified` only, Borland C++ 3.1-compatible startups in the small, medium, compact, large and huge models): the entry's relocated `mov dx, DGROUP` gives DGROUP (the value x16). From DGROUP through the end of the load image is forced to data, and the C-string scan looks only there, but only when the decoder found no instruction in that range; otherwise the header says `; segment layout: not applied (N decoded instruction(s) at or past DGROUP)`. In the huge model, far data from the lowest segment named by a relocated `mov ax, seg X` / `mov ds, ax` up to DGROUP is also data when nothing there was decoded. The header line `; segment layout: DGROUP at …` reports it. These built-in ranges are not counted in the `; hints:` line, which counts only `--hints` file entries.
+- **Unpack** on `-d` and `-a` for Microsoft EXEPACK, LZEXE 0.91, LZEXE 0.90, PKLITE, DIET, and LHarc. Writes `<stem>_UNPACKED.EXE` (or `.COM` when the image is not MZ) and `<stem>_UNPACKED.asm`. An existing `.asm`, `.repack.exe`, or `_UNPACKED` output is kept. `-o -` writes none of those files. `--json` and `--no-toolchain` skip unpack. There is no `--unpack` switch.
+- **Packer detect** is structural. DIET follows Deark `identify_diet_fmt` (EXE bytes `8E DB 8E C0 33 F6 33 FF` at `codestart-32+{77,72,52,55}`, plus the COM and data patterns). `DIET` at file `0x1C` is not enough. LHarc follows `de_identify_lha`, then requires a level-0/1 header checksum or a level-2 CRC, a packed size that fits, and a header in the SFX trailer (at the end of the MZ image, not a sentence in the middle). LZEXE 0.91/0.90 suppresses LHarc.
+- **Toolchain detect** (default on): Pascal MT+ 3.1.1; JWASM 1.80 / COM-in-EXE / CuteMouse; Borland C++ / Turbo Pascal RTL banners
+  - **Linker** (MZ): `=== Linker (MZ header) ===` from bytes 1Ch..1Fh: `Borland TLINK N.x` (major series only), `Microsoft LINK (likely)`, `Turbo Pascal linker (likely)` (only with TP runtime evidence). No assembler is guessed. With a detected EXE packer the label adds `(packed by P: header may be the packer's; low confidence)`. `Debug info: Borland` is a hint when bytes `FB 52` follow the load image (TLINK `/v`).
+  - **Memory model**: `Memory model: X (Borland C++ 3.1-compatible startup)` only when the c0 entry matches the BC++ 3.1 `mov cs:[DGROUP@],dx` operand for that model; otherwise nothing.
+  - **Turbo Pascal**: version from the RTL copyright year; a TP 7.0-style stack-check call at the start of the main block is extra evidence (TP 5.5 has none; `$S-` removes it).
+  - See `docs/TOOLCHAIN-SUPPORT.md` for the rules and JSON keys.
+- **JWASM export**: When JWASM is detected, `-d` emits JWASM-oriented assemblable layout (`.model`; **.COM / COM-in-EXE always tiny**)
+- **CFG / Graphviz**: `--cfg`, `--cfg-dot=FILE`
+- **JSON**: `--json` machine-readable report. MZ adds `turbo_pascal` and `linker` objects and `toolchain.memory_model` (when found); NE reports the header linker version as `linker_version`
+- **Symbol maps**: auto `<stem>.sym`/`.map` or `--map=FILE`
+- **Era tools**: versioned assemblers under `bin/jwasm/` (see `docs/TOOLCHAIN-SUPPORT.md`)
+- **bin2exe**: sibling program in this repo (`make` builds it, `make install` installs it). Wraps a `uasm -bin` flat image. The default header runs that image as a COM program. `--header ORIGINAL.EXE` copies that MZ header unchanged, which is how a `--uasm` round trip keeps relocations and SS:SP. dumpexe does not run bin2exe.
+- **Cross-Platform**: Analyze DOS binaries on Linux/Unix
+
+## Adding a new compiler/assembler
+
+See **[docs/TOOLCHAIN-SUPPORT.md](docs/TOOLCHAIN-SUPPORT.md)** — ground-truth workflow:
+
+binary + sources → pin tool version → rebuild proof → fingerprint in dumpexe → tests + commit.
+
+## Building
+
+### Prerequisites
+
+**Compiler:** GCC 14 or later is required (needed for complete C++23 `std::format` support).
+
+**Capstone 6** (pkg-config module `capstone` >= 6.0) is a **mandatory** build dependency. Distribution `libcapstone-dev` packages are usually Capstone 4 or 5 and are not enough; build Capstone 6 from source (https://github.com/capstone-engine/capstone) and point `PKG_CONFIG_PATH` at its `lib*/pkgconfig` directory if it is not installed under `/usr`.
+
+`make test` also needs `pkg-config`, Catch2 v3 (`catch2-with-main`) and Python 3. The `--uasm-verify` / `--uasm-verified` checks and the round-trip tests need **UASM 2.57** (the tested version) as `uasm` on `PATH`, or named with `--uasm-bin PATH` or `$DUMPEXE_UASM`; without it those checks skip and `--uasm-verified` listings say `NOT VERIFIED`.
+
+### Compile
+
+```bash
+make
+```
+
+That builds `dumpexe` and `bin2exe`. `make test` runs both suites. `make install` installs both programs and their man pages.
+
+> The build fails with a clear error if pkg-config does not find Capstone 6.
+
+## Usage
+
+### Basic Syntax
+
+```bash
+dumpexe [options] <file>
+```
+
+### Options
+
+- `-h, --help` — Show help message
+- `-v, --version` — Show version information
+- `-r, --relocation` — Show relocation table with padding *(MZ EXE only)*
+- `-x, --hexdump` — Show hex+ASCII dump from entry point to EOF
+- `-d, --disassemble` — Multi-pass listing from the entry point; also writes `<stem>.asm` and, for a structural packer, `<stem>_UNPACKED.EXE` or `.COM` plus `<stem>_UNPACKED.asm`
+- `-a, --all` — Show all sections (relocation + hexdump + disassembly + strings) and unpack the same packers as `-d`. **This is the default** when no mode option (`-r -x -d --strings --json --uasm --cfg* --simulate --xrefs`) is given, so `dumpexe FILE` does the full analysis and, like `-a`, writes `<stem>.asm` (and the `_UNPACKED` files for a packed input; `-o -` and `--no-repack` turn the writes off)
+- `--header-only` — Header report and entry-point preview only (turns off the `-a` default)
+- `-o, --output PATH` — Packed listing path. `-` means stdout only: no `.asm`, no `_UNPACKED.EXE`, no `_UNPACKED.asm`
+- `-n, --no-int-annotations` — Suppress INT annotation comments in disassembly
+- `--simulate` — In-memory DOS sandbox. Guest data files start empty. Guest I/O does not open host files. A write to handle 1 or 2 returns CF=1 and AX=6
+- `--no-toolchain` — Disable toolchain and packer detection (default on). Also skips unpack
+- `--json` — JSON report on stdout. Does not unpack
+- `--cfg-max=N` — CFG full-dump block cap (default 500). The `-d` listing cap is `max(N, 2000)`
+- `--no-repack` — Do not write `<stem>.repack.exe` (auto-repack stays on otherwise)
+- `--base=XXXX` — Set load base segment (hex, default: `1000h`)
+- `--psp` — Force `.COM` to be treated as having an embedded PSP (entry at file offset `0100h`)
+- `--no-psp` — Force `.COM` to be treated as having no embedded PSP (entry at file offset `0000h`)
+- `--uasm` — Write UASM source for MZ, COM and NE (one listing per NE code segment plus `<stem>.nemap` for `bin2ne`); `--uasm-verified` assembles it and demotes lines until it is byte-identical (needs UASM 2.57, see Prerequisites)
+- `--no-map` — Do not auto-load `<stem>.sym` / `<stem>.map` next to the input for symbol names (default: on, so a run stats those files); `--map=FILE` names one explicitly
+- `--max-image=N` — Raise the MZ load-image cap (default 1114112 bytes)
+
+See `dumpexe --help` and `man dumpexe` for the full option list.
+
+### Exit Status
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success |
+| `1` | Error: bad option or option value, missing or unreadable file, rejected header, a flag dependency error (e.g. `--strict` without `--uasm-verified`), or a `--uasm-verified` listing that is NOT VERIFIED |
+
+### Format Detection
+
+File format is detected automatically from content:
+
+| Format | Signature | Detection rule |
+|--------|-----------|----------------|
+| MZ EXE | `MZ` or `ZM` | First two bytes are `4Dh 5Ah` or `5Ah 4Dh` |
+| NE EXE | `MZ` stub + `NE` | `e_lfanew` at `3Ch` points to `4Eh 45h` |
+| `.SYS`  | `FFFFFFFF` | First four bytes are `FFh FFh FFh FFh` |
+| `.COM`  | *(any)* | Fallback — all other DOS binaries |
+
+### .COM PSP Auto-Detection
+
+A `.COM` file on disk normally starts directly with its code (no PSP embedded). Occasionally a
+file is a raw memory snapshot that includes the 256-byte PSP at the beginning. `dumpexe` uses a
+two-point heuristic:
+
+1. First two bytes are `CD 20` (INT 20h — the canonical PSP start instruction).
+2. The command-tail at offset `0x80` is plausible: length ≤ `0x7E` and the byte at `0x81+len` is `0x0D` (CR).
+
+Use `--psp` or `--no-psp` to override detection when the heuristic guesses wrong.
+
+### Examples
+
+> **Note**: You need to supply your own DOS binary files for testing.
+
+**Full analysis (the default, same as `-a`):**
+```bash
+./dumpexe <your_file.exe>
+```
+
+**Header summary only (header + entry-point preview, any format):**
+```bash
+./dumpexe --header-only <your_file>
+```
+
+**Disassemble a .COM file:**
+```bash
+./dumpexe -d <your_file.com>
+```
+
+**Force no-PSP treatment for a .COM file:**
+```bash
+./dumpexe --no-psp -d <your_file.com>
+```
+
+**Simulate DOS loading at a specific base segment:**
+```bash
+./dumpexe --simulate --base=2000 <your_file.exe>
+```
+
+**Show relocation table (MZ EXE):**
+```bash
+./dumpexe -r <your_file.exe>
+```
+
+**Combine options:**
+```bash
+./dumpexe -d --simulate <your_file.exe> | less
+```
+
+## Example Files
+
+The `examples/` directory contains pre-generated output examples demonstrating various dumpexe features.
+
+### Obtaining Test Files
+
+To test dumpexe, you need to provide your own binary files. Good sources include:
+
+- **DOS programs you have the right to analyze**
+- **Your own DOS programs** compiled with tools like Borland/Turbo C, MASM, or TASM
+- **Open source DOS software** with available binaries
+
+### Recommended Test Cases
+
+Packed files are programs to analyze, not only fixtures. `-d` and `-a` name the packer and, when the unpacker accepts the image, write the unpacked program beside the input.
+
+- **Packed executables**: EXEPACK, LZEXE 0.90/0.91, PKLITE, DIET, or LHarc
+  - Detection is structural. `DIET` at offset `0x1C`, or a sentence that mentions LHA, is not a packer
+  - `-d` writes `<stem>.asm` plus `<stem>_UNPACKED.EXE` or `.COM` and `<stem>_UNPACKED.asm` when unpack succeeds
+  - An output that already exists is left unchanged
+
+- **Unpacked executables**: Standard MZ format files
+  - Contains relocation table entries
+  - Larger file size
+  - Better for disassembly analysis
+
+- **Plain .COM files**: Small utilities, games, TSR (Terminate-and-Stay-Resident) programs
+
+The `examples/README.md` file provides additional guidance on working with DOS binary files.
+
+## Output Format
+
+### Static Header Information
+
+Shows comprehensive header analysis:
+- **MZ EXE**: DOS File Size, Load Image Size, Relocation Table, Memory Requirements, Entry Point, SS:SP / CS:IP
+- **COM**: File Size, Load Model (PSP present or not), Entry Point File Offset, CS:IP / SS:SP
+- **SYS**: Driver type (char/block), entry points, device name or unit count
+
+### Relocation Table (`-r`, MZ EXE only)
+
+Formatted table with:
+- Entry number
+- Segment:Offset pair
+- File location in hex
+- Linear offset within image
+
+### Hex+ASCII Dump (`-x`)
+
+Canonical format matching `hexdump -C`:
+- 8-digit hex addresses (lowercase)
+- 16 bytes per line with space after 8th byte
+- ASCII panel with `|` delimiters
+- Zero-compression: repeated lines shown as `*`
+
+### Disassembly (`-d`, also `-a`)
+
+Static code analysis:
+- File offset for each instruction
+- Raw instruction bytes (up to 8 bytes)
+- x86-16 mnemonic and operands
+- INT annotation comments (INT 21h, INT 10h, etc.) from RBIL database
+- Default `<stem>.asm` next to the input. An existing file is kept unless `-o` names it
+- Structural EXEPACK, LZEXE 0.90/0.91, PKLITE, DIET, and LHarc also produce `<stem>_UNPACKED.EXE` or `<stem>_UNPACKED.COM` and `<stem>_UNPACKED.asm`. An existing unpacked file is kept
+
+### Simulation (`--simulate`)
+
+In-memory sandbox. Guest data files start empty, and guest I/O does not open host files. A write to DOS handle 1 (stdout) or handle 2 (stderr) fails with CF=1 and AX=6.
+
+Dynamic execution trace:
+- Initial CPU register state (CS:IP, SS:SP, DS, ES, FLAGS, etc.)
+- Relocation fixup table showing segment adjustments *(MZ EXE only)*
+- Register tracing (first ~20 instructions with register changes)
+
+## Static vs Dynamic Analysis
+
+**Static Analysis** (`-d`): Disassembles all code without execution. Shows complete instruction stream. Good for understanding program structure and finding code paths.
+
+**Dynamic Analysis** (`--simulate`): Simulates DOS loading and execution from entry point. Shows register state changes. Good for understanding program initialization and verifying relocation correctness.
+
+**Combined** (`-d --simulate`): Shows both full disassembly and dynamic trace for complete analysis.
+
+## Technical Details
+
+### MZ EXE Format
+- Signature: `MZ` (0x5A4D little-endian) or `ZM` (0x4D5A little-endian)
+- 28-byte minimum header
+- Header sizes in paragraphs (16-byte units)
+- File size: `num_blocks × 512` when `final_len == 0` (last page full); otherwise `((num_blocks-1) × 512) + final_len`
+- Entry point: `header_size + (CS × 16) + IP`
+
+### COM Format
+- Flat binary image; DOS loads it at memory offset `0x100` within the load segment
+- All segment registers (CS, DS, ES, SS) equal the load segment at startup
+- SP initialised to `0xFFFE` (top of 64 KB segment minus two bytes)
+- A typical `.COM` file on disk starts with the code/data that maps to memory offset `0x100`
+
+### SYS Device Driver Format
+- Starts with `0xFFFFFFFF` (next-driver pointer = end of chain)
+- Followed by 16-bit attribute word, strategy/interrupt offsets, and device name or unit count
+
+### Register State Representation
+Uses packed unions and bitfields for authentic x86 register access:
+- AX/BX/CX/DX with hi/lo byte access (AH/AL, etc.)
+- Segment registers: CS, DS, ES, SS
+- Pointers: IP, SP, BP, SI, DI
+- FLAGS with individual bit access (CF, ZF, SF, OF, etc.)
+
+## Installation
+
+```bash
+sudo make install
+```
+
+Installs to `/usr/local/bin/dumpexe` by default. Use `PREFIX` to change:
+
+```bash
+sudo make install PREFIX=/usr
+```
+
+## Manual Page
+
+```bash
+man dumpexe
+```
+
+## License
+
+Dual license:
+- **GPLv2** (or later) for open source use; full text in [COPYING](COPYING)
+- **Commercial** license available - contact author
+
+See [LICENSE](LICENSE). Third-party components (Deark, Capstone, Ralf Brown's Interrupt List, JWasm, Wine ordinal names) are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## Author
+
+EdgeOfAssembly <haxbox2000@gmail.com>
+
+## Credits
+
+Part of the RetroCodeMess project for analyzing retro computing and DOS executable formats.
+
+Built with [Capstone](http://www.capstone-engine.org/) disassembly framework.
