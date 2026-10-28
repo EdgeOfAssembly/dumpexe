@@ -4,6 +4,32 @@ All notable changes to dumpexe. The version is `DUMPEXE_VERSION` in
 `version.h`; `dumpexe --version`, the JSON `version` field and the man page
 show it. Earlier work is summarised from `TODO.md` ("Done" and "Near-term").
 
+## 2.46.0 (2026-10-28)
+
+### Added
+
+- Function-pointer variables: near and far cell stores (immediate or
+  `mov r,imm`), static initializers in DGROUP and far code-pointer tables
+  (vtables) anchored on decoded code seed new functions in the cell's own
+  frame. Near initializers are used only with independent evidence.
+- Unguarded byte-index jump tables are bounded by the index width and the next
+  code; holes are skipped, and slots after a hole are kept only inside the
+  span of the handler before it.
+- Function starts right after a terminator (or padding) are seeded when a
+  straight-line trial decode is clean, anchored, and never touches known code,
+  relocations or addresses used as data. These starts are tried after the
+  fixpoint, never before indirect-jump tables, ES/SS/computed bases.
+- Callback arguments are followed through far slots (`call dword ptr [bp+d]`
+  with a relocated segment or `push cs`) and from far callers (`9A`, arguments
+  at `bp+6`).
+
+### Fixed
+
+- PKLITE 1.50 small compressed files (v1): `0xfe` is treated as an
+  uncompressed area when the decompressor does.
+- Far pointer runs that hold the base of an indexed far `jmp`/`call` are left
+  to the jump-table rules instead of the function-pointer rules.
+
 ## 2.45.0 (2026-10-25)
 
 First tagged release.

@@ -32,6 +32,7 @@ DE_DECLARE_MODULE(de_module_pklite);
 struct decompr_params_struct {
 	i64 cmpr_data_pos;
 	u8 extra_cmpr; // 0=no, 1=yes, 2=special
+	u8 small_ua_fe; // small cmpr whose 0xfe code is an uncompressed area
 	u8 large_cmpr;
 	u8 v120_cmpr;
 	u8 offset_xor_key;
@@ -925,6 +926,19 @@ static void do_analyze_pklite_exe(deark *c, lctx *d)
 	if(d->errflag) goto done;
 	analyze_detect_large_and_v120_cmpr(c, d);
 	if(d->errflag) goto done;
+	if(!d->dparams.large_cmpr && !d->dparams.v120_cmpr) {
+		i64 fpos = 0;
+		// Some small-cmpr decompressors treat 0xfe like the large-cmpr 0xfd
+		// code: skip 9 output bytes, then copy a counted run of raw bytes.
+		if(pkl_search_match(d->epbytes, EPBYTES_LEN, d->decompr_pos,
+			d->approx_end_of_decompressor,
+			(const u8*)"\x3c\xfe\x72?\x77?\xac\x32\xed\x86\xc1\x83\xc7\x09\xf3\xa4",
+			16, '?', 0, &fpos))
+		{
+			d->dparams.small_ua_fe = 1;
+			de_dbg(c, "small cmpr 0xfe uncompressed area at ep+%"I64_FMT, fpos);
+		}
+	}
 	analyze_detect_obf_offsets(c, d);
 	if(d->errflag) goto done;
 	analyze_detect_psp_sig(c, d);
@@ -1280,6 +1294,10 @@ static void do_decompress(deark *c, lctx *d)
 
 			if(b >= 0xfd) {
 				if(b==0xfd && d->dparams.large_cmpr) {
+					do_uncompressed_area(c, dctx, ringbuf);
+					continue;
+				}
+				if(b==0xfe && d->dparams.small_ua_fe) {
 					do_uncompressed_area(c, dctx, ringbuf);
 					continue;
 				}

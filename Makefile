@@ -222,10 +222,13 @@ test: dumpexe bin2exe bin2ne tools/bin2exe/test_header test_p1_model test_p1_flo
 	@$(call run_suite,tests/test_p4_values.sh)
 	@$(call run_suite,tests/test_coverage.sh)
 	@$(call run_suite,tests/test_fnptr_seg.sh)
+	@$(call run_suite,tests/test_fnptr_vars.sh)
+	@$(call run_suite,tests/test_post_term.sh)
 	@$(call run_suite,tests/test_fp_emu.sh)
 	@$(call run_suite,tests/test_tp_noreturn.sh)
 	@$(call run_suite,tests/test_callback_args.sh)
 	@$(call run_suite,tests/test_callback_adv.sh)
+	@$(call run_suite,tests/test_far_callbacks.sh)
 	@$(call run_suite,tests/test_p5_fixpoint.sh)
 	@$(call run_suite,tests/test_u1_u3.sh)
 	@$(call run_suite,tests/test_linker.sh)
@@ -269,6 +272,8 @@ test-uasm: dumpexe
 .PHONY: test-fixtures-jt
 test-fixtures-jt: dumpexe
 	@$(call run_suite,tests/test_fixtures_jt.sh)
+	@$(call run_suite,tests/test_unpack_fixtures.sh)
+	@$(call run_suite,tests/test_matrix_win3.sh)
 
 tests: test
 

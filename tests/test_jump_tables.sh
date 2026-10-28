@@ -1138,6 +1138,46 @@ gtest g14 6 "    mov bl, byte ptr [si]" "    xor bh, bh" "    cmp bl, 2" "    jg
 # G15 (L-c) a word inc after xor bh,bh can carry into bh: the byte guard is
 # voided (pre-n8 cap 6, first 0) instead of bound 7 with first slot 1.
 gtest g15 6 "    mov bl, byte ptr [si]" "    xor bh, bh" "    cmp bl, 5" "    ja def" "    inc bx" "    shl bx, 1" "    jmp word ptr [bx+tbl]"
+# W1-W3 (n8 part 2) an unguarded byte index (zero-extended, so at most 256
+# slots) whose table runs into code: the table is cut at that code, 0000
+# holes are skipped, and slots after a hole are kept only when their target
+# lies inside the span of the handlers before the first hole and decodes
+# cleanly (W2: a decoy past that span; W3: a word outside the image).
+wtest() { # name want_entries want_decoy(0|1) tail-table-words...
+  local name=$1 want=$2 dec=$3; shift 3
+  {
+    echo "_TEXT segment para public use16 'CODE'"
+    echo "assume cs:_TEXT, ds:_TEXT"
+    echo "org 100h"
+    echo "start:"
+    echo "    mov si, offset prog"
+    echo "    mov bl, byte ptr [si]"
+    echo "    xor bh, bh"
+    echo "    shl bx, 1"
+    echo "    call word ptr [bx+tbl]"
+    echo "    call tail"
+    echo "    mov ax, 4C00h"
+    echo "    int 21h"
+    for i in 0 1 2 3; do echo "h$i: mov al, $i"; echo "    ret"; done
+    echo "prog db 1, 0"
+    echo "dcy db 0B0h, 7, 0C3h"
+    echo "tbl dw h0, h3, 0, $*"
+    echo "tail: mov al, 9"
+    echo "    ret"
+    echo "_TEXT ends"
+    echo "end start"
+  } > "$TD/$name.asm"
+  asm "$name.asm" "$name.com"
+  lst "$name.com" "${name}_out.asm"
+  local O="$TD/${name}_out.asm"
+  check "${name}_verified" grep -q '^; VERIFIED identical' "$O"
+  check "${name}_${want}_entries" test "$(grep -c 'table word' "$O")" -eq "$want"
+  check "${name}_decoy_$dec" test "$(grep -cE '^    mov al, 7h?\b' "$O")" -eq "$dec"
+  check "${name}_rebuild" same "${name}_out.asm" "$name.com" bin
+}
+wtest w1 4 0 "h1, h2"
+wtest w2 2 0 "h1, dcy"
+wtest w3 2 0 "h1, 0FFF0h"
 
 # N8 round 2: verify repros (tests/n8_syn). Data slots d0..d3 are
 # `mov al, 70h..73h; ret`; none may be decoded as code (d1_jbe_to_next is

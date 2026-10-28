@@ -1,6 +1,6 @@
 # dumpexe
 
-**16-bit MS-DOS / Win16 Binary Analyzer & Multi-Pass Listing**, version 2.45.0 (see [CHANGELOG.md](CHANGELOG.md))
+**16-bit MS-DOS / Win16 Binary Analyzer & Multi-Pass Listing**, version 2.46.0 (see [CHANGELOG.md](CHANGELOG.md))
 
 A comprehensive command-line utility for analyzing MS-DOS 16-bit binary files: MZ EXE executables, Windows 3.x NE executables, plain `.COM` programs, and device driver (`.SYS`) files. Provides TDUMP-style header analysis, relocation tables, hex dumps, Capstone x86-16 disassembly, multi-pass listings, toolchain fingerprints (Pascal MT+, JWASM 1.8, COM-in-EXE), Graphviz CFG, JSON reports, and DOS load simulation.
 

@@ -41,13 +41,15 @@ run fx01 fx01 19514
 fx11_table() { # $1 listing: print "words holes" of jt_037A0 up to func_038E0
   awk '/^jt_037A0:/{f=1;next} f&&/^func_038E0/{exit} f&&/table word/{n++} f&&/^    db 0h, 0h\t/{h++} END{print n+0, h+0}' "$1"; }
 if [[ -s "$TD/fx11.asm" ]]; then
-  # No hints: the generic rules keep a tentative slot after a hole only when
-  # an explicit branch joins proven code; eight 37A0 handlers rejoin the
-  # dispatcher by fall-through or a call, so the table is cut at the 37E0
-  # hole (32 slots before it).
+  # No hints: the dispatcher index is a zero-extended byte (lodsb; xor ah,ah;
+  # shl), so the table can hold at most 256 slots; it runs to the code at
+  # 38E0 (160 slots), the two 0000 holes are skipped, and every other slot
+  # is a clean entry inside the span of the 32 handlers before the first
+  # hole (n8 part 2, width-bounded index). Same result as with the hint.
   c=$(codebytes "$TD/fx11.bytemap"); echo "  fx11 (no hints) code bytes: $c"
-  check fx11_nohint_bytes test "$c" -ge 8600 -a "$c" -le 8800
-  check fx11_nohint_cut_at_hole bash -c "grep -A1 '; 037DE: table word' '$TD/fx11.asm' | grep -q '; 037E0:' && ! grep -q '; 037E2: table word' '$TD/fx11.asm'"
+  check fx11_nohint_bytes test "$c" -eq 17419
+  check fx11_nohint_dispatch_160 test "$(fx11_table "$TD/fx11.asm")" = "158 2"
+  check fx11_nohint_ends_at_038E0 bash -c "grep -A1 '; 038DE: table word' '$TD/fx11.asm' | grep -q '^; ----' "
   check fx11_nohint_rebuild grep -q '^; VERIFIED identical' "$TD/fx11.asm"
   check fx11_char_table_data grep -qE '^    db 0A0h, 0E1h.*; 01CCA:' "$TD/fx11.asm"
 fi

@@ -2,7 +2,8 @@
 # Stored code pointers use the frame of the code that calls through the
 # cell. Here the store and `call word ptr ds:[X]` sit in a second code
 # segment (reached by a relocated far call), so imm is not an offset in the
-# entry segment: bytes at entry_frame+imm stay data. In the entry segment the
+# entry segment: bytes at entry_frame+imm stay data, and the target is
+# seeded in the second segment's own frame (B:imm). In the entry segment the
 # same pattern seeds the target (positive control).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -51,7 +52,7 @@ for f in second entry; do (cd "$TD" && "$BIN" --uasm --uasm-verified --uasm-bin 
 check second_verified grep -q '^; VERIFIED identical' "$TD/second.asm"
 check second_far_decoded grep -qE '^    call word ptr ds:\[0h\]	; 0004[0-9A-F]: FF 16 00 00' "$TD/second.asm"
 check second_entry_bytes_stay_data bash -c "! grep -qE '^    mov cx, 7h	; 00020: B9 07 00' '$TD/second.asm'"
-check second_no_ptr_root bash -c "! grep -qE '^; startup entries: .*[1-9][0-9]* stored code pointer' '$TD/second.asm'"
+check second_own_frame grep -qE '^    mov ax, 5h	; 00060: B8 05 00' "$TD/second.asm"
 check entry_verified grep -q '^; VERIFIED identical' "$TD/entry.asm"
 check entry_target_code grep -qE '^    mov cx, 7h	; 00020: B9 07 00' "$TD/entry.asm"
 check entry_ptr_root grep -qE '^; startup entries: 0 init/exit table record\(s\), 0 DS=CS interrupt handler\(s\), 1 stored code pointer' "$TD/entry.asm"

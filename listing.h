@@ -4776,7 +4776,15 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
         if (jt_changed && !jt_history.insert(emp->jt_roots()).second)
             jt_changed = false;
         if (want.empty() && !want_far && !jt_changed)
-            break;
+        {
+            // Settled: now (and only now) allow post-terminator starts.
+            if (in.post_term)
+                break;
+            in.post_term = true;
+            emp.reset();
+            emp = make_em(g2 ? *g2 : g); // a re-emit, not a rebuild round
+            continue;
+        }
         size_t added = 0;
         for (uint32_t t : want)
             if (std::find(seeds.begin(), seeds.end(), t) == seeds.end())
@@ -4793,7 +4801,14 @@ static inline std::string listing_emit_uasm_verified(const CfgGraph& g,
                     ++added;
                 }
         if (added == 0 && !jt_changed)
-            break;
+        {
+            if (in.post_term)
+                break;
+            in.post_term = true;
+            emp.reset();
+            emp = make_em(g2 ? *g2 : g); // a re-emit, not a rebuild round
+            continue;
+        }
         std::sort(seeds.begin(), seeds.end());
         std::vector<CfgLin> all = seeds;
         if (jt_changed)
